@@ -5,6 +5,7 @@ import type { RepositoryFact } from "@/lib/evidence/types";
 import type { RepositoryScanResult } from "@/lib/scanner/types";
 
 type PackageJson = {
+  scripts?: Record<string, string>;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
 };
@@ -13,15 +14,36 @@ function fileExists(repositoryPath: string, file: string): boolean {
   return fs.existsSync(path.join(repositoryPath, file));
 }
 
-function readPackageJson(repositoryPath: string): PackageJson | null {
-  const packageJsonPath = path.join(repositoryPath, "package.json");
+function directoryExists(
+  repositoryPath: string,
+  directory: string
+): boolean {
+  const targetPath = path.join(repositoryPath, directory);
+
+  return (
+    fs.existsSync(targetPath) &&
+    fs.statSync(targetPath).isDirectory()
+  );
+}
+
+function readPackageJson(
+  repositoryPath: string
+): PackageJson | null {
+  const packageJsonPath = path.join(
+    repositoryPath,
+    "package.json"
+  );
 
   if (!fs.existsSync(packageJsonPath)) {
     return null;
   }
 
   try {
-    const content = fs.readFileSync(packageJsonPath, "utf-8");
+    const content = fs.readFileSync(
+      packageJsonPath,
+      "utf-8"
+    );
+
     return JSON.parse(content) as PackageJson;
   } catch {
     return null;
@@ -34,7 +56,7 @@ function hasDependency(
 ): boolean {
   return Boolean(
     packageJson.dependencies?.[dependency] ||
-    packageJson.devDependencies?.[dependency]
+      packageJson.devDependencies?.[dependency]
   );
 }
 
@@ -49,10 +71,11 @@ function getDependencyVersion(
   );
 }
 
-function createFileFact(
+function createFact(
   key: string,
   value: string,
-  file: string,
+  source: "file" | "package" | "config",
+  evidencePath: string,
   description: string
 ): RepositoryFact {
   return {
@@ -61,139 +84,251 @@ function createFileFact(
     confidence: 1,
     evidence: [
       {
-        source: "file",
-        path: file,
+        source,
+        path: evidencePath,
         description,
       },
     ],
   };
 }
 
-export function scanRepository(
-  repositoryPath: string
-): RepositoryScanResult {
-  const facts: RepositoryFact[] = [];
+function addFactIfMissing(
+  facts: RepositoryFact[],
+  fact: RepositoryFact
+): void {
+  const exists = facts.some(
+    (existingFact) =>
+      existingFact.key === fact.key &&
+      existingFact.value === fact.value
+  );
 
-  const packageJson = readPackageJson(repositoryPath);
+  if (!exists) {
+    facts.push(fact);
+  }
+}
 
-  // Language
+function detectLanguage(
+  repositoryPath: string,
+  facts: RepositoryFact[]
+): void {
   if (fileExists(repositoryPath, "tsconfig.json")) {
     facts.push(
-      createFileFact(
+      createFact(
         "language",
         "TypeScript",
+        "file",
         "tsconfig.json",
         "TypeScript configuration file detected"
       )
     );
   }
+}
 
-  // Framework
-  if (
-    fileExists(repositoryPath, "next.config.ts") ||
-    fileExists(repositoryPath, "next.config.js") ||
-    fileExists(repositoryPath, "next.config.mjs")
-  ) {
-    const configFile = [
-      "next.config.ts",
-      "next.config.js",
-      "next.config.mjs",
-    ].find((file) => fileExists(repositoryPath, file));
+function detectFramework(
+  repositoryPath: string,
+  facts: RepositoryFact[]
+): void {
+  const nextConfigFiles = [
+    "next.config.ts",
+    "next.config.js",
+    "next.config.mjs",
+  ];
 
-    if (configFile) {
-      facts.push(
-        createFileFact(
-          "framework",
-          "Next.js",
-          configFile,
-          "Next.js configuration file detected"
-        )
-      );
-    }
+  const configFile = nextConfigFiles.find((file) =>
+    fileExists(repositoryPath, file)
+  );
+
+  if (!configFile) {
+    return;
   }
 
-  // Package manager
+  facts.push(
+    createFact(
+      "framework",
+      "Next.js",
+      "config",
+      configFile,
+      "Next.js configuration file detected"
+    )
+  );
+}
+
+function detectPackageManager(
+  repositoryPath: string,
+  facts: RepositoryFact[]
+): void {
   if (fileExists(repositoryPath, "pnpm-lock.yaml")) {
     facts.push(
-      createFileFact(
+      createFact(
         "packageManager",
         "pnpm",
+        "file",
         "pnpm-lock.yaml",
         "pnpm lockfile detected"
       )
     );
-  } else if (fileExists(repositoryPath, "yarn.lock")) {
+
+    return;
+  }
+
+  if (fileExists(repositoryPath, "yarn.lock")) {
     facts.push(
-      createFileFact(
+      createFact(
         "packageManager",
         "Yarn",
+        "file",
         "yarn.lock",
         "Yarn lockfile detected"
       )
     );
-  } else if (fileExists(repositoryPath, "package-lock.json")) {
+
+    return;
+  }
+
+  if (fileExists(repositoryPath, "package-lock.json")) {
     facts.push(
-      createFileFact(
+      createFact(
         "packageManager",
         "npm",
+        "file",
         "package-lock.json",
         "npm lockfile detected"
       )
     );
   }
+}
 
-  // Prisma
+function detectOrm(
+  repositoryPath: string,
+  packageJson: PackageJson | null,
+  facts: RepositoryFact[]
+): void {
   if (fileExists(repositoryPath, "prisma/schema.prisma")) {
-    facts.push(
-      createFileFact(
+    addFactIfMissing(
+      facts,
+      createFact(
         "orm",
         "Prisma",
+        "config",
         "prisma/schema.prisma",
         "Prisma schema detected"
       )
     );
   }
 
-  // Vitest
   if (
-    fileExists(repositoryPath, "vitest.config.ts") ||
-    fileExists(repositoryPath, "vitest.config.js")
+    packageJson &&
+    (hasDependency(packageJson, "prisma") ||
+      hasDependency(packageJson, "@prisma/client"))
   ) {
-    const configFile = fileExists(
-      repositoryPath,
-      "vitest.config.ts"
-    )
-      ? "vitest.config.ts"
-      : "vitest.config.js";
+    addFactIfMissing(
+      facts,
+      createFact(
+        "orm",
+        "Prisma",
+        "package",
+        "package.json",
+        "Prisma dependency detected"
+      )
+    );
+  }
+}
 
-    facts.push(
-      createFileFact(
+function detectTestConfiguration(
+  repositoryPath: string,
+  packageJson: PackageJson | null,
+  facts: RepositoryFact[]
+): void {
+  const vitestConfigFiles = [
+    "vitest.config.ts",
+    "vitest.config.js",
+  ];
+
+  const vitestConfig = vitestConfigFiles.find((file) =>
+    fileExists(repositoryPath, file)
+  );
+
+  if (vitestConfig) {
+    addFactIfMissing(
+      facts,
+      createFact(
         "testFramework",
         "Vitest",
-        configFile,
+        "config",
+        vitestConfig,
         "Vitest configuration detected"
       )
     );
   }
 
-  // Package-based detection
-// Package-based detection
-if (packageJson) {
-  const nextVersion = getDependencyVersion(packageJson, "next");
+  if (!packageJson) {
+    return;
+  }
+
+  if (hasDependency(packageJson, "vitest")) {
+    addFactIfMissing(
+      facts,
+      createFact(
+        "testFramework",
+        "Vitest",
+        "package",
+        "package.json",
+        "Vitest dependency detected"
+      )
+    );
+  }
+
+  if (hasDependency(packageJson, "jest")) {
+    addFactIfMissing(
+      facts,
+      createFact(
+        "testFramework",
+        "Jest",
+        "package",
+        "package.json",
+        "Jest dependency detected"
+      )
+    );
+  }
+
+  const testScript = packageJson.scripts?.test;
+
+  if (testScript) {
+    facts.push(
+      createFact(
+        "testScript",
+        testScript,
+        "package",
+        "package.json",
+        `Test script detected: ${testScript}`
+      )
+    );
+  }
+}
+
+function detectPackageFacts(
+  packageJson: PackageJson | null,
+  facts: RepositoryFact[]
+): void {
+  if (!packageJson) {
+    return;
+  }
+
+  const nextVersion = getDependencyVersion(
+    packageJson,
+    "next"
+  );
 
   if (nextVersion) {
-    facts.push({
-      key: "frameworkVersion",
-      value: nextVersion,
-      confidence: 1,
-      evidence: [
-        {
-          source: "package",
-          path: "package.json",
-          description: `Next.js dependency version ${nextVersion} detected`,
-        },
-      ],
-    });
+    facts.push(
+      createFact(
+        "frameworkVersion",
+        nextVersion,
+        "package",
+        "package.json",
+        `Next.js dependency version ${nextVersion} detected`
+      )
+    );
   }
 
   const typescriptVersion = getDependencyVersion(
@@ -202,83 +337,114 @@ if (packageJson) {
   );
 
   if (typescriptVersion) {
-    facts.push({
-      key: "languageVersion",
-      value: typescriptVersion,
-      confidence: 1,
-      evidence: [
-        {
-          source: "package",
-          path: "package.json",
-          description: `TypeScript dependency version ${typescriptVersion} detected`,
-        },
-      ],
-    });
+    facts.push(
+      createFact(
+        "languageVersion",
+        typescriptVersion,
+        "package",
+        "package.json",
+        `TypeScript dependency version ${typescriptVersion} detected`
+      )
+    );
   }
 
   if (hasDependency(packageJson, "next-auth")) {
-    facts.push({
-      key: "authentication",
-      value: "NextAuth",
-      confidence: 1,
-      evidence: [
-        {
-          source: "package",
-          path: "package.json",
-          description: "next-auth dependency detected",
-        },
-      ],
-    });
-  }
-
-  if (
-    hasDependency(packageJson, "prisma") ||
-    hasDependency(packageJson, "@prisma/client")
-  ) {
-    facts.push({
-      key: "orm",
-      value: "Prisma",
-      confidence: 1,
-      evidence: [
-        {
-          source: "package",
-          path: "package.json",
-          description: "Prisma dependency detected",
-        },
-      ],
-    });
-  }
-
-  if (hasDependency(packageJson, "vitest")) {
-    facts.push({
-      key: "testFramework",
-      value: "Vitest",
-      confidence: 1,
-      evidence: [
-        {
-          source: "package",
-          path: "package.json",
-          description: "Vitest dependency detected",
-        },
-      ],
-    });
-  }
-
-  if (hasDependency(packageJson, "jest")) {
-    facts.push({
-      key: "testFramework",
-      value: "Jest",
-      confidence: 1,
-      evidence: [
-        {
-          source: "package",
-          path: "package.json",
-          description: "Jest dependency detected",
-        },
-      ],
-    });
+    facts.push(
+      createFact(
+        "authentication",
+        "NextAuth",
+        "package",
+        "package.json",
+        "next-auth dependency detected"
+      )
+    );
   }
 }
+
+function detectDeployment(
+  repositoryPath: string,
+  facts: RepositoryFact[]
+): void {
+  if (fileExists(repositoryPath, "Dockerfile")) {
+    facts.push(
+      createFact(
+        "deployment",
+        "docker",
+        "config",
+        "Dockerfile",
+        "Dockerfile detected in repository root"
+      )
+    );
+  }
+
+  if (fileExists(repositoryPath, "vercel.json")) {
+    facts.push(
+      createFact(
+        "deployment",
+        "vercel",
+        "config",
+        "vercel.json",
+        "Vercel configuration file detected"
+      )
+    );
+  }
+
+  const workflowsDirectory = ".github/workflows";
+
+  if (!directoryExists(repositoryPath, workflowsDirectory)) {
+    return;
+  }
+
+  const workflowPath = path.join(
+    repositoryPath,
+    workflowsDirectory
+  );
+
+  const workflowFiles = fs
+    .readdirSync(workflowPath)
+    .filter(
+      (file) =>
+        file.endsWith(".yml") ||
+        file.endsWith(".yaml")
+    );
+
+  if (workflowFiles.length === 0) {
+    return;
+  }
+
+  facts.push({
+    key: "ci",
+    value: "github-actions",
+    confidence: 1,
+    evidence: workflowFiles.map((file) => ({
+      source: "config" as const,
+      path: `${workflowsDirectory}/${file}`,
+      description: `GitHub Actions workflow detected: ${file}`,
+    })),
+  });
+}
+
+export function scanRepository(
+  repositoryPath: string
+): RepositoryScanResult {
+  const facts: RepositoryFact[] = [];
+  const packageJson = readPackageJson(repositoryPath);
+
+  detectLanguage(repositoryPath, facts);
+  detectFramework(repositoryPath, facts);
+  detectPackageManager(repositoryPath, facts);
+
+  detectPackageFacts(packageJson, facts);
+
+  detectOrm(repositoryPath, packageJson, facts);
+
+  detectTestConfiguration(
+    repositoryPath,
+    packageJson,
+    facts
+  );
+
+  detectDeployment(repositoryPath, facts);
 
   return {
     repositoryPath,

@@ -1,12 +1,23 @@
 import type { RepositoryScanResult } from "@/lib/scanner/types";
-import { nebius, NEBIUS_MODELS } from "@/lib/ai/nebius";
+import {
+  getNebiusClient,
+  NEBIUS_MODELS,
+} from "@/lib/ai/nebius";
 
 export type RiskSeverity = "low" | "medium" | "high" | "critical";
+
+// export interface ArchitectureRisk {
+//   title: string;
+//   severity: RiskSeverity;
+//   reason: string;
+// }
 
 export interface ArchitectureRisk {
   title: string;
   severity: RiskSeverity;
   reason: string;
+  evidenceKeys: string[];
+  inference: boolean;
 }
 
 export interface ArchitectureAnalysis {
@@ -20,6 +31,8 @@ export interface ArchitectureAnalysis {
 export async function runArchitectAgent(
   scan: RepositoryScanResult
 ): Promise<ArchitectureAnalysis> {
+   const nebius = getNebiusClient();
+
   const response = await nebius.chat.completions.create({
     model: NEBIUS_MODELS.architect,
     temperature: 0.1,
