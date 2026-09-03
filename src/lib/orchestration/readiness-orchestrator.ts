@@ -10,10 +10,12 @@ import { runSecurityAgent } from "@/lib/agents/security-agent";
 import { runTestAgent } from "@/lib/agents/test-agent";
 import { runTypecheckAgent } from "@/lib/agents/typecheck-agent";
 import { verifyArchitectureAnalysis } from "@/lib/agents/verifier";
+import { prepareAssessmentWorkspace } from "@/lib/agents/workspace-agent";
 
 import { createProductionReadinessReport } from "@/lib/reporting/readiness-report";
 import { scanRepository } from "@/lib/scanner/repository-scanner";
 import { calculateReadinessScore } from "@/lib/scoring/readiness-score";
+import { createAssessmentWorkspace } from "@/lib/workspace/assessment-workspace";
 
 async function getVerifiedArchitectureAnalysis(
   scan: ReturnType<typeof scanRepository>
@@ -21,16 +23,14 @@ async function getVerifiedArchitectureAnalysis(
   try {
     const analysis = await runArchitectAgent(scan);
 
-    const verification = verifyArchitectureAnalysis(
-      scan,
-      analysis
-    );
+    const verification =
+      verifyArchitectureAnalysis(
+        scan,
+        analysis
+      );
 
     return {
       ...analysis,
-
-      // Only risks backed by valid repository evidence
-      // are allowed into the final report.
       risks: verification.acceptedRisks,
     };
   } catch (error) {
@@ -50,55 +50,82 @@ async function getVerifiedArchitectureAnalysis(
 export async function runReadinessAssessment(
   repositoryPath: string
 ) {
-  const scan = scanRepository(repositoryPath);
+  const workspace =
+    createAssessmentWorkspace(repositoryPath);
 
-  const [
-    buildResult,
-    typeResult,
-    lintResult,
-    testResult,
-    securityResult,
-    environmentResult,
-    databaseResult,
-    deploymentResult,
-  ] = await Promise.all([
-    runBuildAgent(scan),
-    runTypecheckAgent(scan),
-    runLintAgent(scan),
-    runTestAgent(scan),
-    runSecurityAgent(scan),
-    runEnvironmentAgent(scan),
-    runDatabaseAgent(scan),
-    runDeploymentAgent(scan),
-  ]);
+  try {
+    const preparation =
+      await prepareAssessmentWorkspace(
+        workspace.workspacePath
+      );
 
-  const checks = [
-    buildResult,
-    typeResult,
-    lintResult,
-    testResult,
-    securityResult,
-    environmentResult,
-    databaseResult,
-    deploymentResult,
-  ];
+    if (preparation.status !== "passed") {
+      throw new Error(
+        preparation.summary
+      );
+    }
 
-  const readiness = calculateReadinessScore(checks);
+    const scan = scanRepository(
+      workspace.workspacePath
+    );
 
-  /*
-   * AI enrichment happens only after the deterministic
-   * readiness assessment has completed.
-   *
-   * A Nebius/Nemotron failure must never prevent
-   * DeployGuard from producing a readiness report.
-   */
-  const architecture =
-    await getVerifiedArchitectureAnalysis(scan);
+    const [
+      buildResult,
+      typeResult,
+      lintResult,
+      testResult,
+      securityResult,
+      environmentResult,
+      databaseResult,
+      deploymentResult,
+    ] = await Promise.all([
+      runBuildAgent(scan),
+      runTypecheckAgent(scan),
+      runLintAgent(scan),
+      runTestAgent(scan),
+      runSecurityAgent(scan),
+      runEnvironmentAgent(scan),
+      runDatabaseAgent(scan),
+      runDeploymentAgent(scan),
+    ]);
 
-  return createProductionReadinessReport(
-    scan,
-    checks,
-    readiness,
-    architecture
-  );
+    const checks = [
+      buildResult,
+      typeResult,
+      lintResult,
+      testResult,
+      securityResult,
+      environmentResult,
+      databaseResult,
+      deploymentResult,
+    ];
+
+    const readiness =
+      calculateReadinessScore(checks);
+
+    const architecture =
+      await getVerifiedArchitectureAnalysis(
+        scan
+      );
+
+    const report =
+      createProductionReadinessReport(
+        scan,
+        checks,
+        readiness,
+        architecture
+      );
+
+    /*
+     * The checks ran inside the isolated workspace,
+     * but the report should identify the repository
+     * the user actually submitted.
+     */
+    report.repository.path =
+      repositoryPath;
+
+    return report;
+  } finally {
+    workspace.cleanup();
+  }
 }

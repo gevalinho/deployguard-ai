@@ -57,10 +57,15 @@ export async function runBuildAgent(
   }
 
   const result = await runCommand(
-    command,
-    args,
-    scan.repositoryPath
-  );
+  command,
+  args,
+  scan.repositoryPath,
+  {
+    env: {
+      NODE_ENV: "production",
+    },
+  }
+);
 
   return {
     id: "production-build",

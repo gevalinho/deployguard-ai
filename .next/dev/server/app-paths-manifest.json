@@ -1,3 +1,5 @@
 {
-  "/_not-found/page": "app/_not-found/page.js"
+  "/api/assessment/route": "app/api/assessment/route.js",
+  "/api/repositories/scan/route": "app/api/repositories/scan/route.js",
+  "/page": "app/page.js"
 }
