@@ -1,9 +1,11 @@
 import {
   existsSync,
+  mkdirSync,
 } from "node:fs";
 
 import {
   join,
+  resolve,
 } from "node:path";
 
 import {
@@ -75,7 +77,29 @@ export async function prepareSandboxWorkspace(
   const packageManager =
     detectPackageManager(
       repositoryPath
+
+
+          );
+
+           const cacheRoot =
+  resolve(
+    process.cwd(),
+    ".deployguard",
+    "cache"
     );
+
+const npmCachePath =
+  join(
+    cacheRoot,
+    "npm"
+    );
+
+mkdirSync(
+  npmCachePath,
+  {
+    recursive: true,
+  }
+);
 
   if (!packageManager) {
     return {
@@ -99,14 +123,12 @@ export async function prepareSandboxWorkspace(
     [
       "mkdir -p",
       "/tmp/deployguard-home",
-      "/tmp/npm-cache",
       "&&",
       "npm ci",
-"--ignore-scripts",
-"--no-audit",
-"--no-fund",
-"--prefer-offline",
-// "--loglevel=info",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      "--prefer-offline",
     ].join(" "),
   ];
   break;
@@ -132,6 +154,10 @@ export async function prepareSandboxWorkspace(
       break;
   }
 
+  
+   
+
+
   const uid =
   typeof process.getuid === "function"
     ? process.getuid()
@@ -147,6 +173,17 @@ const gid =
 
   const result =
   await runDockerSandboxCommand({
+
+mounts:
+  packageManager === "npm"
+    ? [
+        {
+          source: npmCachePath,
+          target: "/deployguard-cache/npm",
+        },
+      ]
+    : [],
+
     repositoryPath,
     command,
 
@@ -159,7 +196,7 @@ const gid =
         "/tmp/deployguard-home",
 
       npm_config_cache:
-        "/tmp/npm-cache",
+  "/deployguard-cache/npm",
 
       CI:
         "true",

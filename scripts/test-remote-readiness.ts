@@ -1,3 +1,4 @@
+import "dotenv/config";
 import {
   runRemoteReadinessAssessment,
 } from "../src/lib/orchestration/remote-readiness-orchestrator";

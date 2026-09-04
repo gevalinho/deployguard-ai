@@ -109,10 +109,10 @@ ${JSON.stringify(scan.facts, null, 2)}
   return JSON.parse(content) as ArchitectureAnalysis;
 }
 
-export interface ArchitectureRisk {
-  title: string;
-  severity: RiskSeverity;
-  reason: string;
-  evidenceKeys: string[];
-  inference: boolean;
-}
+// export interface ArchitectureRisk {
+//   title: string;
+//   severity: RiskSeverity;
+//   reason: string;
+//   evidenceKeys: string[];
+//   inference: boolean;
+// }

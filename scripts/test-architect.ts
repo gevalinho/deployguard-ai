@@ -1,70 +1,61 @@
-// import "dotenv/config";
-
-// import { runArchitectAgent } from "../src/lib/agents/architect-agent";
-// import { scanRepository } from "../src/lib/scanner/repository-scanner";
-// import { verifyArchitectureAnalysis } from "../src/lib/agents/verifier";
-
-// async function main() {
-//   console.log("\n=== DeployGuard Architect Agent ===\n");
-
-//   const scan = scanRepository(process.cwd());
-
-//   console.log("Verified repository facts:");
-//   console.log(JSON.stringify(scan.facts, null, 2));
-
-//   console.log("\nSending verified evidence to Nemotron...\n");
-
-//   const architecture = await runArchitectAgent(scan);
-
-//   const verification = verifyArchitectureAnalysis(scan, architecture);
-
-// console.log("\nVerification:");
-// console.log(JSON.stringify(verification, null, 2));
-
-//   console.log("Architecture analysis:");
-//   console.log(JSON.stringify(architecture, null, 2));
-// }
-
-// main().catch((error) => {
-//   console.error("\nArchitect Agent failed:\n");
-//   console.error(error);
-//   process.exit(1);
-// });
-
-
-
-
-
 import "dotenv/config";
 
-import { runArchitectAgent } from "../src/lib/agents/architect-agent";
-import { verifyArchitectureAnalysis } from "../src/lib/agents/verifier";
-import { scanRepository } from "../src/lib/scanner/repository-scanner";
+
+import { scanRepository } from "@/lib/scanner/repository-scanner";
+import { runArchitectAgent } from "@/lib/agents/architect-agent";
 
 async function main() {
-  console.log("\n=== DeployGuard Architect Agent ===\n");
+  console.log(
+    "=== DeployGuard Architect Agent Test ==="
+  );
 
-  const scan = scanRepository(process.cwd());
+  const repositoryPath =
+    process.cwd();
 
-  console.log("Verified repository facts:");
-  console.log(JSON.stringify(scan.facts, null, 2));
+  console.log(
+    "Scanning repository..."
+  );
 
-  console.log("\nSending verified evidence to Nemotron...\n");
+  const scan =
+    await scanRepository(
+      repositoryPath
+    );
 
-  const architecture = await runArchitectAgent(scan);
+  console.log(
+    `Detected ${scan.facts.length} repository facts.`
+  );
 
-  console.log("Architecture analysis:");
-  console.log(JSON.stringify(architecture, null, 2));
+  console.log(
+    "Running Nemotron Architect Agent..."
+  );
 
-  const verification = verifyArchitectureAnalysis(scan, architecture);
+  const analysis =
+    await runArchitectAgent(scan);
 
-  console.log("\nVerification:");
-  console.log(JSON.stringify(verification, null, 2));
+  console.log(
+    "\n=== Architecture Analysis ==="
+  );
+
+  console.log(
+    JSON.stringify(
+      analysis,
+      null,
+      2
+    )
+  );
 }
 
 main().catch((error) => {
-  console.error("\nArchitect Agent failed:\n");
-  console.error(error);
-  process.exit(1);
-});
+  const message =
+    error instanceof Error
+      ? error.message
+      : String(error);
 
+  console.error(
+    "\nArchitect Agent failed:"
+  );
+
+  console.error(message);
+
+  process.exitCode = 1;
+});

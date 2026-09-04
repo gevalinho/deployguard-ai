@@ -464,49 +464,57 @@ await emitProgress(
   "running",
   "Analyzing verified repository evidence..."
     );
+    
     try {
-      const analysis =
-        await runArchitectAgent(scan);
+  const analysis =
+    await runArchitectAgent(scan);
 
-      const verified =
-        verifyArchitectureAnalysis(
-          scan,
-          analysis
-        );
-
-      architecture = {
-        ...analysis,
-        risks:
-          verified.acceptedRisks,
-      };
-
-      verification = {
-        acceptedRisks:
-          verified.acceptedRisks,
-
-        rejectedRisks:
-          verified.rejectedRisks,
-      };
-
-
-      await emitProgress(
-  "architect",
-  "Nemotron Analysis",
-  "passed",
-  "AI architecture analysis completed and verified."
+  const verified =
+    verifyArchitectureAnalysis(
+      scan,
+      analysis
     );
 
-    } catch {
-      architecture = undefined;
-      verification = undefined;
+  architecture = {
+    ...analysis,
+    risks:
+      verified.acceptedRisks,
+  };
 
-      await emitProgress(
-  "architect",
-  "Nemotron Analysis",
-  "error",
-  "AI architecture analysis was unavailable. Deterministic reporting will continue."
-    );
-    }
+  verification = {
+    acceptedRisks:
+      verified.acceptedRisks,
+    rejectedRisks:
+      verified.rejectedRisks,
+  };
+
+  await emitProgress(
+    "architect",
+    "Nemotron Analysis",
+    "passed",
+    "AI architecture analysis completed and verified."
+  );
+} catch (error) {
+  architecture = undefined;
+  verification = undefined;
+
+  const diagnostic =
+    error instanceof Error
+      ? error.message
+      : "Unknown Nemotron analysis error.";
+
+  console.error(
+    "[DeployGuard Architect Agent]",
+    diagnostic
+  );
+
+  await emitProgress(
+    "architect",
+    "Nemotron Analysis",
+    "error",
+    `AI architecture analysis was unavailable: ${diagnostic}`
+  );
+}
 
     const report =
       createProductionReadinessReport(

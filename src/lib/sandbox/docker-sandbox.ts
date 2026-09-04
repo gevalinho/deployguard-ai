@@ -14,27 +14,35 @@ import {
   runCommand,
 } from "@/lib/execution/command-runner";
 
+export interface DockerSandboxMount {
+  source: string;
+  target: string;
+  readOnly?: boolean;
+}
+
 // export interface DockerSandboxCommand {
 //   repositoryPath: string;
 //   command: string[];
 //   limits?: SandboxLimits;
 
 //   network?: "none" | "bridge";
+
+//   user?: string;
+
+//   environment?: Record<
+//     string,
+//     string
+//   >;
 // }
 
 export interface DockerSandboxCommand {
   repositoryPath: string;
   command: string[];
   limits?: SandboxLimits;
-
   network?: "none" | "bridge";
-
   user?: string;
-
-  environment?: Record<
-    string,
-    string
-  >;
+  environment?: Record<string, string>;
+  mounts?: DockerSandboxMount[];
 }
 
 export interface DockerSandboxCommandResult {
@@ -77,6 +85,22 @@ const userArgs =
       ]
     : [];
 
+    const additionalMountArgs =
+  (input.mounts ?? []).flatMap(
+    (mount) => [
+      "--mount",
+      [
+        "type=bind",
+        `source=${mount.source}`,
+        `target=${mount.target}`,
+        mount.readOnly
+          ? "readonly"
+          : undefined,
+      ]
+        .filter(Boolean)
+        .join(","),
+    ]
+  );
 
   const dockerArgs = [
   "run",
@@ -108,11 +132,19 @@ const userArgs =
   "--tmpfs",
   "/tmp:rw,noexec,nosuid,size=256m",
 
-  ...userArgs,
-  ...environmentArgs,
+  // ...userArgs,
+  // ...environmentArgs,
 
-  "--mount",
-  `type=bind,source=${input.repositoryPath},target=/workspace`,
+  // "--mount",
+  // `type=bind,source=${input.repositoryPath},target=/workspace`,
+
+  ...userArgs,
+...environmentArgs,
+
+"--mount",
+`type=bind,source=${input.repositoryPath},target=/workspace`,
+
+...additionalMountArgs,
 
   "--workdir",
   "/workspace",

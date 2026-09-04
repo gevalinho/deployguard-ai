@@ -13,23 +13,38 @@ async function main() {
     );
 
   console.log(
-    "\n=== DeployGuard Repository Ingestion ===\n"
+    "\n=== DeployGuard Repository Ingestion Test ===\n"
   );
 
   console.log(
     `Repository: ${repository.fullName}`
   );
 
+  console.log(
+    "Starting repository ingestion..."
+  );
+
+  const startedAt = Date.now();
+
   const ingested =
-    await ingestGitHubRepository(repository);
+    await ingestGitHubRepository(
+      repository
+    );
+
+  const durationMs =
+    Date.now() - startedAt;
 
   try {
     console.log(
-      `Cloned to: ${ingested.repositoryPath}`
+      "\nRepository ingestion succeeded."
     );
 
     console.log(
-      "\nRepository ingestion succeeded."
+      `Repository path: ${ingested.repositoryPath}`
+    );
+
+    console.log(
+      `Ingestion time: ${(durationMs / 1000).toFixed(2)} seconds`
     );
   } finally {
     ingested.cleanup();
@@ -41,10 +56,16 @@ async function main() {
 }
 
 main().catch((error) => {
+  const message =
+    error instanceof Error
+      ? error.message
+      : String(error);
+
   console.error(
-    "Repository ingestion failed:",
-    error
+    "\nRepository ingestion failed:"
   );
 
-  process.exit(1);
+  console.error(message);
+
+  process.exitCode = 1;
 });
