@@ -44,6 +44,11 @@ import type {
   AssessmentProgressStatus,
 } from "@/lib/orchestration/assessment-progress";
 
+import {
+  runResearchAgent,
+  type ResearchAgentResult,
+} from "@/lib/agents/research-agent";
+
 
 export interface RemoteReadinessAssessment {
   repository: {
@@ -145,6 +150,70 @@ await emitProgress(
   "passed",
   `Repository scan completed with ${scan.facts.length} detected facts.`
 );
+
+
+  let research:
+  | ResearchAgentResult
+  | undefined;
+
+await emitProgress(
+  "research",
+  "External Research",
+  "running",
+  "Researching current technology and security evidence..."
+);
+
+try {
+  research =
+    await runResearchAgent(scan);
+
+  const evidenceCount =
+    research.results.reduce(
+      (total, result) =>
+        total +
+        result.evidence.length,
+      0
+    );
+
+  if (
+    research.queries.length === 0
+  ) {
+    await emitProgress(
+      "research",
+      "External Research",
+      "skipped",
+      "No repository facts required external research."
+    );
+  } else {
+    await emitProgress(
+      "research",
+      "External Research",
+      "passed",
+      `External research completed with ${evidenceCount} evidence items.`
+    );
+  }
+} catch (error) {
+  research = undefined;
+
+  const diagnostic =
+    error instanceof Error
+      ? error.message
+      : "Unknown research error.";
+
+  console.error(
+    "[DeployGuard Research Agent]",
+    diagnostic
+  );
+
+  await emitProgress(
+    "research",
+    "External Research",
+    "error",
+    "External research was unavailable. Continuing with repository evidence only."
+  );
+}
+
+
 
     const checks: CheckResult[] = [];
 
@@ -466,14 +535,30 @@ await emitProgress(
     );
     
     try {
+  // const analysis =
+  //   await runArchitectAgent(scan);
+
+
+
   const analysis =
-    await runArchitectAgent(scan);
+  await runArchitectAgent(
+    scan,
+    research
+  );
+
+  // const verified =
+  //   verifyArchitectureAnalysis(
+  //     scan,
+  //     analysis
+  //   );
+
 
   const verified =
-    verifyArchitectureAnalysis(
-      scan,
-      analysis
-    );
+  verifyArchitectureAnalysis(
+    scan,
+    analysis,
+    research
+  );
 
   architecture = {
     ...analysis,

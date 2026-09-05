@@ -1,22 +1,18 @@
-{"timestamp":"00:00:01.908","source":"Server","level":"LOG","message":""}
-{"timestamp":"00:00:40.851","source":"Browser","level":"INFO","message":"Download the React DevTools for a better development experience: https://react.dev/link/react-devtools"}
-{"timestamp":"00:01:14.455","source":"Server","level":"LOG","message":"[Repository Ingestion] Trying GitHub archive..."}
-{"timestamp":"00:02:27.270","source":"Server","level":"LOG","message":"[Repository Ingestion] Archive download finished in 72.81s with status: passed"}
-{"timestamp":"00:02:27.272","source":"Server","level":"LOG","message":"[Repository Ingestion] Extracting GitHub archive..."}
-{"timestamp":"00:02:29.096","source":"Server","level":"LOG","message":"[Repository Ingestion] Archive extraction finished in 1.82s with status: passed"}
-{"timestamp":"00:02:29.096","source":"Server","level":"LOG","message":"[Repository Ingestion] GitHub archive fast-path succeeded."}
-{"timestamp":"00:02:29.097","source":"Server","level":"LOG","message":"[Repository Ingestion] Total ingestion time: 74.64s."}
-{"timestamp":"00:02:34.543","source":"Server","level":"LOG","message":"[Repository Ingestion] Trying GitHub archive..."}
-{"timestamp":"00:02:34.977","source":"Server","level":"LOG","message":"[Repository Ingestion] Archive download finished in 0.43s with status: failed"}
-{"timestamp":"00:02:34.977","source":"Server","level":"LOG","message":"[Repository Ingestion] Archive unavailable. Falling back to Git clone."}
-{"timestamp":"00:02:34.978","source":"Server","level":"LOG","message":"[Repository Ingestion] Starting Git clone fallback..."}
-{"timestamp":"00:02:34.978","source":"Server","level":"LOG","message":"[Repository Ingestion] Git clone attempt 1/3..."}
-{"timestamp":"00:03:27.876","source":"Server","level":"LOG","message":"[Repository Ingestion] Git clone succeeded in 52.90s."}
-{"timestamp":"00:03:27.877","source":"Server","level":"LOG","message":"[Repository Ingestion] Total ingestion time: 53.33s."}
-{"timestamp":"00:12:19.164","source":"Browser","level":"INFO","message":"Download the React DevTools for a better development experience: https://react.dev/link/react-devtools"}
-{"timestamp":"00:12:38.574","source":"Server","level":"LOG","message":"[Repository Ingestion] Trying GitHub archive..."}
-{"timestamp":"00:15:20.625","source":"Server","level":"LOG","message":"[Repository Ingestion] Archive download finished in 162.04s with status: passed"}
-{"timestamp":"00:15:20.626","source":"Server","level":"LOG","message":"[Repository Ingestion] Extracting GitHub archive..."}
-{"timestamp":"00:15:22.438","source":"Server","level":"LOG","message":"[Repository Ingestion] Archive extraction finished in 1.81s with status: passed"}
-{"timestamp":"00:15:22.438","source":"Server","level":"LOG","message":"[Repository Ingestion] GitHub archive fast-path succeeded."}
-{"timestamp":"00:15:22.438","source":"Server","level":"LOG","message":"[Repository Ingestion] Total ingestion time: 163.86s."}
+{"timestamp":"00:00:01.649","source":"Server","level":"LOG","message":""}
+{"timestamp":"00:00:17.678","source":"Server","level":"LOG","message":"[Repository Ingestion] Trying GitHub archive..."}
+{"timestamp":"00:01:20.798","source":"Server","level":"LOG","message":"[Repository Ingestion] Archive download finished in 63.12s with status: passed"}
+{"timestamp":"00:01:20.799","source":"Server","level":"LOG","message":"[Repository Ingestion] Extracting GitHub archive..."}
+{"timestamp":"00:01:22.289","source":"Server","level":"LOG","message":"[Repository Ingestion] Archive extraction finished in 1.49s with status: passed"}
+{"timestamp":"00:01:22.290","source":"Server","level":"LOG","message":"[Repository Ingestion] GitHub archive fast-path succeeded."}
+{"timestamp":"00:01:22.290","source":"Server","level":"LOG","message":"[Repository Ingestion] Total ingestion time: 64.61s."}
+{"timestamp":"00:01:32.793","source":"Server","level":"ERROR","message":"[DeployGuard Research Agent] \"fetch failed\""}
+{"timestamp":"00:04:29.418","source":"Browser","level":"INFO","message":"Download the React DevTools for a better development experience: https://react.dev/link/react-devtools"}
+{"timestamp":"00:04:34.929","source":"Server","level":"LOG","message":"[Repository Ingestion] Trying GitHub archive..."}
+{"timestamp":"00:04:46.811","source":"Server","level":"LOG","message":"[Repository Ingestion] Archive download finished in 11.88s with status: failed"}
+{"timestamp":"00:04:46.812","source":"Server","level":"LOG","message":"[Repository Ingestion] Archive unavailable. Falling back to Git clone."}
+{"timestamp":"00:04:46.813","source":"Server","level":"LOG","message":"[Repository Ingestion] Starting Git clone fallback..."}
+{"timestamp":"00:04:46.814","source":"Server","level":"LOG","message":"[Repository Ingestion] Git clone attempt 1/3..."}
+{"timestamp":"00:05:44.931","source":"Server","level":"LOG","message":"[Repository Ingestion] Git clone attempt 1 failed."}
+{"timestamp":"00:05:46.935","source":"Server","level":"LOG","message":"[Repository Ingestion] Git clone attempt 2/3..."}
+{"timestamp":"00:07:10.753","source":"Server","level":"LOG","message":"[Repository Ingestion] Git clone succeeded in 143.93s."}
+{"timestamp":"00:07:10.753","source":"Server","level":"LOG","message":"[Repository Ingestion] Total ingestion time: 155.82s."}

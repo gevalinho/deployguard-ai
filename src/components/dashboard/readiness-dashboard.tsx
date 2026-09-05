@@ -112,6 +112,10 @@ const ASSESSMENT_STAGES = [
     label: "Repository Scan",
   },
   {
+  stage: "research",
+  label: "External Research",
+},
+  {
     stage: "preparation",
     label: "Sandbox Preparation",
   },
@@ -143,6 +147,7 @@ const ASSESSMENT_STAGES = [
     stage: "report",
     label: "Readiness Report",
   },
+  
 ] as const;
 
 function getStatusLabel(

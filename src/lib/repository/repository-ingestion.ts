@@ -31,231 +31,6 @@ function formatDuration(startedAt: number): string {
   ).toFixed(2);
 }
 
-// async function tryArchiveDownload(
-//   repository: GitHubRepository,
-//   temporaryRoot: string,
-//   repositoryPath: string
-// ): Promise<boolean> {
-//   const archivePath = join(
-//     temporaryRoot,
-//     "repository.tar.gz"
-//   );
-
-//   const archiveUrl =
-//     `https://api.github.com/repos/` +
-//     `${encodeURIComponent(repository.owner)}/` +
-//     `${encodeURIComponent(repository.name)}/tarball`;
-
-//   console.log(
-//     "[Repository Ingestion] Trying GitHub archive..."
-//   );
-
-//   const archiveStartedAt = Date.now();
-
-//   const download = await runCommand(
-//     "curl",
-//     [
-//       "--fail",
-//       "--location",
-//       "--silent",
-//       "--show-error",
-//       "--connect-timeout",
-//       "20",
-//       "--max-time",
-//       "180",
-//       "--output",
-//       archivePath,
-//       archiveUrl,
-//     ],
-//     temporaryRoot
-//   );
-
-//   console.log(
-//     `[Repository Ingestion] Archive download finished in ${formatDuration(
-//       archiveStartedAt
-//     )}s with status: ${download.status}`
-//   );
-
-//   if (
-//     download.status !== "passed" ||
-//     !existsSync(archivePath)
-//   ) {
-//     rmSync(archivePath, {
-//       force: true,
-//     });
-
-//     console.log(
-//       "[Repository Ingestion] Archive unavailable. Falling back to Git clone."
-//     );
-
-//     return false;
-//   }
-
-//   const extractionStartedAt =
-//     Date.now();
-
-//   console.log(
-//     "[Repository Ingestion] Extracting GitHub archive..."
-//   );
-
-//   const extraction =
-//     await runCommand(
-//       "tar",
-//       [
-//         "-xzf",
-//         archivePath,
-//         "-C",
-//         temporaryRoot,
-//       ],
-//       temporaryRoot
-//     );
-
-//   rmSync(archivePath, {
-//     force: true,
-//   });
-
-//   if (
-//     extraction.status !== "passed"
-//   ) {
-//     console.log(
-//       "[Repository Ingestion] Archive extraction failed. Falling back to Git clone."
-//     );
-
-//     return false;
-//   }
-
-//   /*
-//    * GitHub archives contain a generated
-//    * top-level directory. Find it and move
-//    * it into the standard repository path.
-//    */
-//   const extractedDirectory =
-//     join(
-//       temporaryRoot,
-//       `${repository.owner}-${repository.name}`
-//     );
-
-//   /*
-//    * Because GitHub appends a commit hash to
-//    * the extracted directory name, using
-//    * --strip-components during extraction is
-//    * simpler and avoids depending on that name.
-//    */
-
-//   rmSync(extractedDirectory, {
-//     recursive: true,
-//     force: true,
-//   });
-
-//   /*
-//    * Re-extract directly into repositoryPath
-//    * with the generated GitHub directory removed.
-//    */
-//   const secondArchiveUrl =
-//     archiveUrl;
-
-//   const secondArchivePath =
-//     join(
-//       temporaryRoot,
-//       "repository-second.tar.gz"
-//     );
-
-//   const secondDownload =
-//     await runCommand(
-//       "curl",
-//       [
-//         "--fail",
-//         "--location",
-//         "--silent",
-//         "--show-error",
-//         "--connect-timeout",
-//         "20",
-//         "--max-time",
-//         "180",
-//         "--output",
-//         secondArchivePath,
-//         secondArchiveUrl,
-//       ],
-//       temporaryRoot
-//     );
-
-//   if (
-//     secondDownload.status !== "passed" ||
-//     !existsSync(secondArchivePath)
-//   ) {
-//     rmSync(secondArchivePath, {
-//       force: true,
-//     });
-
-//     return false;
-//   }
-
-//   const mkdir =
-//     await runCommand(
-//       "mkdir",
-//       [
-//         "-p",
-//         repositoryPath,
-//       ],
-//       temporaryRoot
-//     );
-
-//   if (mkdir.status !== "passed") {
-//     rmSync(secondArchivePath, {
-//       force: true,
-//     });
-
-//     return false;
-//   }
-
-//   const finalExtraction =
-//     await runCommand(
-//       "tar",
-//       [
-//         "-xzf",
-//         secondArchivePath,
-//         "-C",
-//         repositoryPath,
-//         "--strip-components=1",
-//       ],
-//       temporaryRoot
-//     );
-
-//   rmSync(secondArchivePath, {
-//     force: true,
-//   });
-
-//   if (
-//     finalExtraction.status !==
-//     "passed"
-//   ) {
-//     rmSync(repositoryPath, {
-//       recursive: true,
-//       force: true,
-//     });
-
-//     console.log(
-//       "[Repository Ingestion] Archive extraction failed. Falling back to Git clone."
-//     );
-
-//     return false;
-//   }
-
-//   console.log(
-//     `[Repository Ingestion] Archive extraction completed in ${formatDuration(
-//       extractionStartedAt
-//     )}s.`
-//   );
-
-//   console.log(
-//     "[Repository Ingestion] GitHub archive fast-path succeeded."
-//   );
-
-//   return existsSync(
-//     repositoryPath
-//   );
-// }
-
 
 
 async function tryArchiveDownload(
@@ -469,14 +244,37 @@ async function cloneRepository(
     }
   }
 
+  // if (!cloneSucceeded) {
+  //   throw new Error(
+  //     [
+  //       `Repository clone failed after ${CLONE_ATTEMPTS} attempts.`,
+  //       lastError,
+  //     ].join("\n")
+  //   );
+  // }
+
+
   if (!cloneSucceeded) {
+  const authenticationFailure =
+    /could not read Username|Authentication failed|Repository not found|terminal prompts disabled/i.test(
+      lastError
+    );
+
+  if (authenticationFailure) {
     throw new Error(
-      [
-        `Repository clone failed after ${CLONE_ATTEMPTS} attempts.`,
-        lastError,
-      ].join("\n")
+      "This repository could not be accessed. DeployGuard currently supports public GitHub repositories. Private repository access requires GitHub authentication."
     );
   }
+
+  throw new Error(
+    [
+      `Repository ingestion failed after ${CLONE_ATTEMPTS} attempts.`,
+      lastError,
+    ].join("\n")
+  );
+}
+
+
 }
 
 export async function ingestGitHubRepository(
