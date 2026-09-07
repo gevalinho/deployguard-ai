@@ -1505,13 +1505,93 @@ var __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$execution$2f$c
 ;
 const CLONE_ATTEMPTS = 3;
 const CLONE_RETRY_DELAY_MS = 2000;
+const CACHE_TTL_MS = 15 * 60 * 1000;
+const CACHE_ROOT = (0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$path__$5b$external$5d$__$28$node$3a$path$2c$__cjs$29$__["resolve"])(process.cwd(), ".deployguard", "cache", "repositories");
 function delay(ms) {
-    return new Promise((resolve)=>{
-        setTimeout(resolve, ms);
+    return new Promise((resolveDelay)=>{
+        setTimeout(resolveDelay, ms);
     });
 }
 function formatDuration(startedAt) {
     return ((Date.now() - startedAt) / 1000).toFixed(2);
+}
+function getCacheDirectory(repository) {
+    const owner = repository.owner.toLowerCase().replace(/[^a-z0-9._-]/g, "_");
+    const name = repository.name.toLowerCase().replace(/[^a-z0-9._-]/g, "_");
+    return (0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$path__$5b$external$5d$__$28$node$3a$path$2c$__cjs$29$__["join"])(CACHE_ROOT, `${owner}--${name}`);
+}
+function getCachedRepositoryPath(repository) {
+    return (0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$path__$5b$external$5d$__$28$node$3a$path$2c$__cjs$29$__["join"])(getCacheDirectory(repository), "repository");
+}
+function getCacheMetadataPath(repository) {
+    return (0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$path__$5b$external$5d$__$28$node$3a$path$2c$__cjs$29$__["join"])(getCacheDirectory(repository), "metadata.json");
+}
+function readCacheMetadata(repository) {
+    const metadataPath = getCacheMetadataPath(repository);
+    if (!(0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$fs__$5b$external$5d$__$28$node$3a$fs$2c$__cjs$29$__["existsSync"])(metadataPath)) {
+        return null;
+    }
+    try {
+        return JSON.parse((0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$fs__$5b$external$5d$__$28$node$3a$fs$2c$__cjs$29$__["readFileSync"])(metadataPath, "utf8"));
+    } catch  {
+        return null;
+    }
+}
+function isCacheFresh(repository) {
+    const cachePath = getCachedRepositoryPath(repository);
+    if (!(0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$fs__$5b$external$5d$__$28$node$3a$fs$2c$__cjs$29$__["existsSync"])(cachePath)) {
+        return false;
+    }
+    const metadata = readCacheMetadata(repository);
+    if (!metadata) {
+        return false;
+    }
+    if (metadata.repository !== repository.fullName) {
+        return false;
+    }
+    const cachedAt = Date.parse(metadata.cachedAt);
+    if (Number.isNaN(cachedAt)) {
+        return false;
+    }
+    return Date.now() - cachedAt < CACHE_TTL_MS;
+}
+function removeRepositoryCache(repository) {
+    (0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$fs__$5b$external$5d$__$28$node$3a$fs$2c$__cjs$29$__["rmSync"])(getCacheDirectory(repository), {
+        recursive: true,
+        force: true
+    });
+}
+function saveRepositoryToCache(repository, sourcePath) {
+    const cacheDirectory = getCacheDirectory(repository);
+    const cachePath = getCachedRepositoryPath(repository);
+    removeRepositoryCache(repository);
+    (0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$fs__$5b$external$5d$__$28$node$3a$fs$2c$__cjs$29$__["mkdirSync"])(cacheDirectory, {
+        recursive: true
+    });
+    (0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$fs__$5b$external$5d$__$28$node$3a$fs$2c$__cjs$29$__["cpSync"])(sourcePath, cachePath, {
+        recursive: true,
+        force: true
+    });
+    const metadata = {
+        cachedAt: new Date().toISOString(),
+        repository: repository.fullName
+    };
+    (0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$fs__$5b$external$5d$__$28$node$3a$fs$2c$__cjs$29$__["writeFileSync"])(getCacheMetadataPath(repository), JSON.stringify(metadata, null, 2), "utf8");
+    console.log(`[Repository Ingestion] Cached ${repository.fullName} for ${CACHE_TTL_MS / 60000} minutes.`);
+}
+function copyCachedRepository(repository, repositoryPath) {
+    if (!isCacheFresh(repository)) {
+        return false;
+    }
+    const cachedPath = getCachedRepositoryPath(repository);
+    console.log(`[Repository Ingestion] Cache hit for ${repository.fullName}.`);
+    const copyStartedAt = Date.now();
+    (0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$fs__$5b$external$5d$__$28$node$3a$fs$2c$__cjs$29$__["cpSync"])(cachedPath, repositoryPath, {
+        recursive: true,
+        force: true
+    });
+    console.log(`[Repository Ingestion] Cached repository copied in ${formatDuration(copyStartedAt)}s.`);
+    return true;
 }
 async function tryArchiveDownload(repository, temporaryRoot, repositoryPath) {
     const archivePath = (0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$path__$5b$external$5d$__$28$node$3a$path$2c$__cjs$29$__["join"])(temporaryRoot, "repository.tar.gz");
@@ -1603,14 +1683,6 @@ async function cloneRepository(repository, temporaryRoot, repositoryPath) {
             await delay(CLONE_RETRY_DELAY_MS * attempt);
         }
     }
-    // if (!cloneSucceeded) {
-    //   throw new Error(
-    //     [
-    //       `Repository clone failed after ${CLONE_ATTEMPTS} attempts.`,
-    //       lastError,
-    //     ].join("\n")
-    //   );
-    // }
     if (!cloneSucceeded) {
         const authenticationFailure = /could not read Username|Authentication failed|Repository not found|terminal prompts disabled/i.test(lastError);
         if (authenticationFailure) {
@@ -1623,16 +1695,35 @@ async function cloneRepository(repository, temporaryRoot, repositoryPath) {
     }
 }
 async function ingestGitHubRepository(repository) {
+    (0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$fs__$5b$external$5d$__$28$node$3a$fs$2c$__cjs$29$__["mkdirSync"])(CACHE_ROOT, {
+        recursive: true
+    });
     const temporaryRoot = (0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$fs__$5b$external$5d$__$28$node$3a$fs$2c$__cjs$29$__["mkdtempSync"])((0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$path__$5b$external$5d$__$28$node$3a$path$2c$__cjs$29$__["join"])((0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$os__$5b$external$5d$__$28$node$3a$os$2c$__cjs$29$__["tmpdir"])(), "deployguard-repo-"));
     const repositoryPath = (0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$path__$5b$external$5d$__$28$node$3a$path$2c$__cjs$29$__["join"])(temporaryRoot, "repository");
     const ingestionStartedAt = Date.now();
     try {
-        const archiveSucceeded = await tryArchiveDownload(repository, temporaryRoot, repositoryPath);
-        if (!archiveSucceeded) {
-            await cloneRepository(repository, temporaryRoot, repositoryPath);
+        const cacheHit = copyCachedRepository(repository, repositoryPath);
+        if (!cacheHit) {
+            console.log(`[Repository Ingestion] Cache miss for ${repository.fullName}.`);
+            const archiveSucceeded = await tryArchiveDownload(repository, temporaryRoot, repositoryPath);
+            if (!archiveSucceeded) {
+                await cloneRepository(repository, temporaryRoot, repositoryPath);
+            }
+            if (!(0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$fs__$5b$external$5d$__$28$node$3a$fs$2c$__cjs$29$__["existsSync"])(repositoryPath)) {
+                throw new Error("Repository ingestion reported success but the repository directory is missing.");
+            }
+            try {
+                saveRepositoryToCache(repository, repositoryPath);
+            } catch (cacheError) {
+                console.warn("[Repository Ingestion] Repository was ingested successfully, but caching failed.", cacheError);
+            }
         }
         if (!(0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$fs__$5b$external$5d$__$28$node$3a$fs$2c$__cjs$29$__["existsSync"])(repositoryPath)) {
             throw new Error("Repository ingestion reported success but the repository directory is missing.");
+        }
+        const stats = (0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$fs__$5b$external$5d$__$28$node$3a$fs$2c$__cjs$29$__["statSync"])(repositoryPath);
+        if (!stats.isDirectory()) {
+            throw new Error("Repository ingestion path is not a directory.");
         }
         console.log(`[Repository Ingestion] Total ingestion time: ${formatDuration(ingestionStartedAt)}s.`);
         let cleanedUp = false;
@@ -1644,6 +1735,9 @@ async function ingestGitHubRepository(repository) {
                     return;
                 }
                 cleanedUp = true;
+                // Only remove the disposable
+                // assessment copy.
+                // Persistent cache remains.
                 (0, __TURBOPACK__imported__module__$5b$externals$5d2f$node$3a$fs__$5b$external$5d$__$28$node$3a$fs$2c$__cjs$29$__["rmSync"])(temporaryRoot, {
                     recursive: true,
                     force: true

@@ -1,10 +1,18 @@
 import {
+  cpSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
+  statSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import {
+  join,
+  resolve,
+} from "node:path";
 
 import { runCommand } from "@/lib/execution/command-runner";
 import type { GitHubRepository } from "@/lib/repository/github-repository";
@@ -15,38 +23,304 @@ export interface IngestedRepository {
   cleanup: () => void;
 }
 
-const CLONE_ATTEMPTS = 3;
-const CLONE_RETRY_DELAY_MS = 2000;
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
+interface RepositoryCacheMetadata {
+  cachedAt: string;
+  repository: string;
 }
 
-function formatDuration(startedAt: number): string {
+const CLONE_ATTEMPTS = 3;
+
+const CLONE_RETRY_DELAY_MS =
+  2000;
+
+const CACHE_TTL_MS =
+  15 * 60 * 1000;
+
+const CACHE_ROOT =
+  resolve(
+    process.cwd(),
+    ".deployguard",
+    "cache",
+    "repositories"
+  );
+
+function delay(
+  ms: number
+): Promise<void> {
+  return new Promise(
+    (resolveDelay) => {
+      setTimeout(
+        resolveDelay,
+        ms
+      );
+    }
+  );
+}
+
+function formatDuration(
+  startedAt: number
+): string {
   return (
     (Date.now() - startedAt) /
     1000
   ).toFixed(2);
 }
 
+function getCacheDirectory(
+  repository: GitHubRepository
+): string {
+  const owner =
+    repository.owner
+      .toLowerCase()
+      .replace(
+        /[^a-z0-9._-]/g,
+        "_"
+      );
 
+  const name =
+    repository.name
+      .toLowerCase()
+      .replace(
+        /[^a-z0-9._-]/g,
+        "_"
+      );
+
+  return join(
+    CACHE_ROOT,
+    `${owner}--${name}`
+  );
+}
+
+function getCachedRepositoryPath(
+  repository: GitHubRepository
+): string {
+  return join(
+    getCacheDirectory(
+      repository
+    ),
+    "repository"
+  );
+}
+
+function getCacheMetadataPath(
+  repository: GitHubRepository
+): string {
+  return join(
+    getCacheDirectory(
+      repository
+    ),
+    "metadata.json"
+  );
+}
+
+function readCacheMetadata(
+  repository: GitHubRepository
+): RepositoryCacheMetadata | null {
+  const metadataPath =
+    getCacheMetadataPath(
+      repository
+    );
+
+  if (
+    !existsSync(metadataPath)
+  ) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(
+      readFileSync(
+        metadataPath,
+        "utf8"
+      )
+    ) as RepositoryCacheMetadata;
+  } catch {
+    return null;
+  }
+}
+
+function isCacheFresh(
+  repository: GitHubRepository
+): boolean {
+  const cachePath =
+    getCachedRepositoryPath(
+      repository
+    );
+
+  if (
+    !existsSync(cachePath)
+  ) {
+    return false;
+  }
+
+  const metadata =
+    readCacheMetadata(
+      repository
+    );
+
+  if (!metadata) {
+    return false;
+  }
+
+  if (
+    metadata.repository !==
+    repository.fullName
+  ) {
+    return false;
+  }
+
+  const cachedAt =
+    Date.parse(
+      metadata.cachedAt
+    );
+
+  if (
+    Number.isNaN(cachedAt)
+  ) {
+    return false;
+  }
+
+  return (
+    Date.now() - cachedAt <
+    CACHE_TTL_MS
+  );
+}
+
+function removeRepositoryCache(
+  repository: GitHubRepository
+): void {
+  rmSync(
+    getCacheDirectory(
+      repository
+    ),
+    {
+      recursive: true,
+      force: true,
+    }
+  );
+}
+
+function saveRepositoryToCache(
+  repository: GitHubRepository,
+  sourcePath: string
+): void {
+  const cacheDirectory =
+    getCacheDirectory(
+      repository
+    );
+
+  const cachePath =
+    getCachedRepositoryPath(
+      repository
+    );
+
+  removeRepositoryCache(
+    repository
+  );
+
+  mkdirSync(
+    cacheDirectory,
+    {
+      recursive: true,
+    }
+  );
+
+  cpSync(
+    sourcePath,
+    cachePath,
+    {
+      recursive: true,
+      force: true,
+    }
+  );
+
+  const metadata:
+    RepositoryCacheMetadata = {
+      cachedAt:
+        new Date().toISOString(),
+
+      repository:
+        repository.fullName,
+    };
+
+  writeFileSync(
+    getCacheMetadataPath(
+      repository
+    ),
+    JSON.stringify(
+      metadata,
+      null,
+      2
+    ),
+    "utf8"
+  );
+
+  console.log(
+    `[Repository Ingestion] Cached ${repository.fullName} for ${CACHE_TTL_MS / 60000} minutes.`
+  );
+}
+
+function copyCachedRepository(
+  repository: GitHubRepository,
+  repositoryPath: string
+): boolean {
+  if (
+    !isCacheFresh(
+      repository
+    )
+  ) {
+    return false;
+  }
+
+  const cachedPath =
+    getCachedRepositoryPath(
+      repository
+    );
+
+  console.log(
+    `[Repository Ingestion] Cache hit for ${repository.fullName}.`
+  );
+
+  const copyStartedAt =
+    Date.now();
+
+  cpSync(
+    cachedPath,
+    repositoryPath,
+    {
+      recursive: true,
+      force: true,
+    }
+  );
+
+  console.log(
+    `[Repository Ingestion] Cached repository copied in ${formatDuration(
+      copyStartedAt
+    )}s.`
+  );
+
+  return true;
+}
 
 async function tryArchiveDownload(
   repository: GitHubRepository,
   temporaryRoot: string,
   repositoryPath: string
 ): Promise<boolean> {
-  const archivePath = join(
-    temporaryRoot,
-    "repository.tar.gz"
-  );
+  const archivePath =
+    join(
+      temporaryRoot,
+      "repository.tar.gz"
+    );
 
   const archiveUrl =
     `https://api.github.com/repos/` +
-    `${encodeURIComponent(repository.owner)}/` +
-    `${encodeURIComponent(repository.name)}/tarball`;
+    `${encodeURIComponent(
+      repository.owner
+    )}/` +
+    `${encodeURIComponent(
+      repository.name
+    )}/tarball`;
 
   console.log(
     "[Repository Ingestion] Trying GitHub archive..."
@@ -81,12 +355,16 @@ async function tryArchiveDownload(
   );
 
   if (
-    download.status !== "passed" ||
+    download.status !==
+      "passed" ||
     !existsSync(archivePath)
   ) {
-    rmSync(archivePath, {
-      force: true,
-    });
+    rmSync(
+      archivePath,
+      {
+        force: true,
+      }
+    );
 
     console.log(
       "[Repository Ingestion] Archive unavailable. Falling back to Git clone."
@@ -116,9 +394,12 @@ async function tryArchiveDownload(
       temporaryRoot
     );
 
-  rmSync(archivePath, {
-    force: true,
-  });
+  rmSync(
+    archivePath,
+    {
+      force: true,
+    }
+  );
 
   console.log(
     `[Repository Ingestion] Archive extraction finished in ${formatDuration(
@@ -127,13 +408,19 @@ async function tryArchiveDownload(
   );
 
   if (
-    extraction.status !== "passed" ||
-    !existsSync(repositoryPath)
+    extraction.status !==
+      "passed" ||
+    !existsSync(
+      repositoryPath
+    )
   ) {
-    rmSync(repositoryPath, {
-      recursive: true,
-      force: true,
-    });
+    rmSync(
+      repositoryPath,
+      {
+        recursive: true,
+        force: true,
+      }
+    );
 
     console.log(
       "[Repository Ingestion] Archive extraction failed. Falling back to Git clone."
@@ -149,9 +436,6 @@ async function tryArchiveDownload(
   return true;
 }
 
-
-
-
 async function cloneRepository(
   repository: GitHubRepository,
   temporaryRoot: string,
@@ -164,7 +448,9 @@ async function cloneRepository(
   const cloneStartedAt =
     Date.now();
 
-  let cloneSucceeded = false;
+  let cloneSucceeded =
+    false;
+
   let lastError =
     "Repository clone failed.";
 
@@ -174,12 +460,17 @@ async function cloneRepository(
     attempt += 1
   ) {
     if (
-      existsSync(repositoryPath)
+      existsSync(
+        repositoryPath
+      )
     ) {
-      rmSync(repositoryPath, {
-        recursive: true,
-        force: true,
-      });
+      rmSync(
+        repositoryPath,
+        {
+          recursive: true,
+          force: true,
+        }
+      );
     }
 
     console.log(
@@ -210,10 +501,14 @@ async function cloneRepository(
       );
 
     if (
-      result.status === "passed" &&
-      existsSync(repositoryPath)
+      result.status ===
+        "passed" &&
+      existsSync(
+        repositoryPath
+      )
     ) {
-      cloneSucceeded = true;
+      cloneSucceeded =
+        true;
 
       console.log(
         `[Repository Ingestion] Git clone succeeded in ${formatDuration(
@@ -244,42 +539,39 @@ async function cloneRepository(
     }
   }
 
-  // if (!cloneSucceeded) {
-  //   throw new Error(
-  //     [
-  //       `Repository clone failed after ${CLONE_ATTEMPTS} attempts.`,
-  //       lastError,
-  //     ].join("\n")
-  //   );
-  // }
-
-
   if (!cloneSucceeded) {
-  const authenticationFailure =
-    /could not read Username|Authentication failed|Repository not found|terminal prompts disabled/i.test(
-      lastError
-    );
+    const authenticationFailure =
+      /could not read Username|Authentication failed|Repository not found|terminal prompts disabled/i.test(
+        lastError
+      );
 
-  if (authenticationFailure) {
+    if (
+      authenticationFailure
+    ) {
+      throw new Error(
+        "This repository could not be accessed. DeployGuard currently supports public GitHub repositories. Private repository access requires GitHub authentication."
+      );
+    }
+
     throw new Error(
-      "This repository could not be accessed. DeployGuard currently supports public GitHub repositories. Private repository access requires GitHub authentication."
+      [
+        `Repository ingestion failed after ${CLONE_ATTEMPTS} attempts.`,
+        lastError,
+      ].join("\n")
     );
   }
-
-  throw new Error(
-    [
-      `Repository ingestion failed after ${CLONE_ATTEMPTS} attempts.`,
-      lastError,
-    ].join("\n")
-  );
-}
-
-
 }
 
 export async function ingestGitHubRepository(
   repository: GitHubRepository
 ): Promise<IngestedRepository> {
+  mkdirSync(
+    CACHE_ROOT,
+    {
+      recursive: true,
+    }
+  );
+
   const temporaryRoot =
     mkdtempSync(
       join(
@@ -298,26 +590,77 @@ export async function ingestGitHubRepository(
     Date.now();
 
   try {
-    const archiveSucceeded =
-      await tryArchiveDownload(
+    const cacheHit =
+      copyCachedRepository(
         repository,
-        temporaryRoot,
         repositoryPath
       );
 
-    if (!archiveSucceeded) {
-      await cloneRepository(
-        repository,
-        temporaryRoot,
-        repositoryPath
+    if (!cacheHit) {
+      console.log(
+        `[Repository Ingestion] Cache miss for ${repository.fullName}.`
       );
+
+      const archiveSucceeded =
+        await tryArchiveDownload(
+          repository,
+          temporaryRoot,
+          repositoryPath
+        );
+
+      if (
+        !archiveSucceeded
+      ) {
+        await cloneRepository(
+          repository,
+          temporaryRoot,
+          repositoryPath
+        );
+      }
+
+      if (
+        !existsSync(
+          repositoryPath
+        )
+      ) {
+        throw new Error(
+          "Repository ingestion reported success but the repository directory is missing."
+        );
+      }
+
+      try {
+        saveRepositoryToCache(
+          repository,
+          repositoryPath
+        );
+      } catch (cacheError) {
+        console.warn(
+          "[Repository Ingestion] Repository was ingested successfully, but caching failed.",
+          cacheError
+        );
+      }
     }
 
     if (
-      !existsSync(repositoryPath)
+      !existsSync(
+        repositoryPath
+      )
     ) {
       throw new Error(
         "Repository ingestion reported success but the repository directory is missing."
+      );
+    }
+
+    const stats =
+      statSync(
+        repositoryPath
+      );
+
+    if (
+      !stats.isDirectory()
+    ) {
+      throw new Error(
+        "Repository ingestion path is not a directory."
       );
     }
 
@@ -327,7 +670,8 @@ export async function ingestGitHubRepository(
       )}s.`
     );
 
-    let cleanedUp = false;
+    let cleanedUp =
+      false;
 
     return {
       repository,
@@ -338,19 +682,29 @@ export async function ingestGitHubRepository(
           return;
         }
 
-        cleanedUp = true;
+        cleanedUp =
+          true;
 
-        rmSync(temporaryRoot, {
-          recursive: true,
-          force: true,
-        });
+        // Only remove the disposable
+        // assessment copy.
+        // Persistent cache remains.
+        rmSync(
+          temporaryRoot,
+          {
+            recursive: true,
+            force: true,
+          }
+        );
       },
     };
   } catch (error) {
-    rmSync(temporaryRoot, {
-      recursive: true,
-      force: true,
-    });
+    rmSync(
+      temporaryRoot,
+      {
+        recursive: true,
+        force: true,
+      }
+    );
 
     throw error;
   }
