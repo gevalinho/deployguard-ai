@@ -369,7 +369,9 @@ function ReadinessDashboard() {
     const [remoteScan, setRemoteScan] = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useState"])(null);
     const [scanLoading, setScanLoading] = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useState"])(false);
     const [scanError, setScanError] = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useState"])(null);
-    const [report, setReport] = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useState"])(null);
+    const [assessment, setAssessment] = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useState"])(null);
+    const report = assessment?.report ?? null;
+    const research = assessment?.research ?? null;
     const [loading, setLoading] = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useState"])(false);
     const [error, setError] = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useState"])(null);
     const [progressEvents, setProgressEvents] = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useState"])([]);
@@ -415,7 +417,7 @@ function ReadinessDashboard() {
     async function runAssessment() {
         setLoading(true);
         setError(null);
-        setReport(null);
+        setAssessment(null);
         setProgressEvents([]);
         try {
             const response = await fetch("/api/assessment", {
@@ -464,7 +466,7 @@ function ReadinessDashboard() {
                     if (parsed.event === "result") {
                         const payload = parsed.data;
                         if (payload.ok && payload.assessment) {
-                            setReport(payload.assessment.report);
+                            setAssessment(payload.assessment);
                         }
                         continue;
                     }
@@ -496,7 +498,7 @@ function ReadinessDashboard() {
                             children: "DeployGuard AI"
                         }, void 0, false, {
                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                            lineNumber: 580,
+                            lineNumber: 602,
                             columnNumber: 11
                         }, this),
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("h1", {
@@ -504,7 +506,7 @@ function ReadinessDashboard() {
                             children: "Production readiness, backed by evidence."
                         }, void 0, false, {
                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                            lineNumber: 584,
+                            lineNumber: 606,
                             columnNumber: 11
                         }, this),
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -512,7 +514,7 @@ function ReadinessDashboard() {
                             children: "Inspect build quality, security, testing, deployment readiness and architecture before code reaches production."
                         }, void 0, false, {
                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                            lineNumber: 589,
+                            lineNumber: 611,
                             columnNumber: 11
                         }, this),
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -524,7 +526,7 @@ function ReadinessDashboard() {
                                     children: "GitHub Repository"
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 598,
+                                    lineNumber: 620,
                                     columnNumber: 13
                                 }, this),
                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("input", {
@@ -537,7 +539,7 @@ function ReadinessDashboard() {
                                     className: "mt-3 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-zinc-500 disabled:opacity-60"
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 605,
+                                    lineNumber: 627,
                                     columnNumber: 13
                                 }, this),
                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -551,7 +553,7 @@ function ReadinessDashboard() {
                                             children: scanLoading ? "Scanning..." : "Static Scan"
                                         }, void 0, false, {
                                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                            lineNumber: 623,
+                                            lineNumber: 645,
                                             columnNumber: 15
                                         }, this),
                                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("button", {
@@ -562,13 +564,13 @@ function ReadinessDashboard() {
                                             children: loading ? "Assessment running..." : "Assess Repository"
                                         }, void 0, false, {
                                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                            lineNumber: 640,
+                                            lineNumber: 662,
                                             columnNumber: 15
                                         }, this)
                                     ]
                                 }, void 0, true, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 622,
+                                    lineNumber: 644,
                                     columnNumber: 13
                                 }, this),
                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -576,7 +578,7 @@ function ReadinessDashboard() {
                                     children: "Static Scan inspects repository evidence without executing code. Full Assessment runs isolated verification checks inside the DeployGuard sandbox."
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 658,
+                                    lineNumber: 680,
                                     columnNumber: 13
                                 }, this),
                                 scanError && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -584,7 +586,7 @@ function ReadinessDashboard() {
                                     children: scanError
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 669,
+                                    lineNumber: 691,
                                     columnNumber: 15
                                 }, this),
                                 error && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -592,19 +594,19 @@ function ReadinessDashboard() {
                                     children: error
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 675,
+                                    lineNumber: 697,
                                     columnNumber: 15
                                 }, this)
                             ]
                         }, void 0, true, {
                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                            lineNumber: 597,
+                            lineNumber: 619,
                             columnNumber: 11
                         }, this)
                     ]
                 }, void 0, true, {
                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                    lineNumber: 579,
+                    lineNumber: 601,
                     columnNumber: 9
                 }, this),
                 (loading || progressEvents.length > 0) && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("section", {
@@ -620,7 +622,7 @@ function ReadinessDashboard() {
                                             children: "Live verification"
                                         }, void 0, false, {
                                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                            lineNumber: 688,
+                                            lineNumber: 710,
                                             columnNumber: 17
                                         }, this),
                                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("h2", {
@@ -628,13 +630,13 @@ function ReadinessDashboard() {
                                             children: "Assessment Pipeline"
                                         }, void 0, false, {
                                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                            lineNumber: 692,
+                                            lineNumber: 714,
                                             columnNumber: 17
                                         }, this)
                                     ]
                                 }, void 0, true, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 687,
+                                    lineNumber: 709,
                                     columnNumber: 15
                                 }, this),
                                 loading && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
@@ -642,13 +644,13 @@ function ReadinessDashboard() {
                                     children: "Running"
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 698,
+                                    lineNumber: 720,
                                     columnNumber: 17
                                 }, this)
                             ]
                         }, void 0, true, {
                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                            lineNumber: 686,
+                            lineNumber: 708,
                             columnNumber: 13
                         }, this),
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -664,7 +666,7 @@ function ReadinessDashboard() {
                                             children: getProgressSymbol(status)
                                         }, void 0, false, {
                                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                            lineNumber: 724,
+                                            lineNumber: 746,
                                             columnNumber: 23
                                         }, this),
                                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -678,7 +680,7 @@ function ReadinessDashboard() {
                                                             children: label
                                                         }, void 0, false, {
                                                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                            lineNumber: 736,
+                                                            lineNumber: 758,
                                                             columnNumber: 27
                                                         }, this),
                                                         progress?.elapsedMs !== undefined && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
@@ -686,13 +688,13 @@ function ReadinessDashboard() {
                                                             children: formatElapsed(progress.elapsedMs)
                                                         }, void 0, false, {
                                                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                            lineNumber: 742,
+                                                            lineNumber: 764,
                                                             columnNumber: 29
                                                         }, this)
                                                     ]
                                                 }, void 0, true, {
                                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                    lineNumber: 735,
+                                                    lineNumber: 757,
                                                     columnNumber: 25
                                                 }, this),
                                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -700,31 +702,31 @@ function ReadinessDashboard() {
                                                     children: progress?.message ?? (status === "pending" ? "Waiting..." : "")
                                                 }, void 0, false, {
                                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                    lineNumber: 750,
+                                                    lineNumber: 772,
                                                     columnNumber: 25
                                                 }, this)
                                             ]
                                         }, void 0, true, {
                                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                            lineNumber: 734,
+                                            lineNumber: 756,
                                             columnNumber: 23
                                         }, this)
                                     ]
                                 }, stage, true, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 720,
+                                    lineNumber: 742,
                                     columnNumber: 21
                                 }, this);
                             })
                         }, void 0, false, {
                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                            lineNumber: 704,
+                            lineNumber: 726,
                             columnNumber: 13
                         }, this)
                     ]
                 }, void 0, true, {
                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                    lineNumber: 685,
+                    lineNumber: 707,
                     columnNumber: 11
                 }, this),
                 remoteScan && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("section", {
@@ -738,7 +740,7 @@ function ReadinessDashboard() {
                                     children: "Repository"
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 769,
+                                    lineNumber: 791,
                                     columnNumber: 15
                                 }, this),
                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("h2", {
@@ -746,7 +748,7 @@ function ReadinessDashboard() {
                                     children: remoteScan.repository.fullName
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 773,
+                                    lineNumber: 795,
                                     columnNumber: 15
                                 }, this),
                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -754,13 +756,13 @@ function ReadinessDashboard() {
                                     children: "Static repository evidence collected successfully."
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 781,
+                                    lineNumber: 803,
                                     columnNumber: 15
                                 }, this)
                             ]
                         }, void 0, true, {
                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                            lineNumber: 768,
+                            lineNumber: 790,
                             columnNumber: 13
                         }, this),
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -770,7 +772,7 @@ function ReadinessDashboard() {
                                     children: "Detected Technology"
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 789,
+                                    lineNumber: 811,
                                     columnNumber: 15
                                 }, this),
                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -783,7 +785,7 @@ function ReadinessDashboard() {
                                                     children: fact.key
                                                 }, void 0, false, {
                                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                    lineNumber: 800,
+                                                    lineNumber: 822,
                                                     columnNumber: 23
                                                 }, this),
                                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -791,7 +793,7 @@ function ReadinessDashboard() {
                                                     children: fact.value
                                                 }, void 0, false, {
                                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                    lineNumber: 804,
+                                                    lineNumber: 826,
                                                     columnNumber: 23
                                                 }, this),
                                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -804,24 +806,24 @@ function ReadinessDashboard() {
                                                     ]
                                                 }, void 0, true, {
                                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                    lineNumber: 808,
+                                                    lineNumber: 830,
                                                     columnNumber: 23
                                                 }, this)
                                             ]
                                         }, `${fact.key}-${fact.value}`, true, {
                                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                            lineNumber: 796,
+                                            lineNumber: 818,
                                             columnNumber: 21
                                         }, this))
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 793,
+                                    lineNumber: 815,
                                     columnNumber: 15
                                 }, this)
                             ]
                         }, void 0, true, {
                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                            lineNumber: 788,
+                            lineNumber: 810,
                             columnNumber: 13
                         }, this),
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -831,7 +833,7 @@ function ReadinessDashboard() {
                                     children: "Evidence"
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 823,
+                                    lineNumber: 845,
                                     columnNumber: 15
                                 }, this),
                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -848,7 +850,7 @@ function ReadinessDashboard() {
                                                                     children: evidence.path
                                                                 }, void 0, false, {
                                                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                                    lineNumber: 841,
+                                                                    lineNumber: 863,
                                                                     columnNumber: 31
                                                                 }, this),
                                                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -856,13 +858,13 @@ function ReadinessDashboard() {
                                                                     children: evidence.description
                                                                 }, void 0, false, {
                                                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                                    lineNumber: 847,
+                                                                    lineNumber: 869,
                                                                     columnNumber: 31
                                                                 }, this)
                                                             ]
                                                         }, void 0, true, {
                                                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                            lineNumber: 840,
+                                                            lineNumber: 862,
                                                             columnNumber: 29
                                                         }, this),
                                                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
@@ -870,35 +872,35 @@ function ReadinessDashboard() {
                                                             children: fact.key
                                                         }, void 0, false, {
                                                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                            lineNumber: 854,
+                                                            lineNumber: 876,
                                                             columnNumber: 29
                                                         }, this)
                                                     ]
                                                 }, void 0, true, {
                                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                    lineNumber: 839,
+                                                    lineNumber: 861,
                                                     columnNumber: 27
                                                 }, this)
                                             }, `${fact.key}-${evidence.path}-${index}`, false, {
                                                 fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                lineNumber: 835,
+                                                lineNumber: 857,
                                                 columnNumber: 25
                                             }, this)))
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 827,
+                                    lineNumber: 849,
                                     columnNumber: 15
                                 }, this)
                             ]
                         }, void 0, true, {
                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                            lineNumber: 822,
+                            lineNumber: 844,
                             columnNumber: 13
                         }, this)
                     ]
                 }, void 0, true, {
                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                    lineNumber: 767,
+                    lineNumber: 789,
                     columnNumber: 11
                 }, this),
                 report && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -915,7 +917,7 @@ function ReadinessDashboard() {
                                             children: "Readiness Score"
                                         }, void 0, false, {
                                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                            lineNumber: 871,
+                                            lineNumber: 893,
                                             columnNumber: 17
                                         }, this),
                                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -927,19 +929,19 @@ function ReadinessDashboard() {
                                                     children: "/100"
                                                 }, void 0, false, {
                                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                    lineNumber: 881,
+                                                    lineNumber: 903,
                                                     columnNumber: 19
                                                 }, this)
                                             ]
                                         }, void 0, true, {
                                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                            lineNumber: 875,
+                                            lineNumber: 897,
                                             columnNumber: 17
                                         }, this)
                                     ]
                                 }, void 0, true, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 870,
+                                    lineNumber: 892,
                                     columnNumber: 15
                                 }, this),
                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -950,7 +952,7 @@ function ReadinessDashboard() {
                                             children: "Assessment Coverage"
                                         }, void 0, false, {
                                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                            lineNumber: 888,
+                                            lineNumber: 910,
                                             columnNumber: 17
                                         }, this),
                                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -962,25 +964,25 @@ function ReadinessDashboard() {
                                                     children: "%"
                                                 }, void 0, false, {
                                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                    lineNumber: 898,
+                                                    lineNumber: 920,
                                                     columnNumber: 19
                                                 }, this)
                                             ]
                                         }, void 0, true, {
                                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                            lineNumber: 892,
+                                            lineNumber: 914,
                                             columnNumber: 17
                                         }, this)
                                     ]
                                 }, void 0, true, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 887,
+                                    lineNumber: 909,
                                     columnNumber: 15
                                 }, this)
                             ]
                         }, void 0, true, {
                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                            lineNumber: 869,
+                            lineNumber: 891,
                             columnNumber: 13
                         }, this),
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("section", {
@@ -990,7 +992,7 @@ function ReadinessDashboard() {
                                     children: "Verification Checks"
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 906,
+                                    lineNumber: 928,
                                     columnNumber: 15
                                 }, this),
                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -1007,7 +1009,7 @@ function ReadinessDashboard() {
                                                                 children: check.name
                                                             }, void 0, false, {
                                                                 fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                                lineNumber: 919,
+                                                                lineNumber: 941,
                                                                 columnNumber: 27
                                                             }, this),
                                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -1015,13 +1017,13 @@ function ReadinessDashboard() {
                                                                 children: check.summary
                                                             }, void 0, false, {
                                                                 fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                                lineNumber: 923,
+                                                                lineNumber: 945,
                                                                 columnNumber: 27
                                                             }, this)
                                                         ]
                                                     }, void 0, true, {
                                                         fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                        lineNumber: 918,
+                                                        lineNumber: 940,
                                                         columnNumber: 25
                                                     }, this),
                                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
@@ -1029,30 +1031,152 @@ function ReadinessDashboard() {
                                                         children: getStatusLabel(check)
                                                     }, void 0, false, {
                                                         fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                        lineNumber: 930,
+                                                        lineNumber: 952,
                                                         columnNumber: 25
                                                     }, this)
                                                 ]
                                             }, void 0, true, {
                                                 fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                lineNumber: 917,
+                                                lineNumber: 939,
                                                 columnNumber: 23
                                             }, this)
                                         }, check.id, false, {
                                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                            lineNumber: 913,
+                                            lineNumber: 935,
                                             columnNumber: 21
                                         }, this))
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 910,
+                                    lineNumber: 932,
                                     columnNumber: 15
                                 }, this)
                             ]
                         }, void 0, true, {
                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                            lineNumber: 905,
+                            lineNumber: 927,
                             columnNumber: 13
+                        }, this),
+                        research && research.evidence.length > 0 && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("section", {
+                            className: "rounded-2xl border border-zinc-800 bg-zinc-900 p-6",
+                            children: [
+                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+                                    className: "flex flex-wrap items-start justify-between gap-4",
+                                    children: [
+                                        /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+                                            children: [
+                                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
+                                                    className: "text-sm text-zinc-500",
+                                                    children: "Live external research"
+                                                }, void 0, false, {
+                                                    fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
+                                                    lineNumber: 970,
+                                                    columnNumber: 11
+                                                }, this),
+                                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("h2", {
+                                                    className: "mt-2 text-xl font-semibold",
+                                                    children: "External Evidence"
+                                                }, void 0, false, {
+                                                    fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
+                                                    lineNumber: 974,
+                                                    columnNumber: 11
+                                                }, this)
+                                            ]
+                                        }, void 0, true, {
+                                            fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
+                                            lineNumber: 969,
+                                            columnNumber: 9
+                                        }, this),
+                                        /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
+                                            className: "rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400",
+                                            children: [
+                                                research.evidence.length,
+                                                " ",
+                                                "sources"
+                                            ]
+                                        }, void 0, true, {
+                                            fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
+                                            lineNumber: 979,
+                                            columnNumber: 9
+                                        }, this)
+                                    ]
+                                }, void 0, true, {
+                                    fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
+                                    lineNumber: 968,
+                                    columnNumber: 7
+                                }, this),
+                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+                                    className: "mt-6 space-y-3",
+                                    children: research.evidence.map((evidence, index)=>/*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("article", {
+                                            className: "rounded-xl border border-zinc-800 bg-zinc-950/50 p-4",
+                                            children: [
+                                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
+                                                    className: "flex flex-wrap items-center gap-2",
+                                                    children: [
+                                                        /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
+                                                            className: "rounded-full border border-zinc-700 px-2.5 py-1 text-xs uppercase tracking-wide text-zinc-400",
+                                                            children: evidence.authority
+                                                        }, void 0, false, {
+                                                            fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
+                                                            lineNumber: 998,
+                                                            columnNumber: 17
+                                                        }, this),
+                                                        /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
+                                                            className: "text-xs uppercase tracking-wide text-zinc-600",
+                                                            children: evidence.sourceType.replace(/_/g, " ")
+                                                        }, void 0, false, {
+                                                            fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
+                                                            lineNumber: 1004,
+                                                            columnNumber: 17
+                                                        }, this)
+                                                    ]
+                                                }, void 0, true, {
+                                                    fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
+                                                    lineNumber: 997,
+                                                    columnNumber: 15
+                                                }, this),
+                                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("a", {
+                                                    href: evidence.url,
+                                                    target: "_blank",
+                                                    rel: "noreferrer",
+                                                    className: "mt-3 block font-medium text-zinc-200 transition hover:text-white",
+                                                    children: evidence.title
+                                                }, void 0, false, {
+                                                    fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
+                                                    lineNumber: 1012,
+                                                    columnNumber: 15
+                                                }, this),
+                                                evidence.publisher && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
+                                                    className: "mt-1 text-sm text-zinc-500",
+                                                    children: evidence.publisher
+                                                }, void 0, false, {
+                                                    fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
+                                                    lineNumber: 1022,
+                                                    columnNumber: 17
+                                                }, this)
+                                            ]
+                                        }, `${evidence.url}-${index}`, true, {
+                                            fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
+                                            lineNumber: 993,
+                                            columnNumber: 13
+                                        }, this))
+                                }, void 0, false, {
+                                    fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
+                                    lineNumber: 987,
+                                    columnNumber: 7
+                                }, this),
+                                /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
+                                    className: "mt-5 border-t border-zinc-800 pt-4 text-sm leading-6 text-zinc-500",
+                                    children: "External evidence informs Nemotron analysis but does not directly determine the readiness score."
+                                }, void 0, false, {
+                                    fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
+                                    lineNumber: 1033,
+                                    columnNumber: 7
+                                }, this)
+                            ]
+                        }, void 0, true, {
+                            fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
+                            lineNumber: 967,
+                            columnNumber: 5
                         }, this),
                         report.architecture && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("section", {
                             className: "rounded-2xl border border-zinc-800 bg-zinc-900 p-6",
@@ -1062,7 +1186,7 @@ function ReadinessDashboard() {
                                     children: "NVIDIA Nemotron"
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 944,
+                                    lineNumber: 1044,
                                     columnNumber: 17
                                 }, this),
                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("h2", {
@@ -1070,7 +1194,7 @@ function ReadinessDashboard() {
                                     children: "AI Architecture Analysis"
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 948,
+                                    lineNumber: 1048,
                                     columnNumber: 17
                                 }, this),
                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -1078,7 +1202,7 @@ function ReadinessDashboard() {
                                     children: report.architecture.summary
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 953,
+                                    lineNumber: 1053,
                                     columnNumber: 17
                                 }, this),
                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -1086,13 +1210,13 @@ function ReadinessDashboard() {
                                     children: report.architecture.architectureType
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 960,
+                                    lineNumber: 1060,
                                     columnNumber: 17
                                 }, this)
                             ]
                         }, void 0, true, {
                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                            lineNumber: 943,
+                            lineNumber: 1043,
                             columnNumber: 15
                         }, this),
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("section", {
@@ -1102,7 +1226,7 @@ function ReadinessDashboard() {
                                     children: "Remediation Plan"
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 970,
+                                    lineNumber: 1070,
                                     columnNumber: 15
                                 }, this),
                                 report.remediation.length === 0 ? /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -1110,7 +1234,7 @@ function ReadinessDashboard() {
                                     children: "No remediation items were generated."
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 976,
+                                    lineNumber: 1076,
                                     columnNumber: 17
                                 }, this) : /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
                                     className: "space-y-3",
@@ -1125,7 +1249,7 @@ function ReadinessDashboard() {
                                                             children: item.title
                                                         }, void 0, false, {
                                                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                            lineNumber: 992,
+                                                            lineNumber: 1092,
                                                             columnNumber: 27
                                                         }, this),
                                                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
@@ -1133,13 +1257,13 @@ function ReadinessDashboard() {
                                                             children: item.priority
                                                         }, void 0, false, {
                                                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                            lineNumber: 998,
+                                                            lineNumber: 1098,
                                                             columnNumber: 27
                                                         }, this)
                                                     ]
                                                 }, void 0, true, {
                                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                    lineNumber: 991,
+                                                    lineNumber: 1091,
                                                     columnNumber: 25
                                                 }, this),
                                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -1147,45 +1271,45 @@ function ReadinessDashboard() {
                                                     children: item.recommendation
                                                 }, void 0, false, {
                                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                                    lineNumber: 1005,
+                                                    lineNumber: 1105,
                                                     columnNumber: 25
                                                 }, this)
                                             ]
                                         }, `${item.category}-${index}`, true, {
                                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                            lineNumber: 987,
+                                            lineNumber: 1087,
                                             columnNumber: 23
                                         }, this))
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                                    lineNumber: 981,
+                                    lineNumber: 1081,
                                     columnNumber: 17
                                 }, this)
                             ]
                         }, void 0, true, {
                             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                            lineNumber: 969,
+                            lineNumber: 1069,
                             columnNumber: 13
                         }, this)
                     ]
                 }, void 0, true, {
                     fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-                    lineNumber: 868,
+                    lineNumber: 890,
                     columnNumber: 11
                 }, this)
             ]
         }, void 0, true, {
             fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-            lineNumber: 578,
+            lineNumber: 600,
             columnNumber: 7
         }, this)
     }, void 0, false, {
         fileName: "[project]/src/components/dashboard/readiness-dashboard.tsx",
-        lineNumber: 577,
+        lineNumber: 599,
         columnNumber: 5
     }, this);
 }
-_s(ReadinessDashboard, "Rp9O44CnFBpO2XIUZi8YB5nKeTU=");
+_s(ReadinessDashboard, "rPfXw8ySxMboQBp+rYSZMxsxgEI=");
 _c = ReadinessDashboard;
 var _c;
 __turbopack_context__.k.register(_c, "ReadinessDashboard");

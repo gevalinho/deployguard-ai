@@ -1341,6 +1341,17 @@ async function runRemoteReadinessAssessment(repositoryUrl, onProgress) {
      * path in the public report.
      */ report.repository.path = repository.fullName;
         await emitProgress("report", "Readiness Report", "completed", `Assessment completed with readiness score ${readiness.score}/100.`);
+        const publicResearch = research ? {
+            queries: research.queries,
+            evidence: research.results.flatMap((result)=>result.evidence.map((item)=>({
+                        title: item.source.title,
+                        url: item.source.url,
+                        sourceType: item.source.sourceType,
+                        authority: item.source.authority,
+                        publisher: item.source.publisher,
+                        publishedAt: item.source.publishedAt
+                    })))
+        } : undefined;
         return {
             repository: {
                 owner: repository.owner,
@@ -1348,6 +1359,7 @@ async function runRemoteReadinessAssessment(repositoryUrl, onProgress) {
                 fullName: repository.fullName,
                 url: repository.url
             },
+            research: publicResearch,
             report,
             verification
         };
@@ -1512,9 +1524,9 @@ async function tryArchiveDownload(repository, temporaryRoot, repositoryPath) {
         "--silent",
         "--show-error",
         "--connect-timeout",
-        "20",
+        "8",
         "--max-time",
-        "180",
+        "25",
         "--output",
         archivePath,
         archiveUrl
@@ -1742,32 +1754,112 @@ function toResearchEvidence(result) {
         source
     };
 }
+// export async function researchTopic(
+//   query: string
+// ): Promise<ResearchResult> {
+//   const apiKey =
+//     getTavilyApiKey();
+//   const response =
+//     await fetch(
+//       "https://api.tavily.com/search",
+//       {
+//         method: "POST",
+//         headers: {
+//           "Content-Type":
+//             "application/json",
+//           Authorization:
+//             `Bearer ${apiKey}`,
+//         },
+//         body: JSON.stringify({
+//           query,
+//           search_depth:
+//             "advanced",
+//           max_results: 5,
+//           include_answer:
+//             false,
+//           include_raw_content:
+//             false,
+//         }),
+//       }
+//     );
+//   if (!response.ok) {
+//     throw new Error(
+//       `Tavily research request failed with status ${response.status}.`
+//     );
+//   }
+//   const data =
+//     (await response.json()) as TavilySearchResponse;
+//   const evidence =
+//     (data.results ?? [])
+//       .map(toResearchEvidence)
+//       .filter(
+//         (
+//           item
+//         ): item is ResearchEvidence =>
+//           item !== null
+//       );
+//   return {
+//     query:
+//       data.query ?? query,
+//     researchedAt:
+//       new Date().toISOString(),
+//     evidence,
+//   };
+// }
+function delay(milliseconds) {
+    return new Promise((resolve)=>setTimeout(resolve, milliseconds));
+}
+function isRetryableStatus(status) {
+    return status === 408 || status === 425 || status === 429 || status >= 500;
+}
 async function researchTopic(query) {
     const apiKey = getTavilyApiKey();
-    const response = await fetch("https://api.tavily.com/search", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-            query,
-            search_depth: "advanced",
-            max_results: 5,
-            include_answer: false,
-            include_raw_content: false
-        })
-    });
-    if (!response.ok) {
-        throw new Error(`Tavily research request failed with status ${response.status}.`);
+    const maxAttempts = 3;
+    let lastError;
+    for(let attempt = 1; attempt <= maxAttempts; attempt += 1){
+        try {
+            const response = await fetch("https://api.tavily.com/search", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${apiKey}`
+                },
+                body: JSON.stringify({
+                    query,
+                    search_depth: "advanced",
+                    max_results: 5,
+                    include_answer: false,
+                    include_raw_content: false
+                })
+            });
+            if (!response.ok) {
+                if (isRetryableStatus(response.status) && attempt < maxAttempts) {
+                    const backoffMs = 1000 * 2 ** (attempt - 1);
+                    console.warn(`[DeployGuard Research] Tavily returned ${response.status}. Retrying in ${backoffMs}ms...`);
+                    await delay(backoffMs);
+                    continue;
+                }
+                throw new Error(`Tavily research request failed with status ${response.status}.`);
+            }
+            const data = await response.json();
+            const evidence = (data.results ?? []).map(toResearchEvidence).filter((item)=>item !== null);
+            return {
+                query: data.query ?? query,
+                researchedAt: new Date().toISOString(),
+                evidence
+            };
+        } catch (error) {
+            lastError = error instanceof Error ? error : new Error(String(error));
+            const isNetworkFailure = lastError.message === "fetch failed" || /ENOTFOUND|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN/i.test(String(lastError.cause ?? lastError.message));
+            if (!isNetworkFailure || attempt === maxAttempts) {
+                throw lastError;
+            }
+            const backoffMs = 1000 * 2 ** (attempt - 1);
+            console.warn(`[DeployGuard Research] Network request failed on attempt ${attempt}/${maxAttempts}. Retrying in ${backoffMs}ms...`);
+            await delay(backoffMs);
+        }
     }
-    const data = await response.json();
-    const evidence = (data.results ?? []).map(toResearchEvidence).filter((item)=>item !== null);
-    return {
-        query: data.query ?? query,
-        researchedAt: new Date().toISOString(),
-        evidence
-    };
+    throw lastError ?? new Error("Tavily research failed.");
 }
 }),
 "[project]/src/lib/sandbox/config.ts [app-route] (ecmascript)", ((__turbopack_context__) => {

@@ -92,6 +92,23 @@ type AssessmentProgressEvent = {
   elapsedMs?: number;
 };
 
+type ResearchEvidenceSummary = {
+  title: string;
+  url: string;
+  sourceType: string;
+  authority:
+    | "primary"
+    | "secondary"
+    | "community";
+  publisher?: string;
+  publishedAt?: string;
+};
+
+type ResearchSummary = {
+  queries: string[];
+  evidence: ResearchEvidenceSummary[];
+};
+
 type AssessmentResult = {
   repository: {
     owner: string;
@@ -99,6 +116,7 @@ type AssessmentResult = {
     fullName: string;
     url: string;
   };
+  research?: ResearchSummary;
   report: ReadinessReport;
 };
 
@@ -112,9 +130,9 @@ const ASSESSMENT_STAGES = [
     label: "Repository Scan",
   },
   {
-  stage: "research",
-  label: "External Research",
-},
+    stage: "research",
+    label: "External Research",
+  },
   {
     stage: "preparation",
     label: "Sandbox Preparation",
@@ -147,7 +165,6 @@ const ASSESSMENT_STAGES = [
     stage: "report",
     label: "Readiness Report",
   },
-  
 ] as const;
 
 function getStatusLabel(
@@ -319,12 +336,18 @@ export function ReadinessDashboard() {
     useState<string | null>(null);
 
   const [
-    report,
-    setReport,
+    assessment,
+    setAssessment,
   ] =
-    useState<ReadinessReport | null>(
+    useState<AssessmentResult | null>(
       null
     );
+
+  const report =
+    assessment?.report ?? null;
+
+  const research =
+    assessment?.research ?? null;
 
   const [
     loading,
@@ -417,7 +440,7 @@ export function ReadinessDashboard() {
   async function runAssessment() {
     setLoading(true);
     setError(null);
-    setReport(null);
+    setAssessment(null);
     setProgressEvents([]);
 
     try {
@@ -528,9 +551,8 @@ export function ReadinessDashboard() {
               payload.ok &&
               payload.assessment
             ) {
-              setReport(
+              setAssessment(
                 payload.assessment
-                  .report
               );
             }
 
@@ -938,6 +960,84 @@ export function ReadinessDashboard() {
                 )}
               </div>
             </section>
+
+            {research &&
+              research.evidence.length >
+                0 && (
+    <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-sm text-zinc-500">
+            Live external research
+          </p>
+
+          <h2 className="mt-2 text-xl font-semibold">
+            External Evidence
+          </h2>
+        </div>
+
+        <span className="rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400">
+          {
+            research.evidence.length
+          }{" "}
+          sources
+        </span>
+      </div>
+
+      <div className="mt-6 space-y-3">
+        {research.evidence.map(
+          (
+            evidence,
+            index
+          ) => (
+            <article
+              key={`${evidence.url}-${index}`}
+              className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-4"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-zinc-700 px-2.5 py-1 text-xs uppercase tracking-wide text-zinc-400">
+                  {
+                    evidence.authority
+                  }
+                </span>
+
+                <span className="text-xs uppercase tracking-wide text-zinc-600">
+                  {evidence.sourceType.replace(
+                    /_/g,
+                    " "
+                  )}
+                </span>
+              </div>
+
+              <a
+                href={evidence.url}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-3 block font-medium text-zinc-200 transition hover:text-white"
+              >
+                {evidence.title}
+              </a>
+
+              {evidence.publisher && (
+                <p className="mt-1 text-sm text-zinc-500">
+                  {
+                    evidence.publisher
+                  }
+                </p>
+              )}
+            </article>
+          )
+        )}
+      </div>
+
+      <p className="mt-5 border-t border-zinc-800 pt-4 text-sm leading-6 text-zinc-500">
+        External evidence informs
+        Nemotron analysis but does not
+        directly determine the
+        readiness score.
+      </p>
+    </section>
+  )}
 
             {report.architecture && (
               <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">

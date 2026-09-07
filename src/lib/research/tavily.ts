@@ -211,60 +211,222 @@ function toResearchEvidence(
   };
 }
 
+// export async function researchTopic(
+//   query: string
+// ): Promise<ResearchResult> {
+//   const apiKey =
+//     getTavilyApiKey();
+
+//   const response =
+//     await fetch(
+//       "https://api.tavily.com/search",
+//       {
+//         method: "POST",
+//         headers: {
+//           "Content-Type":
+//             "application/json",
+//           Authorization:
+//             `Bearer ${apiKey}`,
+//         },
+//         body: JSON.stringify({
+//           query,
+//           search_depth:
+//             "advanced",
+//           max_results: 5,
+//           include_answer:
+//             false,
+//           include_raw_content:
+//             false,
+//         }),
+//       }
+//     );
+
+//   if (!response.ok) {
+//     throw new Error(
+//       `Tavily research request failed with status ${response.status}.`
+//     );
+//   }
+
+//   const data =
+//     (await response.json()) as TavilySearchResponse;
+
+//   const evidence =
+//     (data.results ?? [])
+//       .map(toResearchEvidence)
+//       .filter(
+//         (
+//           item
+//         ): item is ResearchEvidence =>
+//           item !== null
+//       );
+
+//   return {
+//     query:
+//       data.query ?? query,
+//     researchedAt:
+//       new Date().toISOString(),
+//     evidence,
+//   };
+// }
+
+
+function delay(
+  milliseconds: number
+): Promise<void> {
+  return new Promise(
+    (resolve) =>
+      setTimeout(
+        resolve,
+        milliseconds
+      )
+  );
+}
+
+function isRetryableStatus(
+  status: number
+): boolean {
+  return (
+    status === 408 ||
+    status === 425 ||
+    status === 429 ||
+    status >= 500
+  );
+}
+
 export async function researchTopic(
   query: string
 ): Promise<ResearchResult> {
   const apiKey =
     getTavilyApiKey();
 
-  const response =
-    await fetch(
-      "https://api.tavily.com/search",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type":
-            "application/json",
-          Authorization:
-            `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          query,
-          search_depth:
-            "advanced",
-          max_results: 5,
-          include_answer:
-            false,
-          include_raw_content:
-            false,
-        }),
+  const maxAttempts = 3;
+
+  let lastError:
+    | Error
+    | undefined;
+
+  for (
+    let attempt = 1;
+    attempt <= maxAttempts;
+    attempt += 1
+  ) {
+    try {
+      const response =
+        await fetch(
+          "https://api.tavily.com/search",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+              Authorization:
+                `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+              query,
+              search_depth:
+                "advanced",
+              max_results: 5,
+              include_answer:
+                false,
+              include_raw_content:
+                false,
+            }),
+          }
+        );
+
+      if (!response.ok) {
+        if (
+          isRetryableStatus(
+            response.status
+          ) &&
+          attempt < maxAttempts
+        ) {
+          const backoffMs =
+            1000 *
+            2 ** (attempt - 1);
+
+          console.warn(
+            `[DeployGuard Research] Tavily returned ${response.status}. Retrying in ${backoffMs}ms...`
+          );
+
+          await delay(
+            backoffMs
+          );
+
+          continue;
+        }
+
+        throw new Error(
+          `Tavily research request failed with status ${response.status}.`
+        );
       }
-    );
 
-  if (!response.ok) {
-    throw new Error(
-      `Tavily research request failed with status ${response.status}.`
-    );
-  }
+      const data =
+        (await response.json()) as TavilySearchResponse;
 
-  const data =
-    (await response.json()) as TavilySearchResponse;
+      const evidence =
+        (data.results ?? [])
+          .map(
+            toResearchEvidence
+          )
+          .filter(
+            (
+              item
+            ): item is ResearchEvidence =>
+              item !== null
+          );
 
-  const evidence =
-    (data.results ?? [])
-      .map(toResearchEvidence)
-      .filter(
-        (
-          item
-        ): item is ResearchEvidence =>
-          item !== null
+      return {
+        query:
+          data.query ?? query,
+        researchedAt:
+          new Date().toISOString(),
+        evidence,
+      };
+    } catch (error) {
+      lastError =
+        error instanceof Error
+          ? error
+          : new Error(
+              String(error)
+            );
+
+      const isNetworkFailure =
+        lastError.message ===
+          "fetch failed" ||
+        /ENOTFOUND|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN/i.test(
+          String(
+            lastError.cause ??
+              lastError.message
+          )
+        );
+
+      if (
+        !isNetworkFailure ||
+        attempt === maxAttempts
+      ) {
+        throw lastError;
+      }
+
+      const backoffMs =
+        1000 *
+        2 ** (attempt - 1);
+
+      console.warn(
+        `[DeployGuard Research] Network request failed on attempt ${attempt}/${maxAttempts}. Retrying in ${backoffMs}ms...`
       );
 
-  return {
-    query:
-      data.query ?? query,
-    researchedAt:
-      new Date().toISOString(),
-    evidence,
-  };
+      await delay(
+        backoffMs
+      );
+    }
+  }
+
+  throw (
+    lastError ??
+    new Error(
+      "Tavily research failed."
+    )
+  );
 }

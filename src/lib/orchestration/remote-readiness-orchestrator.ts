@@ -58,6 +58,23 @@ export interface RemoteReadinessAssessment {
     url: string;
   };
 
+
+  research?: {
+  queries: string[];
+
+  evidence: {
+    title: string;
+    url: string;
+    sourceType: string;
+    authority:
+      | "primary"
+      | "secondary"
+      | "community";
+    publisher?: string;
+    publishedAt?: string;
+  }[];
+};
+
   report: ProductionReadinessReport;
 
   verification?: {
@@ -630,17 +647,50 @@ try {
   `Assessment completed with readiness score ${readiness.score}/100.`
   );
 
-    return {
-      repository: {
-        owner: repository.owner,
-        name: repository.name,
-        fullName: repository.fullName,
-        url: repository.url,
-      },
 
-      report,
-      verification,
-    };
+    const publicResearch =
+  research
+    ? {
+        queries:
+          research.queries,
+
+        evidence:
+          research.results.flatMap(
+            (result) =>
+              result.evidence.map(
+                (item) => ({
+                  title:
+                    item.source.title,
+                  url:
+                    item.source.url,
+                  sourceType:
+                    item.source.sourceType,
+                  authority:
+                    item.source.authority,
+                  publisher:
+                    item.source.publisher,
+                  publishedAt:
+                    item.source.publishedAt,
+                })
+              )
+          ),
+      }
+    : undefined;
+
+   return {
+  repository: {
+    owner: repository.owner,
+    name: repository.name,
+    fullName: repository.fullName,
+    url: repository.url,
+  },
+
+  research:
+    publicResearch,
+
+  report,
+  verification,
+};
   } finally {
     ingested.cleanup();
   }

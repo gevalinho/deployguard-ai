@@ -317,9 +317,9 @@ async function tryArchiveDownload(repository, temporaryRoot, repositoryPath) {
         "--silent",
         "--show-error",
         "--connect-timeout",
-        "20",
+        "8",
         "--max-time",
-        "180",
+        "25",
         "--output",
         archivePath,
         archiveUrl
