@@ -71,35 +71,64 @@ function detectPackageManager(
   return undefined;
 }
 
+function createPreparationCommand(
+  packageManager: SandboxPackageManager
+): string[] {
+  switch (packageManager) {
+    case "npm":
+      return [
+        "sh",
+        "-c",
+        [
+          "mkdir -p /tmp/deployguard-home",
+          "&&",
+          "npm ci",
+          "--ignore-scripts",
+          "--no-audit",
+          "--no-fund",
+          "--prefer-offline",
+        ].join(" "),
+      ];
+
+    case "pnpm":
+      return [
+        "corepack",
+        "pnpm",
+        "install",
+        "--frozen-lockfile",
+        "--ignore-scripts",
+      ];
+
+    case "yarn":
+      return [
+        "corepack",
+        "yarn",
+        "install",
+        "--frozen-lockfile",
+        "--ignore-scripts",
+      ];
+  }
+}
+
+function detectNetworkFailure(
+  stdout: string,
+  stderr: string
+): boolean {
+  const combinedOutput =
+    `${stdout}\n${stderr}`;
+
+  return /ECONNRESET|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|network aborted|network connectivity/i.test(
+    combinedOutput
+  );
+}
+
 export async function prepareSandboxWorkspace(
   repositoryPath: string
 ): Promise<SandboxPreparationResult> {
   const packageManager =
     detectPackageManager(
       repositoryPath
-
-
-          );
-
-           const cacheRoot =
-  resolve(
-    process.cwd(),
-    ".deployguard",
-    "cache"
     );
-
-const npmCachePath =
-  join(
-    cacheRoot,
-    "npm"
-    );
-
-mkdirSync(
-  npmCachePath,
-  {
-    recursive: true,
-  }
-);
 
   if (!packageManager) {
     return {
@@ -112,133 +141,122 @@ mkdirSync(
     };
   }
 
-  let command: string[];
+  const cacheRoot =
+    resolve(
+      process.cwd(),
+      ".deployguard",
+      "cache"
+    );
 
-  switch (packageManager) {
-  
-    case "npm":
-  command = [
-    "sh",
-    "-c",
-    [
-      "mkdir -p",
-      "/tmp/deployguard-home",
-      "&&",
-      "npm ci",
-      "--ignore-scripts",
-      "--no-audit",
-      "--no-fund",
-      "--prefer-offline",
-    ].join(" "),
-  ];
-  break;
+  const npmCachePath =
+    join(
+      cacheRoot,
+      "npm"
+    );
 
-    case "pnpm":
-      command = [
-        "corepack",
-        "pnpm",
-        "install",
-        "--frozen-lockfile",
-        "--ignore-scripts",
-      ];
-      break;
-
-    case "yarn":
-      command = [
-        "corepack",
-        "yarn",
-        "install",
-        "--frozen-lockfile",
-        "--ignore-scripts",
-      ];
-      break;
+  if (
+    packageManager === "npm"
+  ) {
+    mkdirSync(
+      npmCachePath,
+      {
+        recursive: true,
+      }
+    );
   }
 
-  
-   
-
-
   const uid =
-  typeof process.getuid === "function"
-    ? process.getuid()
-    : 1000;
+    typeof process.getuid ===
+    "function"
+      ? process.getuid()
+      : 1000;
 
-const gid =
-  typeof process.getgid === "function"
-    ? process.getgid()
-    : 1000;
+  const gid =
+    typeof process.getgid ===
+    "function"
+      ? process.getgid()
+      : 1000;
 
-  
+  const command =
+    createPreparationCommand(
+      packageManager
+    );
 
+  const mounts =
+    packageManager === "npm"
+      ? [
+          {
+            source:
+              npmCachePath,
+
+            target:
+              "/deployguard-cache/npm",
+          },
+        ]
+      : [];
 
   const result =
-  await runDockerSandboxCommand({
+    await runDockerSandboxCommand({
+      repositoryPath,
 
-mounts:
-  packageManager === "npm"
-    ? [
-        {
-          source: npmCachePath,
-          target: "/deployguard-cache/npm",
-        },
-      ]
-    : [],
+      command,
 
-    repositoryPath,
-    command,
+      network:
+        "bridge",
 
-    network: "bridge",
+      mounts,
 
-    user: `${uid}:${gid}`,
+      user:
+        `${uid}:${gid}`,
 
-    environment: {
-      HOME:
-        "/tmp/deployguard-home",
+      environment: {
+        HOME:
+          "/tmp/deployguard-home",
 
-      npm_config_cache:
-  "/deployguard-cache/npm",
+        npm_config_cache:
+          "/deployguard-cache/npm",
 
-      CI:
-        "true",
-    },
+        CI:
+          "true",
+      },
 
-    limits: {
-      memoryMb: 2048,
-      cpus: 2,
-      timeoutMs:
-        10 * 60 * 1000,
-    },
-  });
+      limits: {
+        memoryMb: 2048,
+        cpus: 2,
+        timeoutMs:
+          10 *
+          60 *
+          1000,
+      },
+    });
 
-  const combinedOutput =
-  `${result.stdout}\n${result.stderr}`;
-
-const networkFailure =
-  /ECONNRESET|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|network aborted|network connectivity/i.test(
-    combinedOutput
-  );
+  const networkFailure =
+    detectNetworkFailure(
+      result.stdout,
+      result.stderr
+    );
 
   return {
-    status: result.status,
+    status:
+      result.status,
+
     packageManager,
-    stdout: result.stdout,
-    stderr: result.stderr,
+
+    stdout:
+      result.stdout,
+
+    stderr:
+      result.stderr,
+
     durationMs:
       result.durationMs,
-      
-
-    // summary:
-    //   result.status === "passed"
-    //     ? `Sandbox workspace prepared successfully using ${packageManager}.`
-    //     : `Sandbox workspace preparation failed using ${packageManager}.`,
 
     summary:
-  result.status === "passed"
-    ? `Sandbox workspace prepared successfully using ${packageManager}.`
-    : networkFailure
-      ? `Sandbox workspace preparation could not complete because of a package registry or network error.`
-      : `Sandbox workspace preparation failed using ${packageManager}.`,
+      result.status ===
+      "passed"
+        ? `Sandbox workspace prepared successfully using ${packageManager}.`
+        : networkFailure
+          ? "Sandbox workspace preparation could not complete because of a package registry or network error."
+          : `Sandbox workspace preparation failed using ${packageManager}.`,
   };
-
-  
 }
