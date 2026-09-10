@@ -340,7 +340,19 @@ export async function runRemoteReadinessAssessment(
           diagnostic
         );
 
-        await emitProgress(
+      //   await emitProgress(
+      //     "research",
+      //     "External Research",
+      //     "error",
+      //     "External research was unavailable. Continuing with repository evidence only."
+      //   );
+      // }
+
+      // const checks:
+      //   CheckResult[] = [];
+
+
+                await emitProgress(
           "research",
           "External Research",
           "error",
@@ -348,8 +360,49 @@ export async function runRemoteReadinessAssessment(
         );
       }
 
+      /*
+       * Start Nemotron as soon as repository
+       * evidence and external research are ready.
+       *
+       * This runs concurrently with the
+       * deterministic sandbox pipeline.
+       *
+       * The promise handles its own failure so
+       * a rejected AI request cannot become an
+       * unhandled rejection while sandbox checks
+       * are still running.
+       */
+
+      await emitProgress(
+        "architect",
+        "Nemotron Analysis",
+        "running",
+        "Analyzing verified repository evidence..."
+      );
+
+      const architecturePromise =
+        measureStage(
+          "Nemotron Analysis",
+          async () =>
+            runArchitectAgent(
+              scan,
+              research
+            )
+        )
+          .then((analysis) => ({
+            analysis,
+            error: undefined,
+          }))
+          .catch((error: unknown) => ({
+            analysis: undefined,
+            error,
+          }));
+
       const checks:
         CheckResult[] = [];
+
+
+
 
       /*
        * Static checks
@@ -669,6 +722,96 @@ export async function runRemoteReadinessAssessment(
        * must still work if the model fails.
        */
 
+      // let architecture:
+      //   | ArchitectureAnalysis
+      //   | undefined;
+
+      // let verification:
+      //   | RemoteReadinessAssessment["verification"]
+      //   | undefined;
+
+      // await emitProgress(
+      //   "architect",
+      //   "Nemotron Analysis",
+      //   "running",
+      //   "Analyzing verified repository evidence..."
+      // );
+
+      // try {
+      //   const analysis =
+      //     await measureStage(
+      //       "Nemotron Analysis",
+      //       async () =>
+      //         runArchitectAgent(
+      //           scan,
+      //           research
+      //         )
+      //     );
+
+      //   const verified =
+      //     verifyArchitectureAnalysis(
+      //       scan,
+      //       analysis,
+      //       research
+      //     );
+
+      //   architecture = {
+      //     ...analysis,
+
+      //     risks:
+      //       verified.acceptedRisks,
+      //   };
+
+      //   verification = {
+      //     acceptedRisks:
+      //       verified.acceptedRisks,
+
+      //     rejectedRisks:
+      //       verified.rejectedRisks,
+      //   };
+
+      //   await emitProgress(
+      //     "architect",
+      //     "Nemotron Analysis",
+      //     "passed",
+      //     "AI architecture analysis completed and verified."
+      //   );
+      // } catch (error) {
+      //   architecture =
+      //     undefined;
+
+      //   verification =
+      //     undefined;
+
+      //   const diagnostic =
+      //     error instanceof Error
+      //       ? error.message
+      //       : "Unknown Nemotron analysis error.";
+
+      //   console.error(
+      //     "[DeployGuard Architect Agent]",
+      //     diagnostic
+      //   );
+
+      //   await emitProgress(
+      //     "architect",
+      //     "Nemotron Analysis",
+      //     "error",
+      //     "AI architecture analysis was unavailable. Deterministic readiness results are still available."
+      //   );
+      // }
+
+
+
+            /*
+       * Resolve the Nemotron analysis that
+       * has been running concurrently with
+       * the deterministic sandbox pipeline.
+       *
+       * Verification still happens only after
+       * the AI result is available.
+       */
+
       let architecture:
         | ArchitectureAnalysis
         | undefined;
@@ -677,33 +820,21 @@ export async function runRemoteReadinessAssessment(
         | RemoteReadinessAssessment["verification"]
         | undefined;
 
-      await emitProgress(
-        "architect",
-        "Nemotron Analysis",
-        "running",
-        "Analyzing verified repository evidence..."
-      );
+      const architectureResult =
+        await architecturePromise;
 
-      try {
-        const analysis =
-          await measureStage(
-            "Nemotron Analysis",
-            async () =>
-              runArchitectAgent(
-                scan,
-                research
-              )
-          );
-
+      if (
+        architectureResult.analysis
+      ) {
         const verified =
           verifyArchitectureAnalysis(
             scan,
-            analysis,
+            architectureResult.analysis,
             research
           );
 
         architecture = {
-          ...analysis,
+          ...architectureResult.analysis,
 
           risks:
             verified.acceptedRisks,
@@ -723,7 +854,7 @@ export async function runRemoteReadinessAssessment(
           "passed",
           "AI architecture analysis completed and verified."
         );
-      } catch (error) {
+      } else {
         architecture =
           undefined;
 
@@ -731,8 +862,9 @@ export async function runRemoteReadinessAssessment(
           undefined;
 
         const diagnostic =
-          error instanceof Error
-            ? error.message
+          architectureResult.error
+            instanceof Error
+            ? architectureResult.error.message
             : "Unknown Nemotron analysis error.";
 
         console.error(
