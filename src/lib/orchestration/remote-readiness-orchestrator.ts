@@ -2,6 +2,10 @@ import type { ArchitectureAnalysis } from "@/lib/agents/architect-agent";
 import { runArchitectAgent } from "@/lib/agents/architect-agent";
 import { runDeploymentAgent } from "@/lib/agents/deployment-agent";
 import { runEnvironmentAgent } from "@/lib/agents/environment-agent";
+import {
+  runResearchAgent,
+  type ResearchAgentResult,
+} from "@/lib/agents/research-agent";
 import { runSandboxBuildAgent } from "@/lib/agents/sandbox-build-agent";
 import { runSandboxLintAgent } from "@/lib/agents/sandbox-lint-agent";
 import { runSandboxSecurityAgent } from "@/lib/agents/sandbox-security-agent";
@@ -10,6 +14,11 @@ import { runSandboxTypecheckAgent } from "@/lib/agents/sandbox-typecheck-agent";
 import { verifyArchitectureAnalysis } from "@/lib/agents/verifier";
 
 import type { CheckResult } from "@/lib/checks/types";
+
+import type {
+  AssessmentProgressCallback,
+  AssessmentProgressStatus,
+} from "@/lib/orchestration/assessment-progress";
 
 import {
   parseGitHubRepositoryUrl,
@@ -39,17 +48,6 @@ import {
   prepareSandboxWorkspace,
 } from "@/lib/sandbox/workspace-preparation";
 
-import type {
-  AssessmentProgressCallback,
-  AssessmentProgressStatus,
-} from "@/lib/orchestration/assessment-progress";
-
-import {
-  runResearchAgent,
-  type ResearchAgentResult,
-} from "@/lib/agents/research-agent";
-
-
 export interface RemoteReadinessAssessment {
   repository: {
     owner: string;
@@ -58,29 +56,38 @@ export interface RemoteReadinessAssessment {
     url: string;
   };
 
-
   research?: {
-  queries: string[];
+    queries: string[];
 
-  evidence: {
-    title: string;
-    url: string;
-    sourceType: string;
-    authority:
-      | "primary"
-      | "secondary"
-      | "community";
-    publisher?: string;
-    publishedAt?: string;
-  }[];
-};
+    evidence: {
+      title: string;
+      url: string;
+      sourceType: string;
+
+      authority:
+        | "primary"
+        | "secondary"
+        | "community";
+
+      publisher?: string;
+      publishedAt?: string;
+    }[];
+  };
 
   report: ProductionReadinessReport;
 
   verification?: {
-    acceptedRisks: ArchitectureAnalysis["risks"];
-    rejectedRisks: ArchitectureAnalysis["risks"];
+    acceptedRisks:
+      ArchitectureAnalysis["risks"];
+
+    rejectedRisks:
+      ArchitectureAnalysis["risks"];
   };
+}
+
+interface PerformanceTiming {
+  stage: string;
+  durationMs: number;
 }
 
 function createUnavailableCheck(
@@ -98,600 +105,768 @@ function createUnavailableCheck(
   };
 }
 
-export async function runRemoteReadinessAssessment(
-  repositoryUrl: string,
-  onProgress?: AssessmentProgressCallback
-): Promise<RemoteReadinessAssessment> {
-
-
-const assessmentStartedAt = Date.now();
-
-const emitProgress = async (
-  stage: string,
-  label: string,
-  status: AssessmentProgressStatus,
-  message?: string
-) => {
-  await onProgress?.({
-    stage,
-    label,
-    status,
-    message,
-    elapsedMs:
-      Date.now() - assessmentStartedAt,
-  });
-};
-
-await emitProgress(
-  "repository",
-  "Repository",
-  "running",
-  "Cloning repository..."
-);
-
-  const repository =
-    parseGitHubRepositoryUrl(
-      repositoryUrl
-    );
-
-  const ingested =
-    await ingestGitHubRepository(
-      repository
-    );
-
-    await emitProgress(
-  "repository",
-  "Repository",
-  "passed",
-  "Repository cloned successfully."
-    );
-
-  try {
-
-
-    await emitProgress(
-  "scan",
-  "Repository Scan",
-  "running",
-  "Inspecting repository structure..."
-);
-
-    const scan =
-      await scanRepository(
-        ingested.repositoryPath
-      );
-
-      await emitProgress(
-  "scan",
-  "Repository Scan",
-  "passed",
-  `Repository scan completed with ${scan.facts.length} detected facts.`
-);
-
-
-  let research:
-  | ResearchAgentResult
-  | undefined;
-
-await emitProgress(
-  "research",
-  "External Research",
-  "running",
-  "Researching current technology and security evidence..."
-);
-
-try {
-  research =
-    await runResearchAgent(scan);
-
-  const evidenceCount =
-    research.results.reduce(
-      (total, result) =>
-        total +
-        result.evidence.length,
-      0
-    );
-
-  if (
-    research.queries.length === 0
-  ) {
-    await emitProgress(
-      "research",
-      "External Research",
-      "skipped",
-      "No repository facts required external research."
-    );
-  } else {
-    await emitProgress(
-      "research",
-      "External Research",
-      "passed",
-      `External research completed with ${evidenceCount} evidence items.`
-    );
-  }
-} catch (error) {
-  research = undefined;
-
-  const diagnostic =
-    error instanceof Error
-      ? error.message
-      : "Unknown research error.";
-
-  console.error(
-    "[DeployGuard Research Agent]",
-    diagnostic
-  );
-
-  await emitProgress(
-    "research",
-    "External Research",
-    "error",
-    "External research was unavailable. Continuing with repository evidence only."
-  );
-}
-
-
-
-    const checks: CheckResult[] = [];
-
-    /*
-     * Static checks do not execute
-     * repository code.
-     */
-    checks.push(
-      await runEnvironmentAgent(scan)
-    );
-
-    checks.push(
-      await runDeploymentAgent(scan)
-    );
-
-    /*
-     * Dependency preparation is performed
-     * exactly once for this assessment.
-     *
-     * Installation has controlled network
-     * access and lifecycle scripts disabled.
-     */
-
-    await emitProgress(
-  "preparation",
-  "Sandbox Preparation",
-  "running",
-  "Installing dependencies in the isolated workspace..."
-);
-
-
-    const preparation =
-      await prepareSandboxWorkspace(
-        ingested.repositoryPath
-      );
-
-    await emitProgress(
-    "preparation",
-    "Sandbox Preparation",
-     preparation.status === "passed"
-     ? "passed"
-      : "error",
-    preparation.summary
-      );
-
-    // if (preparation.status === "passed") {
-    //   /*
-    //    * Execute repository-controlled checks
-    //    * sequentially against the same disposable
-    //    * workspace.
-    //    *
-    //    * These checks run without network access.
-    //    */
-    //   checks.push(
-    //     await runSandboxTypecheckAgent(
-    //       ingested.repositoryPath
-    //     )
-    //   );
-
-    //   checks.push(
-    //     await runSandboxLintAgent(
-    //       ingested.repositoryPath
-    //     )
-    //   );
-
-    //   checks.push(
-    //     await runSandboxTestAgent(
-    //       ingested.repositoryPath
-    //     )
-    //   );
-
-    //   checks.push(
-    //     await runSandboxBuildAgent(
-    //       ingested.repositoryPath
-    //     )
-    //   );
-
-    //   /*
-    //    * npm audit is a controlled command
-    //    * requiring registry access.
-    //    */
-    //   checks.push(
-    //     await runSandboxSecurityAgent(
-    //       ingested.repositoryPath
-    //     )
-    //   );
-    // } else {
-    //   const preparationSummary =
-    //     preparation.summary;
-
-    //   checks.push(
-    //     createUnavailableCheck(
-    //       "types",
-    //       "types",
-    //       "TypeScript",
-    //       preparationSummary
-    //     ),
-
-    //     createUnavailableCheck(
-    //       "lint",
-    //       "lint",
-    //       "Lint",
-    //       preparationSummary
-    //     ),
-
-    //     createUnavailableCheck(
-    //       "test",
-    //       "test",
-    //       "Tests",
-    //       preparationSummary
-    //     ),
-
-    //     createUnavailableCheck(
-    //       "build",
-    //       "build",
-    //       "Production Build",
-    //       preparationSummary
-    //     ),
-
-    //     createUnavailableCheck(
-    //       "security",
-    //       "security",
-    //       "Dependency Security",
-    //       preparationSummary
-    //     )
-    //   );
-    // }
-
-    if (preparation.status === "passed") {
-  // TypeScript
-  await emitProgress(
-    "types",
-    "TypeScript",
-    "running",
-    "Running TypeScript validation..."
-  );
-
-  const typecheck =
-    await runSandboxTypecheckAgent(
-      ingested.repositoryPath
-    );
-
-  checks.push(typecheck);
-
-  await emitProgress(
-    "types",
-    "TypeScript",
-    toProgressStatus(typecheck.status),
-    typecheck.summary
-  );
-
-  // Lint
-  await emitProgress(
-    "lint",
-    "Lint",
-    "running",
-    "Running lint validation..."
-  );
-
-  const lint =
-    await runSandboxLintAgent(
-      ingested.repositoryPath
-    );
-
-  checks.push(lint);
-
-  await emitProgress(
-    "lint",
-    "Lint",
-    toProgressStatus(lint.status),
-    lint.summary
-  );
-
-  // Tests
-  await emitProgress(
-    "test",
-    "Tests",
-    "running",
-    "Running automated tests..."
-  );
-
-  const tests =
-    await runSandboxTestAgent(
-      ingested.repositoryPath
-    );
-
-  checks.push(tests);
-
-  await emitProgress(
-    "test",
-    "Tests",
-    toProgressStatus(tests.status),
-    tests.summary
-  );
-
-  // Production Build
-  await emitProgress(
-    "build",
-    "Production Build",
-    "running",
-    "Running production build..."
-  );
-
-  const build =
-    await runSandboxBuildAgent(
-      ingested.repositoryPath
-    );
-
-  checks.push(build);
-
-  await emitProgress(
-    "build",
-    "Production Build",
-    toProgressStatus(build.status),
-    build.summary
-  );
-
-  // Dependency Security
-  await emitProgress(
-    "security",
-    "Dependency Security",
-    "running",
-    "Running dependency security audit..."
-  );
-
-  const security =
-    await runSandboxSecurityAgent(
-      ingested.repositoryPath
-    );
-
-  checks.push(security);
-
-  await emitProgress(
-    "security",
-    "Dependency Security",
-    toProgressStatus(security.status),
-    security.summary
-  );
-} else {
-  const preparationSummary =
-    preparation.summary;
-
-  const unavailableChecks: CheckResult[] = [
-    createUnavailableCheck(
-      "types",
-      "types",
-      "TypeScript",
-      preparationSummary
-    ),
-    createUnavailableCheck(
-      "lint",
-      "lint",
-      "Lint",
-      preparationSummary
-    ),
-    createUnavailableCheck(
-      "test",
-      "test",
-      "Tests",
-      preparationSummary
-    ),
-    createUnavailableCheck(
-      "build",
-      "build",
-      "Production Build",
-      preparationSummary
-    ),
-    createUnavailableCheck(
-      "security",
-      "security",
-      "Dependency Security",
-      preparationSummary
-    ),
-  ];
-
-  checks.push(...unavailableChecks);
-
-  for (const check of unavailableChecks) {
-    await emitProgress(
-      check.category,
-      check.name,
-      "error",
-      check.summary
-    );
-  }
-}
-
-    function toProgressStatus(
+function toProgressStatus(
   status: CheckResult["status"]
 ): AssessmentProgressStatus {
   return status;
 }
 
-    const readiness =
-      calculateReadinessScore(
-        checks
-      );
+function formatDuration(
+  durationMs: number
+): string {
+  return (
+    durationMs / 1000
+  ).toFixed(2);
+}
 
-    let architecture:
-      | ArchitectureAnalysis
-      | undefined;
+function logPerformanceSummary(
+  timings: PerformanceTiming[],
+  totalDurationMs: number
+): void {
+  console.log(
+    "\n[DeployGuard Performance] Assessment timing summary"
+  );
 
-    let verification:
-      | RemoteReadinessAssessment["verification"]
-      | undefined;
-
-    /*
-     * AI analysis is optional.
-     * Deterministic readiness reporting
-     * must still work if the model is
-     * unavailable.
-     */
-
-    await emitProgress(
-  "architect",
-  "Nemotron Analysis",
-  "running",
-  "Analyzing verified repository evidence..."
+  for (
+    const timing of timings
+  ) {
+    console.log(
+      `[DeployGuard Performance] ${timing.stage}: ${formatDuration(
+        timing.durationMs
+      )}s`
     );
-    
-    try {
-  // const analysis =
-  //   await runArchitectAgent(scan);
+  }
 
-
-
-  const analysis =
-  await runArchitectAgent(
-    scan,
-    research
+  console.log(
+    `[DeployGuard Performance] Total Assessment: ${formatDuration(
+      totalDurationMs
+    )}s`
   );
 
-  // const verified =
-  //   verifyArchitectureAnalysis(
-  //     scan,
-  //     analysis
-  //   );
-
-
-  const verified =
-  verifyArchitectureAnalysis(
-    scan,
-    analysis,
-    research
-  );
-
-  architecture = {
-    ...analysis,
-    risks:
-      verified.acceptedRisks,
-  };
-
-  verification = {
-    acceptedRisks:
-      verified.acceptedRisks,
-    rejectedRisks:
-      verified.rejectedRisks,
-  };
-
-  await emitProgress(
-    "architect",
-    "Nemotron Analysis",
-    "passed",
-    "AI architecture analysis completed and verified."
-  );
-} catch (error) {
-  architecture = undefined;
-  verification = undefined;
-
-  const diagnostic =
-    error instanceof Error
-      ? error.message
-      : "Unknown Nemotron analysis error.";
-
-  console.error(
-    "[DeployGuard Architect Agent]",
-    diagnostic
-  );
-
-  await emitProgress(
-    "architect",
-    "Nemotron Analysis",
-    "error",
-    `AI architecture analysis was unavailable: ${diagnostic}`
+  console.log(
+    "[DeployGuard Performance] End timing summary\n"
   );
 }
 
-    const report =
-      createProductionReadinessReport(
-        scan,
-        checks,
-        readiness,
-        architecture
+export async function runRemoteReadinessAssessment(
+  repositoryUrl: string,
+  onProgress?: AssessmentProgressCallback
+): Promise<RemoteReadinessAssessment> {
+  const assessmentStartedAt =
+    Date.now();
+
+  const timings:
+    PerformanceTiming[] = [];
+
+  const emitProgress = async (
+    stage: string,
+    label: string,
+    status: AssessmentProgressStatus,
+    message?: string
+  ) => {
+    await onProgress?.({
+      stage,
+      label,
+      status,
+      message,
+      elapsedMs:
+        Date.now() -
+        assessmentStartedAt,
+    });
+  };
+
+  const measureStage =
+    async <T>(
+      stage: string,
+      operation: () => Promise<T>
+    ): Promise<T> => {
+      const startedAt =
+        Date.now();
+
+      try {
+        return await operation();
+      } finally {
+        const durationMs =
+          Date.now() -
+          startedAt;
+
+        timings.push({
+          stage,
+          durationMs,
+        });
+
+        console.log(
+          `[DeployGuard Performance] ${stage}: ${formatDuration(
+            durationMs
+          )}s`
+        );
+      }
+    };
+
+  try {
+    const repository =
+      parseGitHubRepositoryUrl(
+        repositoryUrl
       );
 
-      await emitProgress(
-  "report",
-  "Readiness Report",
-  "running",
-  "Calculating readiness and generating the final report..."
+    /*
+     * Repository ingestion
+     */
+
+    await emitProgress(
+      "repository",
+      "Repository",
+      "running",
+      "Preparing repository..."
     );
 
-    /*
-     * Do not expose the temporary filesystem
-     * path in the public report.
-     */
-    report.repository.path =
-      repository.fullName;
+    const ingested =
+      await measureStage(
+        "Repository Ingestion",
+        async () =>
+          ingestGitHubRepository(
+            repository,
+            async (message) => {
+              await emitProgress(
+                "repository",
+                "Repository",
+                "running",
+                message
+              );
+            }
+          )
+      );
+
+    await emitProgress(
+      "repository",
+      "Repository",
+      "passed",
+      "Repository prepared successfully."
+    );
+
+    try {
+      /*
+       * Repository scanner
+       */
 
       await emitProgress(
-  "report",
-  "Readiness Report",
-  "completed",
-  `Assessment completed with readiness score ${readiness.score}/100.`
-  );
+        "scan",
+        "Repository Scan",
+        "running",
+        "Inspecting repository structure..."
+      );
 
+      const scan =
+        await measureStage(
+          "Repository Scan",
+          async () =>
+            scanRepository(
+              ingested.repositoryPath
+            )
+        );
 
-    const publicResearch =
-  research
-    ? {
-        queries:
-          research.queries,
+      await emitProgress(
+        "scan",
+        "Repository Scan",
+        "passed",
+        `Repository scan completed with ${scan.facts.length} detected facts.`
+      );
 
-        evidence:
-          research.results.flatMap(
-            (result) =>
-              result.evidence.map(
-                (item) => ({
-                  title:
-                    item.source.title,
-                  url:
-                    item.source.url,
-                  sourceType:
-                    item.source.sourceType,
-                  authority:
-                    item.source.authority,
-                  publisher:
-                    item.source.publisher,
-                  publishedAt:
-                    item.source.publishedAt,
-                })
+      /*
+       * External research
+       */
+
+      let research:
+        | ResearchAgentResult
+        | undefined;
+
+      await emitProgress(
+        "research",
+        "External Research",
+        "running",
+        "Researching current technology and security evidence..."
+      );
+
+      try {
+        research =
+          await measureStage(
+            "External Research",
+            async () =>
+              runResearchAgent(
+                scan
               )
-          ),
+          );
+
+        const evidenceCount =
+          research.results.reduce(
+            (
+              total,
+              result
+            ) =>
+              total +
+              result.evidence.length,
+            0
+          );
+
+        if (
+          research.queries.length ===
+          0
+        ) {
+          await emitProgress(
+            "research",
+            "External Research",
+            "skipped",
+            "No repository facts required external research."
+          );
+        } else {
+          await emitProgress(
+            "research",
+            "External Research",
+            "passed",
+            `External research completed with ${evidenceCount} evidence items.`
+          );
+        }
+      } catch (error) {
+        research =
+          undefined;
+
+        const diagnostic =
+          error instanceof Error
+            ? error.message
+            : "Unknown research error.";
+
+        console.error(
+          "[DeployGuard Research Agent]",
+          diagnostic
+        );
+
+        await emitProgress(
+          "research",
+          "External Research",
+          "error",
+          "External research was unavailable. Continuing with repository evidence only."
+        );
       }
-    : undefined;
 
-   return {
-  repository: {
-    owner: repository.owner,
-    name: repository.name,
-    fullName: repository.fullName,
-    url: repository.url,
-  },
+      const checks:
+        CheckResult[] = [];
 
-  research:
-    publicResearch,
+      /*
+       * Static checks
+       *
+       * These checks inspect scanner facts
+       * and do not execute repository code.
+       */
 
-  report,
-  verification,
-};
+      const environment =
+        await measureStage(
+          "Environment Check",
+          async () =>
+            runEnvironmentAgent(
+              scan
+            )
+        );
+
+      checks.push(
+        environment
+      );
+
+      const deployment =
+        await measureStage(
+          "Deployment Check",
+          async () =>
+            runDeploymentAgent(
+              scan
+            )
+        );
+
+      checks.push(
+        deployment
+      );
+
+      /*
+       * Sandbox dependency preparation
+       */
+
+      await emitProgress(
+        "preparation",
+        "Sandbox Preparation",
+        "running",
+        "Installing dependencies in the isolated workspace..."
+      );
+
+      const preparation =
+        await measureStage(
+          "Sandbox Preparation",
+          async () =>
+            prepareSandboxWorkspace(
+              ingested.repositoryPath
+            )
+        );
+
+      await emitProgress(
+        "preparation",
+        "Sandbox Preparation",
+        preparation.status ===
+          "passed"
+          ? "passed"
+          : "error",
+        preparation.summary
+      );
+
+      /*
+       * Repository-controlled checks
+       */
+
+      if (
+        preparation.status ===
+        "passed"
+      ) {
+        /*
+         * TypeScript
+         */
+
+        await emitProgress(
+          "types",
+          "TypeScript",
+          "running",
+          "Running TypeScript validation..."
+        );
+
+        const typecheck =
+          await measureStage(
+            "TypeScript",
+            async () =>
+              runSandboxTypecheckAgent(
+                ingested.repositoryPath
+              )
+          );
+
+        checks.push(
+          typecheck
+        );
+
+        await emitProgress(
+          "types",
+          "TypeScript",
+          toProgressStatus(
+            typecheck.status
+          ),
+          typecheck.summary
+        );
+
+        /*
+         * Lint
+         */
+
+        await emitProgress(
+          "lint",
+          "Lint",
+          "running",
+          "Running lint validation..."
+        );
+
+        const lint =
+          await measureStage(
+            "Lint",
+            async () =>
+              runSandboxLintAgent(
+                ingested.repositoryPath
+              )
+          );
+
+        checks.push(
+          lint
+        );
+
+        await emitProgress(
+          "lint",
+          "Lint",
+          toProgressStatus(
+            lint.status
+          ),
+          lint.summary
+        );
+
+        /*
+         * Tests
+         */
+
+        await emitProgress(
+          "test",
+          "Tests",
+          "running",
+          "Running automated tests..."
+        );
+
+        const tests =
+          await measureStage(
+            "Tests",
+            async () =>
+              runSandboxTestAgent(
+                ingested.repositoryPath
+              )
+          );
+
+        checks.push(
+          tests
+        );
+
+        await emitProgress(
+          "test",
+          "Tests",
+          toProgressStatus(
+            tests.status
+          ),
+          tests.summary
+        );
+
+        /*
+         * Production build
+         */
+
+        await emitProgress(
+          "build",
+          "Production Build",
+          "running",
+          "Running production build..."
+        );
+
+        const build =
+          await measureStage(
+            "Production Build",
+            async () =>
+              runSandboxBuildAgent(
+                ingested.repositoryPath
+              )
+          );
+
+        checks.push(
+          build
+        );
+
+        await emitProgress(
+          "build",
+          "Production Build",
+          toProgressStatus(
+            build.status
+          ),
+          build.summary
+        );
+
+        /*
+         * Dependency security
+         */
+
+        await emitProgress(
+          "security",
+          "Dependency Security",
+          "running",
+          "Running dependency security audit..."
+        );
+
+        const security =
+          await measureStage(
+            "Dependency Security",
+            async () =>
+              runSandboxSecurityAgent(
+                ingested.repositoryPath
+              )
+          );
+
+        checks.push(
+          security
+        );
+
+        await emitProgress(
+          "security",
+          "Dependency Security",
+          toProgressStatus(
+            security.status
+          ),
+          security.summary
+        );
+      } else {
+        /*
+         * Sandbox preparation failed.
+         *
+         * Repository-controlled checks
+         * therefore cannot be executed.
+         */
+
+        const preparationSummary =
+          preparation.summary;
+
+        const unavailableChecks:
+          CheckResult[] = [
+          createUnavailableCheck(
+            "types",
+            "types",
+            "TypeScript",
+            preparationSummary
+          ),
+
+          createUnavailableCheck(
+            "lint",
+            "lint",
+            "Lint",
+            preparationSummary
+          ),
+
+          createUnavailableCheck(
+            "test",
+            "test",
+            "Tests",
+            preparationSummary
+          ),
+
+          createUnavailableCheck(
+            "build",
+            "build",
+            "Production Build",
+            preparationSummary
+          ),
+
+          createUnavailableCheck(
+            "security",
+            "security",
+            "Dependency Security",
+            preparationSummary
+          ),
+        ];
+
+        checks.push(
+          ...unavailableChecks
+        );
+
+        for (
+          const check of
+          unavailableChecks
+        ) {
+          await emitProgress(
+            check.category,
+            check.name,
+            "error",
+            check.summary
+          );
+        }
+      }
+
+      /*
+       * Deterministic readiness score
+       */
+
+      const readiness =
+        calculateReadinessScore(
+          checks
+        );
+
+      /*
+       * Nemotron architecture analysis
+       *
+       * AI is optional.
+       * Deterministic readiness reporting
+       * must still work if the model fails.
+       */
+
+      let architecture:
+        | ArchitectureAnalysis
+        | undefined;
+
+      let verification:
+        | RemoteReadinessAssessment["verification"]
+        | undefined;
+
+      await emitProgress(
+        "architect",
+        "Nemotron Analysis",
+        "running",
+        "Analyzing verified repository evidence..."
+      );
+
+      try {
+        const analysis =
+          await measureStage(
+            "Nemotron Analysis",
+            async () =>
+              runArchitectAgent(
+                scan,
+                research
+              )
+          );
+
+        const verified =
+          verifyArchitectureAnalysis(
+            scan,
+            analysis,
+            research
+          );
+
+        architecture = {
+          ...analysis,
+
+          risks:
+            verified.acceptedRisks,
+        };
+
+        verification = {
+          acceptedRisks:
+            verified.acceptedRisks,
+
+          rejectedRisks:
+            verified.rejectedRisks,
+        };
+
+        await emitProgress(
+          "architect",
+          "Nemotron Analysis",
+          "passed",
+          "AI architecture analysis completed and verified."
+        );
+      } catch (error) {
+        architecture =
+          undefined;
+
+        verification =
+          undefined;
+
+        const diagnostic =
+          error instanceof Error
+            ? error.message
+            : "Unknown Nemotron analysis error.";
+
+        console.error(
+          "[DeployGuard Architect Agent]",
+          diagnostic
+        );
+
+        await emitProgress(
+          "architect",
+          "Nemotron Analysis",
+          "error",
+          "AI architecture analysis was unavailable. Deterministic readiness results are still available."
+        );
+      }
+
+      /*
+       * Production readiness report
+       */
+
+      await emitProgress(
+        "report",
+        "Readiness Report",
+        "running",
+        "Calculating readiness and generating the final report..."
+      );
+
+      const report =
+        await measureStage(
+          "Readiness Report",
+          async () =>
+            createProductionReadinessReport(
+              scan,
+              checks,
+              readiness,
+              architecture
+            )
+        );
+
+      /*
+       * Never expose temporary host paths
+       * in the public report.
+       */
+
+      report.repository.path =
+        repository.fullName;
+
+      await emitProgress(
+        "report",
+        "Readiness Report",
+        "completed",
+        `Assessment completed with readiness score ${readiness.score}/100.`
+      );
+
+      /*
+       * Sanitize external research before
+       * exposing it to the browser.
+       */
+
+      const publicResearch =
+        research
+          ? {
+              queries:
+                research.queries,
+
+              evidence:
+                research.results.flatMap(
+                  (
+                    result
+                  ) =>
+                    result.evidence.map(
+                      (
+                        item
+                      ) => ({
+                        title:
+                          item.source
+                            .title,
+
+                        url:
+                          item.source
+                            .url,
+
+                        sourceType:
+                          item.source
+                            .sourceType,
+
+                        authority:
+                          item.source
+                            .authority,
+
+                        publisher:
+                          item.source
+                            .publisher,
+
+                        publishedAt:
+                          item.source
+                            .publishedAt,
+                      })
+                    )
+                ),
+            }
+          : undefined;
+
+      return {
+        repository: {
+          owner:
+            repository.owner,
+
+          name:
+            repository.name,
+
+          fullName:
+            repository.fullName,
+
+          url:
+            repository.url,
+        },
+
+        research:
+          publicResearch,
+
+        report,
+        verification,
+      };
+    } finally {
+      ingested.cleanup();
+    }
   } finally {
-    ingested.cleanup();
+    const totalDurationMs =
+      Date.now() -
+      assessmentStartedAt;
+
+    logPerformanceSummary(
+      timings,
+      totalDurationMs
+    );
   }
 }

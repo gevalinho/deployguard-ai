@@ -204,7 +204,7 @@ mounts:
 
     limits: {
       memoryMb: 2048,
-      cpus: 1,
+      cpus: 2,
       timeoutMs:
         10 * 60 * 1000,
     },

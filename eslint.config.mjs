@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+
+    // DeployGuard local cache and assessment artifacts:
+    ".deployguard/**",
   ]),
 ]);
 

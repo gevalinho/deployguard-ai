@@ -9,10 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import {
-  join,
-  resolve,
-} from "node:path";
+import { join, resolve } from "node:path";
 
 import { runCommand } from "@/lib/execution/command-runner";
 import type { GitHubRepository } from "@/lib/repository/github-repository";
@@ -23,26 +20,37 @@ export interface IngestedRepository {
   cleanup: () => void;
 }
 
+export type RepositoryIngestionProgress = (
+  message: string
+) => void | Promise<void>;
+
 interface RepositoryCacheMetadata {
   cachedAt: string;
   repository: string;
+  commitSha?: string;
 }
 
-const CLONE_ATTEMPTS = 3;
-
+const CLONE_ATTEMPTS = 1;
+const CLONE_TIMEOUT_MS =
+  6 * 60 * 1000;
 const CLONE_RETRY_DELAY_MS =
   2000;
 
 const CACHE_TTL_MS =
   15 * 60 * 1000;
 
-const CACHE_ROOT =
-  resolve(
-    process.cwd(),
-    ".deployguard",
-    "cache",
-    "repositories"
-  );
+const REMOTE_HEAD_TIMEOUT_MS =
+  10 * 1000;
+
+const ARCHIVE_CONNECT_TIMEOUT_SECONDS = 10;
+const ARCHIVE_MAX_TIME_SECONDS = 5 * 60;
+
+const CACHE_ROOT = resolve(
+  process.cwd(),
+  ".deployguard",
+  "cache",
+  "repositories"
+);
 
 function delay(
   ms: number
@@ -66,24 +74,29 @@ function formatDuration(
   ).toFixed(2);
 }
 
+function sanitizeCacheSegment(
+  value: string
+): string {
+  return value
+    .toLowerCase()
+    .replace(
+      /[^a-z0-9._-]/g,
+      "_"
+    );
+}
+
 function getCacheDirectory(
   repository: GitHubRepository
 ): string {
   const owner =
-    repository.owner
-      .toLowerCase()
-      .replace(
-        /[^a-z0-9._-]/g,
-        "_"
-      );
+    sanitizeCacheSegment(
+      repository.owner
+    );
 
   const name =
-    repository.name
-      .toLowerCase()
-      .replace(
-        /[^a-z0-9._-]/g,
-        "_"
-      );
+    sanitizeCacheSegment(
+      repository.name
+    );
 
   return join(
     CACHE_ROOT,
@@ -139,36 +152,9 @@ function readCacheMetadata(
   }
 }
 
-function isCacheFresh(
-  repository: GitHubRepository
+function isCacheWithinTtl(
+  metadata: RepositoryCacheMetadata
 ): boolean {
-  const cachePath =
-    getCachedRepositoryPath(
-      repository
-    );
-
-  if (
-    !existsSync(cachePath)
-  ) {
-    return false;
-  }
-
-  const metadata =
-    readCacheMetadata(
-      repository
-    );
-
-  if (!metadata) {
-    return false;
-  }
-
-  if (
-    metadata.repository !==
-    repository.fullName
-  ) {
-    return false;
-  }
-
   const cachedAt =
     Date.parse(
       metadata.cachedAt
@@ -186,6 +172,94 @@ function isCacheFresh(
   );
 }
 
+async function getRemoteHeadSha(
+  repository: GitHubRepository
+): Promise<string | null> {
+  console.log(
+    `[Repository Ingestion] Checking remote HEAD for ${repository.fullName}...`
+  );
+
+  try {
+    const result =
+      await runCommand(
+        "git",
+        [
+          "ls-remote",
+          "--exit-code",
+          repository.cloneUrl,
+          "HEAD",
+        ],
+        process.cwd(),
+        {
+          env: {
+            ...process.env,
+            GIT_TERMINAL_PROMPT:
+              "0",
+          },
+
+          timeoutMs:
+            REMOTE_HEAD_TIMEOUT_MS,
+        }
+      );
+
+    if (
+      result.status !==
+      "passed"
+    ) {
+      if (
+        result.timedOut
+      ) {
+        console.warn(
+          `[Repository Ingestion] Remote HEAD check timed out after ${REMOTE_HEAD_TIMEOUT_MS}ms.`
+        );
+      } else {
+        console.warn(
+          "[Repository Ingestion] Remote HEAD check failed."
+        );
+      }
+
+      return null;
+    }
+
+    const firstLine =
+      result.stdout
+        .trim()
+        .split(
+          /\r?\n/
+        )[0];
+
+    if (!firstLine) {
+      return null;
+    }
+
+    const [commitSha] =
+      firstLine.split(
+        /\s+/
+      );
+
+    if (
+      !/^[0-9a-f]{40,64}$/i.test(
+        commitSha
+      )
+    ) {
+      console.warn(
+        "[Repository Ingestion] Remote HEAD returned an unexpected commit identifier."
+      );
+
+      return null;
+    }
+
+    return commitSha;
+  } catch (error) {
+    console.warn(
+      "[Repository Ingestion] Remote HEAD check could not be completed.",
+      error
+    );
+
+    return null;
+  }
+}
+
 function removeRepositoryCache(
   repository: GitHubRepository
 ): void {
@@ -200,10 +274,10 @@ function removeRepositoryCache(
   );
 }
 
-function saveRepositoryToCache(
+async function saveRepositoryToCache(
   repository: GitHubRepository,
   sourcePath: string
-): void {
+): Promise<void> {
   const cacheDirectory =
     getCacheDirectory(
       repository
@@ -211,6 +285,11 @@ function saveRepositoryToCache(
 
   const cachePath =
     getCachedRepositoryPath(
+      repository
+    );
+
+  const commitSha =
+    await getRemoteHeadSha(
       repository
     );
 
@@ -241,6 +320,10 @@ function saveRepositoryToCache(
 
       repository:
         repository.fullName,
+
+      ...(commitSha
+        ? { commitSha }
+        : {}),
     };
 
   writeFileSync(
@@ -256,26 +339,84 @@ function saveRepositoryToCache(
   );
 
   console.log(
-    `[Repository Ingestion] Cached ${repository.fullName} for ${CACHE_TTL_MS / 60000} minutes.`
+    commitSha
+      ? `[Repository Ingestion] Cached ${repository.fullName} at commit ${commitSha.slice(0, 12)}.`
+      : `[Repository Ingestion] Cached ${repository.fullName} with ${CACHE_TTL_MS / 60000}-minute TTL fallback.`
   );
 }
 
-function copyCachedRepository(
+async function copyCachedRepository(
   repository: GitHubRepository,
   repositoryPath: string
-): boolean {
-  if (
-    !isCacheFresh(
+): Promise<boolean> {
+  const cachedPath =
+    getCachedRepositoryPath(
       repository
+    );
+
+  if (
+    !existsSync(
+      cachedPath
     )
   ) {
     return false;
   }
 
-  const cachedPath =
-    getCachedRepositoryPath(
+  const metadata =
+    readCacheMetadata(
       repository
     );
+
+  if (
+    !metadata ||
+    metadata.repository !==
+      repository.fullName
+  ) {
+    return false;
+  }
+
+  const remoteCommitSha =
+    await getRemoteHeadSha(
+      repository
+    );
+
+  if (
+    remoteCommitSha &&
+    metadata.commitSha
+  ) {
+    if (
+      remoteCommitSha !==
+      metadata.commitSha
+    ) {
+      console.log(
+        `[Repository Ingestion] Cache stale for ${repository.fullName}: remote HEAD changed.`
+      );
+
+      removeRepositoryCache(
+        repository
+      );
+
+      return false;
+    }
+
+    console.log(
+      `[Repository Ingestion] Cache commit verified for ${repository.fullName} (${remoteCommitSha.slice(0, 12)}).`
+    );
+  } else if (
+    !isCacheWithinTtl(
+      metadata
+    )
+  ) {
+    console.log(
+      `[Repository Ingestion] Cache could not be remotely verified and TTL has expired for ${repository.fullName}.`
+    );
+
+    return false;
+  } else {
+    console.log(
+      `[Repository Ingestion] Remote verification unavailable; using fresh TTL cache for ${repository.fullName}.`
+    );
+  }
 
   console.log(
     `[Repository Ingestion] Cache hit for ${repository.fullName}.`
@@ -302,10 +443,26 @@ function copyCachedRepository(
   return true;
 }
 
+function createArchiveUrl(
+  repository: GitHubRepository
+): string {
+  return (
+    "https://api.github.com/repos/" +
+    `${encodeURIComponent(
+      repository.owner
+    )}/` +
+    `${encodeURIComponent(
+      repository.name
+    )}/tarball`
+  );
+}
+
 async function tryArchiveDownload(
   repository: GitHubRepository,
   temporaryRoot: string,
-  repositoryPath: string
+  repositoryPath: string,
+  onProgress?:
+    RepositoryIngestionProgress
 ): Promise<boolean> {
   const archivePath =
     join(
@@ -314,16 +471,16 @@ async function tryArchiveDownload(
     );
 
   const archiveUrl =
-    `https://api.github.com/repos/` +
-    `${encodeURIComponent(
-      repository.owner
-    )}/` +
-    `${encodeURIComponent(
-      repository.name
-    )}/tarball`;
+    createArchiveUrl(
+      repository
+    );
 
   console.log(
     "[Repository Ingestion] Trying GitHub archive..."
+  );
+
+  await onProgress?.(
+    "Downloading repository archive. Large repositories may take a few minutes..."
   );
 
   const archiveStartedAt =
@@ -337,10 +494,17 @@ async function tryArchiveDownload(
         "--location",
         "--silent",
         "--show-error",
+
         "--connect-timeout",
-        "8",
+        String(
+          ARCHIVE_CONNECT_TIMEOUT_SECONDS
+        ),
+
         "--max-time",
-        "25",
+        String(
+          ARCHIVE_MAX_TIME_SECONDS
+        ),
+
         "--output",
         archivePath,
         archiveUrl,
@@ -356,8 +520,22 @@ async function tryArchiveDownload(
 
   if (
     download.status !==
+    "passed"
+  ) {
+    console.warn(
+      "[Repository Ingestion] Archive download diagnostic:",
+      download.stderr ||
+        download.stdout ||
+        "No diagnostic output."
+    );
+  }
+
+  if (
+    download.status !==
       "passed" ||
-    !existsSync(archivePath)
+    !existsSync(
+      archivePath
+    )
   ) {
     rmSync(
       archivePath,
@@ -370,11 +548,19 @@ async function tryArchiveDownload(
       "[Repository Ingestion] Archive unavailable. Falling back to Git clone."
     );
 
+    await onProgress?.(
+      "GitHub archive unavailable. Falling back to Git clone..."
+    );
+
     return false;
   }
 
   console.log(
     "[Repository Ingestion] Extracting GitHub archive..."
+  );
+
+  await onProgress?.(
+    "Extracting GitHub archive..."
   );
 
   const extractionStartedAt =
@@ -386,8 +572,10 @@ async function tryArchiveDownload(
       [
         "-xzf",
         archivePath,
+
         "-C",
         temporaryRoot,
+
         "--one-top-level=repository",
         "--strip-components=1",
       ],
@@ -409,6 +597,18 @@ async function tryArchiveDownload(
 
   if (
     extraction.status !==
+    "passed"
+  ) {
+    console.warn(
+      "[Repository Ingestion] Archive extraction diagnostic:",
+      extraction.stderr ||
+        extraction.stdout ||
+        "No diagnostic output."
+    );
+  }
+
+  if (
+    extraction.status !==
       "passed" ||
     !existsSync(
       repositoryPath
@@ -426,11 +626,19 @@ async function tryArchiveDownload(
       "[Repository Ingestion] Archive extraction failed. Falling back to Git clone."
     );
 
+    await onProgress?.(
+      "Archive extraction failed. Falling back to Git clone..."
+    );
+
     return false;
   }
 
   console.log(
     "[Repository Ingestion] GitHub archive fast-path succeeded."
+  );
+
+  await onProgress?.(
+    "GitHub archive downloaded and extracted successfully."
   );
 
   return true;
@@ -439,10 +647,16 @@ async function tryArchiveDownload(
 async function cloneRepository(
   repository: GitHubRepository,
   temporaryRoot: string,
-  repositoryPath: string
+  repositoryPath: string,
+  onProgress?:
+    RepositoryIngestionProgress
 ): Promise<void> {
   console.log(
     "[Repository Ingestion] Starting Git clone fallback..."
+  );
+
+  await onProgress?.(
+    "Starting Git clone fallback..."
   );
 
   const cloneStartedAt =
@@ -456,7 +670,8 @@ async function cloneRepository(
 
   for (
     let attempt = 1;
-    attempt <= CLONE_ATTEMPTS;
+    attempt <=
+    CLONE_ATTEMPTS;
     attempt += 1
   ) {
     if (
@@ -477,16 +692,25 @@ async function cloneRepository(
       `[Repository Ingestion] Git clone attempt ${attempt}/${CLONE_ATTEMPTS}...`
     );
 
+    await onProgress?.(
+      `Git clone attempt ${attempt}/${CLONE_ATTEMPTS} started...`
+    );
+
     const result =
       await runCommand(
         "git",
         [
           "clone",
+
           "--depth",
           "1",
+
           "--no-tags",
+
           "--single-branch",
+
           "--filter=blob:none",
+
           repository.cloneUrl,
           repositoryPath,
         ],
@@ -494,9 +718,13 @@ async function cloneRepository(
         {
           env: {
             ...process.env,
+
             GIT_TERMINAL_PROMPT:
               "0",
           },
+
+          timeoutMs:
+            CLONE_TIMEOUT_MS,
         }
       );
 
@@ -516,6 +744,10 @@ async function cloneRepository(
         )}s.`
       );
 
+      await onProgress?.(
+        `Git clone completed successfully on attempt ${attempt}.`
+      );
+
       break;
     }
 
@@ -524,46 +756,75 @@ async function cloneRepository(
       result.stdout ||
       `Repository clone failed on attempt ${attempt}.`;
 
-    console.log(
-      `[Repository Ingestion] Git clone attempt ${attempt} failed.`
-    );
+    if (
+      result.timedOut
+    ) {
+      console.log(
+        `[Repository Ingestion] Git clone attempt ${attempt} timed out after ${CLONE_TIMEOUT_MS / 1000}s.`
+      );
+
+      await onProgress?.(
+        `Git clone attempt ${attempt}/${CLONE_ATTEMPTS} timed out after ${CLONE_TIMEOUT_MS / 1000}s.`
+      );
+    } else {
+      console.log(
+        `[Repository Ingestion] Git clone attempt ${attempt} failed.`
+      );
+
+      await onProgress?.(
+        `Git clone attempt ${attempt}/${CLONE_ATTEMPTS} failed.`
+      );
+    }
 
     if (
       attempt <
       CLONE_ATTEMPTS
     ) {
-      await delay(
+      const retryDelayMs =
         CLONE_RETRY_DELAY_MS *
-          attempt
+        attempt;
+
+      await onProgress?.(
+        `Retrying repository clone in ${retryDelayMs / 1000}s...`
+      );
+
+      await delay(
+        retryDelayMs
       );
     }
   }
 
-  if (!cloneSucceeded) {
-    const authenticationFailure =
-      /could not read Username|Authentication failed|Repository not found|terminal prompts disabled/i.test(
-        lastError
-      );
+  if (
+    cloneSucceeded
+  ) {
+    return;
+  }
 
-    if (
-      authenticationFailure
-    ) {
-      throw new Error(
-        "This repository could not be accessed. DeployGuard currently supports public GitHub repositories. Private repository access requires GitHub authentication."
-      );
-    }
+  const authenticationFailure =
+    /could not read Username|Authentication failed|Repository not found|terminal prompts disabled/i.test(
+      lastError
+    );
 
+  if (
+    authenticationFailure
+  ) {
     throw new Error(
-      [
-        `Repository ingestion failed after ${CLONE_ATTEMPTS} attempts.`,
-        lastError,
-      ].join("\n")
+      "This repository could not be accessed. DeployGuard currently supports public GitHub repositories. Private repository access requires GitHub authentication."
     );
   }
+
+  throw new Error(
+    [
+      `Repository ingestion failed after ${CLONE_ATTEMPTS} attempts.`,
+      lastError,
+    ].join("\n")
+  );
 }
 
 export async function ingestGitHubRepository(
-  repository: GitHubRepository
+  repository: GitHubRepository,
+  onProgress?:
+    RepositoryIngestionProgress
 ): Promise<IngestedRepository> {
   mkdirSync(
     CACHE_ROOT,
@@ -591,21 +852,36 @@ export async function ingestGitHubRepository(
 
   try {
     const cacheHit =
-      copyCachedRepository(
+      await copyCachedRepository(
         repository,
         repositoryPath
       );
 
-    if (!cacheHit) {
+    if (
+      cacheHit
+    ) {
+      await onProgress?.(
+        "Repository loaded from verified cache."
+      );
+    }
+
+    if (
+      !cacheHit
+    ) {
       console.log(
         `[Repository Ingestion] Cache miss for ${repository.fullName}.`
+      );
+
+      await onProgress?.(
+        "Repository cache miss. Fetching from GitHub..."
       );
 
       const archiveSucceeded =
         await tryArchiveDownload(
           repository,
           temporaryRoot,
-          repositoryPath
+          repositoryPath,
+          onProgress
         );
 
       if (
@@ -614,7 +890,8 @@ export async function ingestGitHubRepository(
         await cloneRepository(
           repository,
           temporaryRoot,
-          repositoryPath
+          repositoryPath,
+          onProgress
         );
       }
 
@@ -629,11 +906,13 @@ export async function ingestGitHubRepository(
       }
 
       try {
-        saveRepositoryToCache(
+        await saveRepositoryToCache(
           repository,
           repositoryPath
         );
-      } catch (cacheError) {
+      } catch (
+        cacheError
+      ) {
         console.warn(
           "[Repository Ingestion] Repository was ingested successfully, but caching failed.",
           cacheError
@@ -678,16 +957,15 @@ export async function ingestGitHubRepository(
       repositoryPath,
 
       cleanup() {
-        if (cleanedUp) {
+        if (
+          cleanedUp
+        ) {
           return;
         }
 
         cleanedUp =
           true;
 
-        // Only remove the disposable
-        // assessment copy.
-        // Persistent cache remains.
         rmSync(
           temporaryRoot,
           {
