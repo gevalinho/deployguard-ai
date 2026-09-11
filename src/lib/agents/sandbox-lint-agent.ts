@@ -1,8 +1,31 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  existsSync,
+  readFileSync,
+} from "node:fs";
 
-import type { CheckResult } from "@/lib/checks/types";
-import { runDockerSandboxCommand } from "@/lib/sandbox/docker-sandbox";
+import {
+  join,
+} from "node:path";
+
+import type {
+  CheckResult,
+} from "@/lib/checks/types";
+
+import {
+  runDockerSandboxCommand,
+} from "@/lib/sandbox/docker-sandbox";
+
+import {
+  detectPackageManager,
+} from "@/lib/sandbox/package-manager";
+
+import {
+  createRunScriptCommand,
+} from "@/lib/sandbox/package-manager-command";
+
+import {
+  getCorepackSandboxConfig,
+} from "@/lib/sandbox/corepack-cache";
 
 interface PackageJson {
   scripts?: Record<string, string>;
@@ -11,10 +34,11 @@ interface PackageJson {
 export async function runSandboxLintAgent(
   repositoryPath: string
 ): Promise<CheckResult> {
-  const packageJsonPath = join(
-    repositoryPath,
-    "package.json"
-  );
+  const packageJsonPath =
+    join(
+      repositoryPath,
+      "package.json"
+    );
 
   if (!existsSync(packageJsonPath)) {
     return {
@@ -28,12 +52,36 @@ export async function runSandboxLintAgent(
     };
   }
 
-  const packageJson = JSON.parse(
-    readFileSync(
-      packageJsonPath,
-      "utf8"
-    )
-  ) as PackageJson;
+  const packageManager =
+    detectPackageManager(
+      repositoryPath
+    );
+
+  if (!packageManager) {
+    return {
+      id: "lint",
+      category: "lint",
+      name: "Lint",
+      status: "skipped",
+      skipReason: "unsupported",
+      summary:
+        "No supported package manager lockfile was detected.",
+    };
+  }
+
+  const corepackConfig =
+  getCorepackSandboxConfig(
+    packageManager,
+    true
+  );
+
+  const packageJson =
+    JSON.parse(
+      readFileSync(
+        packageJsonPath,
+        "utf8"
+      )
+    ) as PackageJson;
 
   if (!packageJson.scripts?.lint) {
     return {
@@ -47,49 +95,74 @@ export async function runSandboxLintAgent(
     };
   }
 
+  const lintCommand =
+    createRunScriptCommand(
+      packageManager,
+      "lint"
+    );
+
   const result =
     await runDockerSandboxCommand({
       repositoryPath,
 
-      command: [
-        "npm",
-        "run",
-        "lint",
-      ],
+      command:
+        lintCommand.command,
 
-      network: "none",
+      network:
+        "none",
+
+      // environment: {
+      //   CI:
+      //     "true",
+      //   HOME:
+      //     "/tmp/deployguard-home",
+      // },
 
       environment: {
-        CI: "true",
-        HOME: "/tmp/deployguard-home",
-      },
+  ...corepackConfig.environment,
+},
+
+mounts: [
+  ...corepackConfig.mounts,
+],
 
       user:
-        typeof process.getuid === "function" &&
-        typeof process.getgid === "function"
+        typeof process.getuid ===
+          "function" &&
+        typeof process.getgid ===
+          "function"
           ? `${process.getuid()}:${process.getgid()}`
           : "1000:1000",
 
       limits: {
         memoryMb: 2048,
         cpus: 1,
-        timeoutMs: 5 * 60 * 1000,
+        timeoutMs:
+          5 * 60 * 1000,
       },
     });
 
-  if (result.status === "timed_out") {
+  if (
+    result.status ===
+    "timed_out"
+  ) {
     return {
       id: "lint",
       category: "lint",
       name: "Lint",
       status: "error",
-      command: "npm run lint",
-      exitCode: result.exitCode,
-      durationMs: result.durationMs,
+      command:
+        lintCommand.display,
+      exitCode:
+        result.exitCode,
+      durationMs:
+        result.durationMs,
       summary:
         "Linting exceeded the sandbox timeout.",
-      stdout: result.stdout,
-      stderr: result.stderr,
+      stdout:
+        result.stdout,
+      stderr:
+        result.stderr,
     };
   }
 
@@ -103,16 +176,24 @@ export async function runSandboxLintAgent(
         ? "passed"
         : "failed",
 
-    command: "npm run lint",
-    exitCode: result.exitCode,
-    durationMs: result.durationMs,
+    command:
+      lintCommand.display,
+
+    exitCode:
+      result.exitCode,
+
+    durationMs:
+      result.durationMs,
 
     summary:
       result.status === "passed"
         ? "Linting passed inside the sandbox."
         : "Linting failed inside the sandbox.",
 
-    stdout: result.stdout,
-    stderr: result.stderr,
+    stdout:
+      result.stdout,
+
+    stderr:
+      result.stderr,
   };
 }
