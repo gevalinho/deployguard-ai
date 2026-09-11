@@ -36,6 +36,7 @@ type CheckResult = {
   status:
     | "passed"
     | "failed"
+    | "blocked"
     | "skipped"
     | "error";
   skipReason?: string;
@@ -80,6 +81,7 @@ type AssessmentProgressStatus =
   | "running"
   | "passed"
   | "failed"
+  | "blocked"
   | "skipped"
   | "error"
   | "completed";
@@ -200,6 +202,9 @@ function getProgressSymbol(
     case "completed":
       return "✓";
 
+    case "blocked":
+      return "!";
+
     case "skipped":
       return "○";
 
@@ -226,6 +231,9 @@ function getProgressTextClass(
       return "text-red-400";
 
     case "error":
+      return "text-amber-400";
+
+    case "blocked":
       return "text-amber-400";
 
     case "running":
@@ -608,13 +616,61 @@ export function ReadinessDashboard() {
             backed by evidence.
           </h1>
 
-          <p className="mt-5 max-w-2xl text-lg leading-8 text-zinc-400">
-            Inspect build quality,
-            security, testing,
-            deployment readiness and
-            architecture before code
-            reaches production.
+          <p className="mt-5 max-w-3xl text-lg leading-8 text-zinc-400">
+            DeployGuard executes real
+            repository checks inside an
+            isolated sandbox, verifies the
+            evidence, then uses NVIDIA
+            Nemotron to explain what is
+            safe to ship and what still
+            needs attention.
           </p>
+
+          <div className="mt-8 grid max-w-4xl gap-3 sm:grid-cols-4">
+  {[
+    {
+      step: "01",
+      title: "Evidence",
+      description:
+        "Inspect the repository and execute real checks.",
+    },
+    {
+      step: "02",
+      title: "Verification",
+      description:
+        "Validate build, types, tests, security and deployment.",
+    },
+    {
+      step: "03",
+      title: "AI Reasoning",
+      description:
+        "Nemotron reasons only over collected evidence.",
+    },
+    {
+      step: "04",
+      title: "Readiness",
+      description:
+        "Calculate a deterministic score and remediation plan.",
+    },
+  ].map((item) => (
+    <div
+      key={item.step}
+      className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4"
+    >
+      <p className="font-mono text-xs text-zinc-600">
+        {item.step}
+      </p>
+
+      <p className="mt-2 font-medium text-zinc-200">
+        {item.title}
+      </p>
+
+      <p className="mt-1 text-xs leading-5 text-zinc-500">
+        {item.description}
+      </p>
+    </div>
+  ))}
+</div>
 
           <div className="mt-8 max-w-3xl rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
             <label
@@ -889,40 +945,86 @@ export function ReadinessDashboard() {
         {report && (
           <div className="space-y-8">
             <section className="grid gap-4 md:grid-cols-2">
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
-                <p className="text-sm text-zinc-400">
-                  Readiness Score
-                </p>
+  <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
+    <div className="flex items-start justify-between gap-4">
+      <div>
+        <p className="text-sm text-zinc-400">
+          Production Readiness
+        </p>
 
-                <p className="mt-2 text-5xl font-semibold">
-                  {
-                    report.readiness
-                      .score
-                  }
+        <p className="mt-2 text-5xl font-semibold">
+          {report.readiness.score}
 
-                  <span className="text-2xl text-zinc-500">
-                    /100
-                  </span>
-                </p>
-              </div>
+          <span className="text-2xl text-zinc-500">
+            /100
+          </span>
+        </p>
+      </div>
 
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
-                <p className="text-sm text-zinc-400">
-                  Assessment Coverage
-                </p>
+      <span className="rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400">
+        Deterministic
+      </span>
+    </div>
 
-                <p className="mt-2 text-5xl font-semibold">
-                  {
-                    report.readiness
-                      .coverage
-                  }
+    <p className="mt-4 text-sm leading-6 text-zinc-500">
+      Calculated from verified
+      build, type, lint, test,
+      security, database,
+      deployment and environment
+      evidence — not from an AI
+      opinion.
+    </p>
+  </div>
 
-                  <span className="text-2xl text-zinc-500">
-                    %
-                  </span>
-                </p>
-              </div>
-            </section>
+  <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
+    <div className="flex items-start justify-between gap-4">
+      <div>
+        <p className="text-sm text-zinc-400">
+          Assessment Coverage
+        </p>
+
+        <p className="mt-2 text-5xl font-semibold">
+          {report.readiness.coverage}
+
+          <span className="text-2xl text-zinc-500">
+            %
+          </span>
+        </p>
+      </div>
+
+      <span className="rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400">
+        Evidence coverage
+      </span>
+    </div>
+
+    <p className="mt-4 text-sm leading-6 text-zinc-500">
+      Shows how much of the
+      applicable production
+      readiness surface DeployGuard
+      was able to evaluate.
+    </p>
+  </div>
+</section>
+
+          <section className="rounded-2xl border border-zinc-800 bg-zinc-950 p-6">
+  <p className="text-xs font-medium uppercase tracking-[0.2em] text-zinc-600">
+    Evidence before AI opinion
+  </p>
+
+  <h2 className="mt-2 text-2xl font-semibold">
+    What DeployGuard verified
+  </h2>
+
+  <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-400">
+    The readiness score below is
+    produced from deterministic
+    repository and runtime evidence.
+    External research and NVIDIA
+    Nemotron add context and
+    explanation, but they do not
+    invent the score.
+  </p>
+</section>
 
             <section>
               <h2 className="mb-4 text-xl font-semibold">

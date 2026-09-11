@@ -1,6 +1,7 @@
 export type CheckStatus =
   | "passed"
   | "failed"
+  | "blocked"
   | "skipped"
   | "error";
 
@@ -14,7 +15,7 @@ export type CheckCategory =
   | "deployment"
   | "environment";
 
-  export type SkipReason =
+export type SkipReason =
   | "not_applicable"
   | "not_configured"
   | "unsupported";

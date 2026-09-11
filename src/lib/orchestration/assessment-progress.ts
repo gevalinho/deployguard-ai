@@ -3,6 +3,7 @@ export type AssessmentProgressStatus =
   | "running"
   | "passed"
   | "failed"
+  | "blocked"
   | "skipped"
   | "error"
   | "completed";

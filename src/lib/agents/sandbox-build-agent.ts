@@ -182,11 +182,11 @@ mounts: [
     name: "Production Build",
 
     status:
-      result.status === "passed"
-        ? "passed"
-        : networkDependencyFailure
-          ? "error"
-          : "failed",
+  result.status === "passed"
+    ? "passed"
+    : networkDependencyFailure
+      ? "blocked"
+      : "failed",
 
     command:
       buildCommand.display,
@@ -201,7 +201,7 @@ mounts: [
       result.status === "passed"
         ? "Production build passed inside the sandbox."
         : networkDependencyFailure
-          ? "Production build requires external network access that is blocked by the sandbox."
+          ? "Production build could not be fully verified because the isolated sandbox blocked required external network access."
           : "Production build failed inside the sandbox.",
 
     stdout:

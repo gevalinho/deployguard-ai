@@ -99,6 +99,20 @@ function createRemediationItems(
       continue;
     }
 
+    if (check.status === "blocked") {
+  items.push({
+    category: check.category,
+    priority: "medium",
+    title: `${check.name} verification was blocked`,
+    recommendation:
+      check.category === "build"
+        ? "The production build depends on external network access that is restricted by the DeployGuard sandbox. Review the build-time network dependency or allow the required resource through a controlled verification policy, then rerun the assessment."
+        : "The check could not be fully verified because the execution environment or verification policy blocked a required capability. Review the restriction and rerun the assessment.",
+    });
+
+  continue;
+      }
+
     if (check.status === "error") {
       items.push({
         category: check.category,

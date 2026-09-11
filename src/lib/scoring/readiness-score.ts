@@ -14,6 +14,28 @@ const CATEGORY_WEIGHTS: Record<CheckCategory, number> = {
   environment: 5,
 };
 
+// export interface ReadinessScore {
+//   score: number;
+//   coverage: number;
+
+//   earnedWeight: number;
+//   evaluatedWeight: number;
+//   applicableWeight: number;
+//   totalWeight: number;
+
+//   passed: number;
+//   failed: number;
+//   skipped: number;
+//   errors: number;
+//   totalChecks: number;
+
+//   readinessGaps: CheckCategory[];
+//   unevaluatedCategories: CheckCategory[];
+//   notApplicableCategories: CheckCategory[];
+// }
+
+
+
 export interface ReadinessScore {
   score: number;
   coverage: number;
@@ -25,6 +47,7 @@ export interface ReadinessScore {
 
   passed: number;
   failed: number;
+  blocked: number;
   skipped: number;
   errors: number;
   totalChecks: number;
@@ -83,6 +106,15 @@ export function calculateReadinessScore(
         check.skipReason === "not_configured"
     );
 
+    const hasBlocked = categoryChecks.some(
+  (check) => check.status === "blocked"
+    );
+
+  if (hasBlocked) {
+  unevaluatedCategories.push(category);
+  continue;
+  }
+
     if (hasNotConfigured) {
       evaluatedWeight += weight;
       readinessGaps.push(category);
@@ -136,6 +168,10 @@ export function calculateReadinessScore(
     (check) => check.status === "failed"
   ).length;
 
+  const blocked = checks.filter(
+  (check) => check.status === "blocked"
+).length;
+
   const skipped = checks.filter(
     (check) => check.status === "skipped"
   ).length;
@@ -155,6 +191,7 @@ export function calculateReadinessScore(
     passed,
     failed,
     skipped,
+    blocked,
     errors,
     totalChecks: checks.length,
 

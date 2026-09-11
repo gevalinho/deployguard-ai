@@ -39,8 +39,11 @@ const CLONE_RETRY_DELAY_MS =
 const CACHE_TTL_MS =
   15 * 60 * 1000;
 
+const STALE_CACHE_FALLBACK_MS =
+  24 * 60 * 60 * 1000;
+
 const REMOTE_HEAD_TIMEOUT_MS =
-  10 * 1000;
+  3 * 1000;
 
 const ARCHIVE_CONNECT_TIMEOUT_SECONDS = 10;
 const ARCHIVE_MAX_TIME_SECONDS = 5 * 60;
@@ -169,6 +172,26 @@ function isCacheWithinTtl(
   return (
     Date.now() - cachedAt <
     CACHE_TTL_MS
+  );
+}
+
+function isCacheWithinStaleFallback(
+  metadata: RepositoryCacheMetadata
+): boolean {
+  const cachedAt =
+    Date.parse(
+      metadata.cachedAt
+    );
+
+  if (
+    Number.isNaN(cachedAt)
+  ) {
+    return false;
+  }
+
+  return (
+    Date.now() - cachedAt <
+    STALE_CACHE_FALLBACK_MS
   );
 }
 
@@ -403,16 +426,26 @@ async function copyCachedRepository(
       `[Repository Ingestion] Cache commit verified for ${repository.fullName} (${remoteCommitSha.slice(0, 12)}).`
     );
   } else if (
-    !isCacheWithinTtl(
+  !isCacheWithinTtl(
+    metadata
+  )
+) {
+  if (
+    !isCacheWithinStaleFallback(
       metadata
     )
   ) {
     console.log(
-      `[Repository Ingestion] Cache could not be remotely verified and TTL has expired for ${repository.fullName}.`
+      `[Repository Ingestion] Cache could not be remotely verified and stale fallback has expired for ${repository.fullName}.`
     );
 
     return false;
-  } else {
+  }
+
+  console.warn(
+    `[Repository Ingestion] Remote verification unavailable; using stale fallback cache for ${repository.fullName}.`
+  );
+} else {
     console.log(
       `[Repository Ingestion] Remote verification unavailable; using fresh TTL cache for ${repository.fullName}.`
     );
