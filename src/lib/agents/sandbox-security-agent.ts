@@ -15,6 +15,10 @@ import {
   createAuditCommand,
 } from "@/lib/sandbox/package-manager-command";
 
+import {
+  getCorepackSandboxConfig,
+} from "@/lib/sandbox/corepack-cache";
+
 function looksLikeInfrastructureFailure(
   stdout: string,
   stderr: string
@@ -108,6 +112,12 @@ export async function runSandboxSecurityAgent(
     };
   }
 
+  const corepackConfig =
+  getCorepackSandboxConfig(
+    packageManager,
+    true
+  );
+
   const auditCommand =
     createAuditCommand(
       packageManager
@@ -141,7 +151,13 @@ export async function runSandboxSecurityAgent(
                 "/tmp/npm-cache",
             }
           : {}),
+
+          
       },
+
+      mounts: [
+      ...corepackConfig.mounts,
+      ],
 
       user:
         typeof process.getuid ===
