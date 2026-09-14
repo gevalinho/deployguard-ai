@@ -105,6 +105,61 @@ function detectNetworkFailure(
   );
 }
 
+function extractPreparationFailureSummary(
+  stdout: string,
+  stderr: string
+): string | null {
+  const combinedOutput =
+    `${stdout}\n${stderr}`;
+
+  const lines =
+    combinedOutput
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+  const peerConflictLine =
+    lines.find((line) =>
+      /ERESOLVE|unable to resolve dependency tree|peer dependency/i.test(
+        line
+      )
+    );
+
+  if (peerConflictLine) {
+    return (
+      "Dependency installation failed because the repository has an unresolved dependency or peer-dependency conflict."
+    );
+  }
+
+  const lockfileLine =
+    lines.find((line) =>
+      /package-lock.*package\.json|npm ci.*lockfile|lock file/i.test(
+        line
+      )
+    );
+
+  if (lockfileLine) {
+    return (
+      "Dependency installation failed because the lockfile is not consistent with package.json."
+    );
+  }
+
+  const permissionLine =
+    lines.find((line) =>
+      /EACCES|permission denied/i.test(
+        line
+      )
+    );
+
+  if (permissionLine) {
+    return (
+      "Dependency installation failed because the sandbox encountered a filesystem permission error."
+    );
+  }
+
+  return null;
+}
+
 export async function prepareSandboxWorkspace(
   repositoryPath: string
 ): Promise<SandboxPreparationResult> {
@@ -395,7 +450,7 @@ const result =
         2,
 
       timeoutMs:
-        10 *
+        2 *
         60 *
         1000,
     },
@@ -440,6 +495,14 @@ const result =
       result.stderr
     );
 
+    const preparationFailureSummary =
+  result.status === "passed"
+    ? null
+    : extractPreparationFailureSummary(
+        result.stdout,
+        result.stderr
+      );
+
   return {
     status:
       result.status,
@@ -458,11 +521,13 @@ const result =
       preparationStartedAt,
 
     summary:
-      result.status ===
-      "passed"
-        ? `Sandbox workspace prepared successfully using ${packageManager.name}.`
-        : networkFailure
-          ? "Sandbox workspace preparation could not complete because of a package registry or network error."
-          : `Sandbox workspace preparation failed using ${packageManager.name}.`,
+  result.status === "passed"
+    ? `Sandbox workspace prepared successfully using ${packageManager.name}.`
+    : result.status === "timed_out"
+      ? `Sandbox workspace preparation timed out after 120 seconds while installing dependencies with ${packageManager.name}.`
+      : networkFailure
+        ? "Sandbox workspace preparation could not complete because of a package registry or network error."
+        : preparationFailureSummary ??
+          `Sandbox workspace preparation failed using ${packageManager.name}.`,
   };
 }

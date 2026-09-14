@@ -19,6 +19,42 @@ import {
   getCorepackSandboxConfig,
 } from "@/lib/sandbox/corepack-cache";
 
+const SECURITY_AUDIT_TIMEOUT_MS =
+  30_000;
+
+type AuditSeverity =
+  | "info"
+  | "low"
+  | "moderate"
+  | "high"
+  | "critical";
+
+interface AuditFinding {
+  packageName: string;
+  severity: AuditSeverity;
+}
+
+interface NpmStyleAuditReport {
+  vulnerabilities?: Record<
+    string,
+    {
+      name?: string;
+      severity?: AuditSeverity;
+    }
+  >;
+
+  metadata?: {
+    vulnerabilities?: {
+      info?: number;
+      low?: number;
+      moderate?: number;
+      high?: number;
+      critical?: number;
+      total?: number;
+    };
+  };
+}
+
 function looksLikeInfrastructureFailure(
   stdout: string,
   stderr: string
@@ -31,19 +67,6 @@ function looksLikeInfrastructureFailure(
   );
 }
 
-/*
- * Yarn Classic uses a bitmask exit code:
- *
- * 1  = informational
- * 2  = low
- * 4  = moderate
- * 8  = high
- * 16 = critical
- *
- * DeployGuard currently treats high and
- * critical dependency vulnerabilities as
- * readiness failures.
- */
 function yarnClassicHasHighSeverityFinding(
   exitCode: number | null | undefined
 ): boolean {
@@ -76,19 +99,261 @@ function auditReportedHighSeverityFinding(
     );
   }
 
-  /*
-   * npm, pnpm and modern Yarn are invoked
-   * with a high-severity threshold.
-   *
-   * A non-zero exit after infrastructure
-   * failures have been excluded is therefore
-   * treated as a dependency vulnerability
-   * finding.
-   */
   return (
     exitCode !== null &&
     exitCode !== undefined &&
     exitCode !== 0
+  );
+}
+
+function parseJson(
+  value: string
+): unknown | null {
+  if (!value.trim()) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function isAuditSeverity(
+  value: unknown
+): value is AuditSeverity {
+  return (
+    value === "info" ||
+    value === "low" ||
+    value === "moderate" ||
+    value === "high" ||
+    value === "critical"
+  );
+}
+
+function extractNpmStyleFindings(
+  stdout: string
+): AuditFinding[] {
+  const parsed =
+    parseJson(stdout);
+
+  if (
+    !parsed ||
+    typeof parsed !== "object"
+  ) {
+    return [];
+  }
+
+  const report =
+    parsed as NpmStyleAuditReport;
+
+  if (!report.vulnerabilities) {
+    return [];
+  }
+
+  return Object.entries(
+    report.vulnerabilities
+  )
+    .map(
+      ([
+        packageKey,
+        vulnerability,
+      ]) => {
+        if (
+          !isAuditSeverity(
+            vulnerability.severity
+          )
+        ) {
+          return null;
+        }
+
+        return {
+          packageName:
+            vulnerability.name ??
+            packageKey,
+          severity:
+            vulnerability.severity,
+        };
+      }
+    )
+    .filter(
+      (
+        finding
+      ): finding is AuditFinding =>
+        finding !== null
+    );
+}
+
+function extractYarnClassicFindings(
+  stdout: string
+): AuditFinding[] {
+  const findings: AuditFinding[] =
+    [];
+
+  for (
+    const line of stdout.split("\n")
+  ) {
+    if (!line.trim()) {
+      continue;
+    }
+
+    const parsed =
+      parseJson(line);
+
+    if (
+      !parsed ||
+      typeof parsed !== "object"
+    ) {
+      continue;
+    }
+
+    const event = parsed as {
+      type?: string;
+      data?: {
+        advisory?: {
+          module_name?: string;
+          severity?: string;
+        };
+      };
+    };
+
+    const advisory =
+      event.data?.advisory;
+
+    if (
+      event.type !== "auditAdvisory" ||
+      !advisory ||
+      !isAuditSeverity(
+        advisory.severity
+      )
+    ) {
+      continue;
+    }
+
+    findings.push({
+      packageName:
+        advisory.module_name ??
+        "unknown package",
+      severity:
+        advisory.severity,
+    });
+  }
+
+  return findings;
+}
+
+function extractAuditFindings(
+  packageManager: PackageManagerInfo,
+  stdout: string
+): AuditFinding[] {
+  if (
+    packageManager.name === "yarn" &&
+    packageManager.yarnMode === "classic"
+  ) {
+    return extractYarnClassicFindings(
+      stdout
+    );
+  }
+
+  return extractNpmStyleFindings(
+    stdout
+  );
+}
+
+function getHighRiskFindings(
+  findings: AuditFinding[]
+): AuditFinding[] {
+  return findings.filter(
+    (finding) =>
+      finding.severity ===
+        "high" ||
+      finding.severity ===
+        "critical"
+  );
+}
+
+function createFailureSummary(
+  findings: AuditFinding[]
+): string {
+  const highRisk =
+    getHighRiskFindings(
+      findings
+    );
+
+  if (highRisk.length === 0) {
+    return (
+      "High-severity dependency vulnerabilities were reported, " +
+      "but DeployGuard could not extract detailed package evidence " +
+      "from the audit output."
+    );
+  }
+
+  const criticalCount =
+    highRisk.filter(
+      (finding) =>
+        finding.severity ===
+        "critical"
+    ).length;
+
+  const highCount =
+    highRisk.filter(
+      (finding) =>
+        finding.severity ===
+        "high"
+    ).length;
+
+  const uniquePackages = [
+    ...new Set(
+      highRisk.map(
+        (finding) =>
+          finding.packageName
+      )
+    ),
+  ];
+
+  const severityParts: string[] =
+    [];
+
+  if (criticalCount > 0) {
+    severityParts.push(
+      `${criticalCount} critical`
+    );
+  }
+
+  if (highCount > 0) {
+    severityParts.push(
+      `${highCount} high`
+    );
+  }
+
+  const packagePreview =
+    uniquePackages
+      .slice(0, 5)
+      .join(", ");
+
+  const remaining =
+    uniquePackages.length - 5;
+
+  const packageText =
+    packagePreview
+      ? ` Affected packages include ${packagePreview}${
+          remaining > 0
+            ? ` and ${remaining} more`
+            : ""
+        }.`
+      : "";
+
+  return (
+    `${severityParts.join(
+      " and "
+    )} severity dependency ` +
+    `vulnerabilit${
+      highRisk.length === 1
+        ? "y was"
+        : "ies were"
+    } reported.` +
+    packageText
   );
 }
 
@@ -104,19 +369,21 @@ export async function runSandboxSecurityAgent(
     return {
       id: "security",
       category: "security",
-      name: "Dependency Security",
+      name:
+        "Dependency Security",
       status: "skipped",
-      skipReason: "not_applicable",
+      skipReason:
+        "not_applicable",
       summary:
         "No supported package manager lockfile was detected.",
     };
   }
 
   const corepackConfig =
-  getCorepackSandboxConfig(
-    packageManager,
-    true
-  );
+    getCorepackSandboxConfig(
+      packageManager,
+      true
+    );
 
   const auditCommand =
     createAuditCommand(
@@ -130,16 +397,11 @@ export async function runSandboxSecurityAgent(
       command:
         auditCommand.command,
 
-      /*
-       * Dependency auditing requires
-       * package-registry access.
-       */
       network:
         "bridge",
 
       environment: {
-        CI:
-          "true",
+        CI: "true",
 
         HOME:
           "/tmp/deployguard-home",
@@ -151,12 +413,10 @@ export async function runSandboxSecurityAgent(
                 "/tmp/npm-cache",
             }
           : {}),
-
-          
       },
 
       mounts: [
-      ...corepackConfig.mounts,
+        ...corepackConfig.mounts,
       ],
 
       user:
@@ -171,7 +431,7 @@ export async function runSandboxSecurityAgent(
         memoryMb: 1024,
         cpus: 1,
         timeoutMs:
-          2 * 60 * 1000,
+          SECURITY_AUDIT_TIMEOUT_MS,
       },
     });
 
@@ -182,8 +442,9 @@ export async function runSandboxSecurityAgent(
     return {
       id: "security",
       category: "security",
-      name: "Dependency Security",
-      status: "error",
+      name:
+        "Dependency Security",
+      status: "blocked",
 
       command:
         auditCommand.display,
@@ -195,7 +456,7 @@ export async function runSandboxSecurityAgent(
         result.durationMs,
 
       summary:
-        "Dependency security audit exceeded the sandbox timeout.",
+        "Dependency security verification was blocked because the package registry did not respond within 30 seconds.",
 
       stdout:
         result.stdout,
@@ -214,8 +475,9 @@ export async function runSandboxSecurityAgent(
     return {
       id: "security",
       category: "security",
-      name: "Dependency Security",
-      status: "error",
+      name:
+        "Dependency Security",
+      status: "blocked",
 
       command:
         auditCommand.display,
@@ -227,7 +489,7 @@ export async function runSandboxSecurityAgent(
         result.durationMs,
 
       summary:
-        "Dependency security audit could not be completed because of a network or registry error.",
+        "Dependency security verification was blocked because the package registry or audit service was unavailable.",
 
       stdout:
         result.stdout,
@@ -243,11 +505,18 @@ export async function runSandboxSecurityAgent(
       result.exitCode
     );
 
+  const findings =
+    extractAuditFindings(
+      packageManager,
+      result.stdout
+    );
+
   if (highSeverityFinding) {
     return {
       id: "security",
       category: "security",
-      name: "Dependency Security",
+      name:
+        "Dependency Security",
       status: "failed",
 
       command:
@@ -260,7 +529,9 @@ export async function runSandboxSecurityAgent(
         result.durationMs,
 
       summary:
-        "High-severity dependency vulnerabilities were reported.",
+        createFailureSummary(
+          findings
+        ),
 
       stdout:
         result.stdout,
@@ -270,16 +541,11 @@ export async function runSandboxSecurityAgent(
     };
   }
 
-  /*
-   * Yarn Classic may return a non-zero exit
-   * code for informational, low or moderate
-   * findings. Those do not fail our current
-   * high-severity readiness threshold.
-   */
   return {
     id: "security",
     category: "security",
-    name: "Dependency Security",
+    name:
+      "Dependency Security",
     status: "passed",
 
     command:
