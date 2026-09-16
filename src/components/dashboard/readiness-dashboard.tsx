@@ -90,6 +90,18 @@ type ReadinessReport = {
     title: string;
     recommendation: string;
   }[];
+
+    aiRemediation?: {
+    summary: string;
+    actions: {
+      title: string;
+      explanation: string;
+      recommendation: string;
+      priority: "low" | "medium" | "high" | "critical";
+      checkId: string;
+      evidenceIndexes: number[];
+    }[];
+  };
 };
 
 type AssessmentProgressStatus =
@@ -149,8 +161,9 @@ const ASSESSMENT_STAGES = [
   { stage: "test", label: "Tests" },
   { stage: "build", label: "Production Build" },
   { stage: "security", label: "Dependency Security" },
-  { stage: "architect", label: "Nemotron Analysis" },
-  { stage: "report", label: "Readiness Report" },
+{ stage: "architect", label: "Nemotron Analysis" },
+{ stage: "remediation", label: "Nemotron Remediation" },
+{ stage: "report", label: "Readiness Report" },
 ] as const;
 
 const PROCESS_STEPS = [
@@ -890,6 +903,209 @@ function RemediationPlan({
   );
 }
 
+
+/* -------------------------------------------------------------------------- */
+/*                           AI Remediation Guidance                           */
+/* -------------------------------------------------------------------------- */
+
+function AiRemediationGuidance({
+  remediation,
+  checks,
+}: {
+  remediation: NonNullable<ReadinessReport["aiRemediation"]>;
+  checks: CheckResult[];
+}) {
+  const checksById = new Map(
+    checks.map((check) => [check.id, check])
+  );
+
+  return (
+    <section className="rounded-2xl border border-violet-500/20 bg-gradient-to-br from-violet-500/5 to-zinc-900 p-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full border border-violet-500/30 bg-violet-500/10 px-3 py-1 text-xs font-medium text-violet-300">
+              NVIDIA AI
+            </span>
+
+            <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300">
+              Evidence verified
+            </span>
+          </div>
+
+          <h2 className="mt-4 text-xl font-semibold">
+            AI Remediation Guidance
+          </h2>
+
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
+            Nemotron explains verified failures using structured
+            evidence captured by DeployGuard. Every displayed
+            evidence reference passed deterministic verification.
+          </p>
+        </div>
+
+        <span className="shrink-0 whitespace-nowrap rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400">
+          {remediation.actions.length} verified{" "}
+          {remediation.actions.length === 1
+            ? "action"
+            : "actions"}
+        </span>
+      </div>
+
+      <div className="mt-6 rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
+        <p className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-600">
+          Nemotron Summary
+        </p>
+
+        <p className="mt-2 text-sm leading-6 text-zinc-300">
+          {remediation.summary}
+        </p>
+      </div>
+
+      <div className="mt-5 space-y-4">
+        {remediation.actions.map((action, actionIndex) => {
+          const check = checksById.get(action.checkId);
+
+          const referencedEvidence =
+            check?.evidence
+              ? action.evidenceIndexes
+                  .map((index) => ({
+                    index,
+                    evidence: check.evidence?.[index],
+                  }))
+                  .filter(
+                    (
+                      item
+                    ): item is {
+                      index: number;
+                      evidence: CheckEvidence;
+                    } => item.evidence !== undefined
+                  )
+              : [];
+
+          return (
+            <article
+              key={`${action.checkId}-${actionIndex}`}
+              className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-xs uppercase tracking-[0.16em] text-zinc-600">
+                    {check?.name ?? action.checkId}
+                  </p>
+
+                  <h3 className="mt-2 font-medium text-zinc-100">
+                    {action.title}
+                  </h3>
+                </div>
+
+                <span className="rounded-full border border-zinc-700 px-2.5 py-1 text-xs uppercase tracking-wide text-zinc-400">
+                  {action.priority}
+                </span>
+              </div>
+
+              <div className="mt-4">
+                <p className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-600">
+                  Explanation
+                </p>
+
+                <p className="mt-2 text-sm leading-6 text-zinc-400">
+                  {action.explanation}
+                </p>
+              </div>
+
+              <div className="mt-4">
+                <p className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-600">
+                  Recommendation
+                </p>
+
+                <p className="mt-2 text-sm leading-6 text-zinc-300">
+                  {action.recommendation}
+                </p>
+              </div>
+
+              {referencedEvidence.length > 0 && (
+                <div className="mt-5 border-t border-zinc-800 pt-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-600">
+                      Verified Evidence References
+                    </p>
+
+                    <span className="text-xs font-medium text-emerald-400">
+                      ✓ References verified
+                    </span>
+                  </div>
+
+                  <div className="mt-3 space-y-3">
+                    {referencedEvidence.map(
+                      ({ index, evidence }) => {
+                        const location =
+                          formatEvidenceLocation(evidence);
+
+                        return (
+                          <div
+                            key={`${action.checkId}-${actionIndex}-evidence-${index}`}
+                            className="rounded-xl border border-zinc-800 bg-zinc-950 p-4"
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-mono text-xs text-zinc-600">
+                                Evidence #{index}
+                              </span>
+
+                              <span
+                                className={`rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide ${getEvidenceKindClass(
+                                  evidence.kind
+                                )}`}
+                              >
+                                {formatEvidenceKind(
+                                  evidence.kind
+                                )}
+                              </span>
+
+                              {evidence.code && (
+                                <span className="rounded-full border border-zinc-700 px-2.5 py-1 font-mono text-[11px] text-zinc-400">
+                                  {evidence.code}
+                                </span>
+                              )}
+                            </div>
+
+                            {location && (
+                              <p className="mt-3 break-all font-mono text-xs leading-5 text-zinc-500">
+                                {location}
+                              </p>
+                            )}
+
+                            <p className="mt-2 break-words text-sm leading-6 text-zinc-300">
+                              {evidence.message}
+                            </p>
+                          </div>
+                        );
+                      }
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {referencedEvidence.length === 0 && (
+                <p className="mt-5 border-t border-zinc-800 pt-4 text-xs leading-5 text-zinc-600">
+                  This guidance concerns a verification limitation
+                  without structured diagnostic evidence.
+                </p>
+              )}
+            </article>
+          );
+        })}
+      </div>
+
+      <p className="mt-5 border-t border-zinc-800 pt-4 text-xs leading-5 text-zinc-500">
+        AI remediation is advisory. It does not modify the
+        deterministic readiness score or claim that a suggested
+        change has been executed.
+      </p>
+    </section>
+  );
+}
+
 /* -------------------------------------------------------------------------- */
 /*                                 Dashboard                                  */
 /* -------------------------------------------------------------------------- */
@@ -1304,8 +1520,16 @@ export function ReadinessDashboard() {
             )}
 
             <RemediationPlan
-              items={report.remediation}
-            />
+  items={report.remediation}
+/>
+
+{report.aiRemediation &&
+  report.aiRemediation.actions.length > 0 && (
+    <AiRemediationGuidance
+      remediation={report.aiRemediation}
+      checks={report.checks}
+    />
+  )}
           </div>
         )}
       </div>

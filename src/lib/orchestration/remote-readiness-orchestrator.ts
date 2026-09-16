@@ -5,6 +5,11 @@ import {
 import { runDeploymentAgent } from "@/lib/agents/deployment-agent";
 import { runEnvironmentAgent } from "@/lib/agents/environment-agent";
 import {
+  runRemediationAgent,
+  type RemediationAnalysis,
+} from "@/lib/agents/remediation-agent";
+import { verifyRemediationAnalysis } from "@/lib/agents/remediation-verifier";
+import {
   runResearchAgent,
   type ResearchAgentResult,
 } from "@/lib/agents/research-agent";
@@ -70,6 +75,19 @@ type ArchitectureOutcome =
   | {
       status: "passed";
       analysis: ArchitectureAnalysis;
+    }
+  | {
+      status: "error";
+      error: unknown;
+    };
+
+type RemediationOutcome =
+  | {
+      status: "passed";
+      analysis: RemediationAnalysis;
+    }
+  | {
+      status: "skipped";
     }
   | {
       status: "error";
@@ -146,8 +164,8 @@ function logPerformanceSummary(
  * External research may contain provider-specific
  * metadata and excerpts used internally by Nemotron.
  *
- * Only the source metadata required by the dashboard
- * is allowed across the public response boundary.
+ * Only source metadata required by the dashboard
+ * crosses the public response boundary.
  */
 function sanitizeResearch(
   research: ResearchAgentResult | undefined
@@ -173,14 +191,10 @@ function sanitizeResearch(
 }
 
 /*
- * CheckResult contains raw stdout/stderr internally.
+ * Raw stdout/stderr stay server-side.
  *
- * Those values are useful for deterministic parsing,
- * diagnostics, and evidence extraction, but should not
- * be shipped directly to the browser.
- *
- * Explicitly constructing the public check also creates
- * a clear allowlist for the assessment API boundary.
+ * The browser receives normalized evidence and
+ * explicitly allowlisted check metadata only.
  */
 function sanitizeCheck(check: CheckResult): CheckResult {
   return {
@@ -279,7 +293,8 @@ export async function runRemoteReadinessAssessment(
   };
 
   try {
-    const repository = parseGitHubRepositoryUrl(repositoryUrl);
+    const repository =
+      parseGitHubRepositoryUrl(repositoryUrl);
 
     /*
      * Repository ingestion
@@ -326,7 +341,8 @@ export async function runRemoteReadinessAssessment(
 
       const scan = await measureStage(
         "Repository Scan",
-        async () => scanRepository(ingested.repositoryPath)
+        async () =>
+          scanRepository(ingested.repositoryPath)
       );
 
       await emitProgress(
@@ -337,9 +353,8 @@ export async function runRemoteReadinessAssessment(
       );
 
       /*
-       * Research and dependency preparation can begin
-       * concurrently after deterministic repository
-       * facts have been collected.
+       * Research and sandbox preparation can begin
+       * concurrently after repository facts exist.
        */
 
       await emitProgress(
@@ -359,8 +374,7 @@ export async function runRemoteReadinessAssessment(
       /*
        * External research branch.
        *
-       * Research is fail-open. Repository evidence
-       * remains usable if the provider is unavailable.
+       * Research is fail-open.
        */
 
       const researchPromise =
@@ -371,11 +385,12 @@ export async function runRemoteReadinessAssessment(
               () => runResearchAgent(scan)
             );
 
-            const evidenceCount = research.results.reduce(
-              (total, result) =>
-                total + result.evidence.length,
-              0
-            );
+            const evidenceCount =
+              research.results.reduce(
+                (total, result) =>
+                  total + result.evidence.length,
+                0
+              );
 
             if (research.queries.length === 0) {
               await emitProgress(
@@ -418,10 +433,6 @@ export async function runRemoteReadinessAssessment(
 
       /*
        * Sandbox preparation branch.
-       *
-       * Convert rejected preparation promises into
-       * structured outcomes so concurrent work can
-       * finish cleanly.
        */
 
       const preparationPromise: Promise<PreparationOutcome> =
@@ -480,10 +491,8 @@ export async function runRemoteReadinessAssessment(
           );
 
       /*
-       * Nemotron depends on research but not on
-       * sandbox preparation or deterministic checks.
-       *
-       * It starts as soon as research settles.
+       * Nemotron architecture analysis depends on
+       * research but not on sandbox execution.
        */
 
       const architecturePromise: Promise<ArchitectureOutcome> =
@@ -525,9 +534,6 @@ export async function runRemoteReadinessAssessment(
 
       /*
        * Static deterministic checks.
-       *
-       * These use scanner evidence only and execute
-       * no repository-controlled code.
        */
 
       const environment = await measureStage(
@@ -568,9 +574,8 @@ export async function runRemoteReadinessAssessment(
       /*
        * Repository-controlled deterministic checks.
        *
-       * They remain sequential because they operate
-       * against the same disposable repository
-       * workspace.
+       * These remain sequential because they share
+       * the disposable repository workspace.
        */
 
       if (preparation.status === "passed") {
@@ -715,11 +720,11 @@ export async function runRemoteReadinessAssessment(
         );
       } else {
         /*
-         * Dependency preparation returned a
-         * structured failure.
+         * Dependency preparation failed in a
+         * structured way.
          *
-         * Repository-controlled checks cannot run
-         * reliably without prepared dependencies.
+         * Downstream executable checks therefore
+         * cannot be completed.
          */
 
         const preparationSummary =
@@ -773,15 +778,100 @@ export async function runRemoteReadinessAssessment(
       /*
        * Deterministic readiness score.
        *
-       * AI does not participate in this calculation.
+       * Neither architecture analysis nor remediation
+       * participates in this calculation.
        */
 
       const readiness =
         calculateReadinessScore(checks);
 
       /*
-       * Research and Nemotron have been executing
-       * concurrently with deterministic checks.
+       * AI remediation starts only after deterministic
+       * checks have finished and structured evidence
+       * has been collected.
+       *
+       * The branch is fail-open.
+       */
+
+      const actionableChecks =
+        checks.filter(
+          (check) =>
+            check.status === "failed" ||
+            check.status === "blocked" ||
+            check.status === "error"
+        );
+
+      // const remediationPromise: Promise<RemediationOutcome> =
+      //   actionableChecks.length === 0
+      //     ? Promise.resolve({
+      //         status: "skipped",
+      //       })
+      //     : (async (): Promise<RemediationOutcome> => {
+      //         try {
+      //           const analysis = await measureStage(
+      //             "Nemotron Remediation",
+      //             () =>
+      //               runRemediationAgent(checks)
+      //           );
+
+      //           return {
+      //             status: "passed",
+      //             analysis,
+      //           };
+      //         } catch (error) {
+      //           return {
+      //             status: "error",
+      //             error,
+      //           };
+      //         }
+      //       })();
+
+
+      const remediationPromise: Promise<RemediationOutcome> =
+  actionableChecks.length === 0
+    ? (async (): Promise<RemediationOutcome> => {
+        await emitProgress(
+          "remediation",
+          "Nemotron Remediation",
+          "skipped",
+          "No failed, blocked, or errored checks require AI remediation."
+        );
+
+        return {
+          status: "skipped",
+        };
+      })()
+    : (async (): Promise<RemediationOutcome> => {
+        await emitProgress(
+          "remediation",
+          "Nemotron Remediation",
+          "running",
+          "Generating evidence-grounded remediation guidance..."
+        );
+
+        try {
+          const analysis = await measureStage(
+            "Nemotron Remediation",
+            () => runRemediationAgent(checks)
+          );
+
+          return {
+            status: "passed",
+            analysis,
+          };
+        } catch (error) {
+          return {
+            status: "error",
+            error,
+          };
+        }
+      })();
+
+      /*
+       * Resolve architecture analysis.
+       *
+       * Remediation is now running concurrently
+       * while this branch is verified.
        */
 
       const research =
@@ -847,7 +937,7 @@ export async function runRemoteReadinessAssessment(
       }
 
       /*
-       * Production readiness report.
+       * Deterministic production readiness report.
        */
 
       await emitProgress(
@@ -869,6 +959,108 @@ export async function runRemoteReadinessAssessment(
       );
 
       /*
+       * Resolve and independently verify Nemotron
+       * remediation.
+       *
+       * AI failure never prevents the deterministic
+       * report from completing.
+       */
+
+      const remediationOutcome =
+        await remediationPromise;
+
+      // if (remediationOutcome.status === "passed") {
+      //   const verifiedRemediation =
+      //     verifyRemediationAnalysis(
+      //       checks,
+      //       remediationOutcome.analysis
+      //     );
+
+      //   if (
+      //     verifiedRemediation.acceptedActions.length > 0
+      //   ) {
+      //     report.aiRemediation = {
+      //       summary:
+      //         verifiedRemediation.summary,
+      //       actions:
+      //         verifiedRemediation.acceptedActions,
+      //     };
+      //   }
+
+      //   if (
+      //     verifiedRemediation.rejectedActions.length > 0
+      //   ) {
+      //     console.warn(
+      //       `[DeployGuard Remediation Verifier] Rejected ${verifiedRemediation.rejectedActions.length} unverified remediation action(s).`
+      //     );
+      //   }
+      // } else if (remediationOutcome.status === "error") {
+      //   const diagnostic =
+      //     remediationOutcome.error instanceof Error
+      //       ? remediationOutcome.error.message
+      //       : "Unknown remediation error.";
+
+      //   console.error(
+      //     "[DeployGuard Remediation Agent]",
+      //     diagnostic
+      //   );
+      // }
+
+
+
+
+      if (remediationOutcome.status === "passed") {
+  const verifiedRemediation =
+    verifyRemediationAnalysis(
+      checks,
+      remediationOutcome.analysis
+    );
+
+  if (
+    verifiedRemediation.acceptedActions.length > 0
+  ) {
+    report.aiRemediation = {
+      summary: verifiedRemediation.summary,
+      actions: verifiedRemediation.acceptedActions,
+    };
+  }
+
+  if (
+    verifiedRemediation.rejectedActions.length > 0
+  ) {
+    console.warn(
+      `[DeployGuard Remediation Verifier] Rejected ${verifiedRemediation.rejectedActions.length} unverified remediation action(s).`
+    );
+  }
+
+  await emitProgress(
+    "remediation",
+    "Nemotron Remediation",
+    "passed",
+    `AI remediation completed with ${verifiedRemediation.acceptedActions.length} verified action(s).`
+  );
+} else if (remediationOutcome.status === "error") {
+  const diagnostic =
+    remediationOutcome.error instanceof Error
+      ? remediationOutcome.error.message
+      : "Unknown remediation error.";
+
+  console.error(
+    "[DeployGuard Remediation Agent]",
+    diagnostic
+  );
+
+  await emitProgress(
+    "remediation",
+    "Nemotron Remediation",
+    "error",
+    "AI remediation was unavailable. Deterministic remediation remains available."
+  );
+}
+
+
+
+      /*
        * Never expose the temporary host workspace
        * path in the public response.
        */
@@ -886,10 +1078,7 @@ export async function runRemoteReadinessAssessment(
       /*
        * Public response boundary.
        *
-       * Research metadata and normalized check
-       * evidence may reach the browser.
-       *
-       * Raw sandbox stdout/stderr remain server-side.
+       * Raw stdout/stderr remain server-side.
        */
 
       const publicResearch =
