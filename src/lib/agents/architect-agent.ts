@@ -6,6 +6,14 @@ import {
   NEBIUS_MODELS,
 } from "@/lib/ai/nebius";
 
+import {
+  parseAiJson,
+} from "@/lib/ai/response-validation";
+
+import {
+  validateArchitectureAnalysis,
+} from "@/lib/ai/architecture-validation";
+
 export type RiskSeverity =
   | "low"
   | "medium"
@@ -218,7 +226,10 @@ ${JSON.stringify(
     );
   }
 
-  return JSON.parse(
-    content
-  ) as ArchitectureAnalysis;
+  const parsed =
+  parseAiJson(content);
+
+return validateArchitectureAnalysis(
+  parsed
+);
 }

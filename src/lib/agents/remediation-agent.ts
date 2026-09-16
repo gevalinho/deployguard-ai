@@ -8,6 +8,14 @@ import {
   NEBIUS_MODELS,
 } from "@/lib/ai/nebius";
 
+import {
+  parseAiJson,
+} from "@/lib/ai/response-validation";
+
+import {
+  validateRemediationAnalysis,
+} from "@/lib/ai/remediation-validation";
+
 export type RemediationPriority =
   | "low"
   | "medium"
@@ -221,7 +229,10 @@ ${JSON.stringify(
     );
   }
 
-  return JSON.parse(
-    content
-  ) as RemediationAnalysis;
+  const parsed =
+  parseAiJson(content);
+
+return validateRemediationAnalysis(
+  parsed
+);
 }
