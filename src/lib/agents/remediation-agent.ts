@@ -1,7 +1,10 @@
 import type {
-  CheckEvidence,
   CheckResult,
 } from "@/lib/checks/types";
+
+import {
+  createRemediationCheckInputs,
+} from "@/lib/ai/remediation-input";
 
 import {
   getNebiusClient,
@@ -36,47 +39,23 @@ export interface RemediationAnalysis {
   actions: RemediationAction[];
 }
 
-interface RemediationCheck {
-  id: string;
-  category: CheckResult["category"];
-  name: string;
-  status: CheckResult["status"];
-  summary: string;
-  evidence: CheckEvidence[];
-}
-
-/*
- * Only normalized deterministic evidence is allowed
- * into the AI remediation boundary.
+/**
+ * Generate evidence-grounded remediation guidance
+ * for deterministic checks that failed, were blocked,
+ * or encountered an execution error.
  *
- * Raw stdout/stderr, environment values, and arbitrary
- * execution output are deliberately excluded.
+ * Only normalized and bounded check evidence enters
+ * the AI boundary. Raw stdout/stderr, environment
+ * values, secrets, and arbitrary execution output
+ * are deliberately excluded.
  */
-function createRemediationChecks(
-  checks: CheckResult[]
-): RemediationCheck[] {
-  return checks
-    .filter(
-      (check) =>
-        check.status === "failed" ||
-        check.status === "blocked" ||
-        check.status === "error"
-    )
-    .map((check) => ({
-      id: check.id,
-      category: check.category,
-      name: check.name,
-      status: check.status,
-      summary: check.summary,
-      evidence: check.evidence ?? [],
-    }));
-}
-
 export async function runRemediationAgent(
   checks: CheckResult[]
 ): Promise<RemediationAnalysis> {
   const remediationChecks =
-    createRemediationChecks(checks);
+    createRemediationCheckInputs(
+      checks
+    );
 
   if (remediationChecks.length === 0) {
     return {
@@ -86,11 +65,13 @@ export async function runRemediationAgent(
     };
   }
 
-  const nebius = getNebiusClient();
+  const nebius =
+    getNebiusClient();
 
   const response =
     await nebius.chat.completions.create({
-      model: NEBIUS_MODELS.architect,
+      model:
+        NEBIUS_MODELS.architect,
       temperature: 0.1,
 
       messages: [
@@ -221,7 +202,8 @@ ${JSON.stringify(
     });
 
   const content =
-    response.choices[0]?.message?.content;
+    response.choices[0]
+      ?.message?.content;
 
   if (!content) {
     throw new Error(
@@ -230,9 +212,9 @@ ${JSON.stringify(
   }
 
   const parsed =
-  parseAiJson(content);
+    parseAiJson(content);
 
-return validateRemediationAnalysis(
-  parsed
-);
+  return validateRemediationAnalysis(
+    parsed
+  );
 }
