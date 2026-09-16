@@ -19,6 +19,15 @@ interface TavilySearchResponse {
   results?: TavilySearchResult[];
 }
 
+const TAVILY_API_URL =
+  "https://api.tavily.com/search";
+
+const TAVILY_TIMEOUT_MS =
+  60_000;
+
+const TAVILY_MAX_ATTEMPTS =
+  3;
+
 const PRIMARY_DOMAINS = new Set([
   "nextjs.org",
   "react.dev",
@@ -81,9 +90,7 @@ function classifyAuthority(
   const hostname =
     getHostname(url);
 
-  if (
-    isPrimaryDomain(hostname)
-  ) {
+  if (isPrimaryDomain(hostname)) {
     return "primary";
   }
 
@@ -139,9 +146,7 @@ function classifySource(
     return "release_notes";
   }
 
-  if (
-    isPrimaryDomain(hostname)
-  ) {
+  if (isPrimaryDomain(hostname)) {
     return "official_documentation";
   }
 
@@ -211,65 +216,6 @@ function toResearchEvidence(
   };
 }
 
-// export async function researchTopic(
-//   query: string
-// ): Promise<ResearchResult> {
-//   const apiKey =
-//     getTavilyApiKey();
-
-//   const response =
-//     await fetch(
-//       "https://api.tavily.com/search",
-//       {
-//         method: "POST",
-//         headers: {
-//           "Content-Type":
-//             "application/json",
-//           Authorization:
-//             `Bearer ${apiKey}`,
-//         },
-//         body: JSON.stringify({
-//           query,
-//           search_depth:
-//             "advanced",
-//           max_results: 5,
-//           include_answer:
-//             false,
-//           include_raw_content:
-//             false,
-//         }),
-//       }
-//     );
-
-//   if (!response.ok) {
-//     throw new Error(
-//       `Tavily research request failed with status ${response.status}.`
-//     );
-//   }
-
-//   const data =
-//     (await response.json()) as TavilySearchResponse;
-
-//   const evidence =
-//     (data.results ?? [])
-//       .map(toResearchEvidence)
-//       .filter(
-//         (
-//           item
-//         ): item is ResearchEvidence =>
-//           item !== null
-//       );
-
-//   return {
-//     query:
-//       data.query ?? query,
-//     researchedAt:
-//       new Date().toISOString(),
-//     evidence,
-//   };
-// }
-
-
 function delay(
   milliseconds: number
 ): Promise<void> {
@@ -293,13 +239,44 @@ function isRetryableStatus(
   );
 }
 
+function isAbortError(
+  error: unknown
+): boolean {
+  return (
+    error instanceof Error &&
+    error.name === "AbortError"
+  );
+}
+
+function isNetworkError(
+  error: Error
+): boolean {
+  return (
+    error.message ===
+      "fetch failed" ||
+    /ENOTFOUND|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN/i.test(
+      String(
+        error.cause ??
+          error.message
+      )
+    )
+  );
+}
+
+function getBackoffMs(
+  attempt: number
+): number {
+  return (
+    1000 *
+    2 ** (attempt - 1)
+  );
+}
+
 export async function researchTopic(
   query: string
 ): Promise<ResearchResult> {
   const apiKey =
     getTavilyApiKey();
-
-  const maxAttempts = 3;
 
   let lastError:
     | Error
@@ -307,13 +284,24 @@ export async function researchTopic(
 
   for (
     let attempt = 1;
-    attempt <= maxAttempts;
+    attempt <=
+      TAVILY_MAX_ATTEMPTS;
     attempt += 1
   ) {
+    const controller =
+      new AbortController();
+
+    const timeout =
+      setTimeout(
+        () =>
+          controller.abort(),
+        TAVILY_TIMEOUT_MS
+      );
+
     try {
       const response =
         await fetch(
-          "https://api.tavily.com/search",
+          TAVILY_API_URL,
           {
             method: "POST",
             headers: {
@@ -332,19 +320,30 @@ export async function researchTopic(
               include_raw_content:
                 false,
             }),
+            signal:
+              controller.signal,
           }
         );
 
       if (!response.ok) {
+        const error =
+          new Error(
+            `Tavily research request failed with status ${response.status}.`
+          );
+
+        lastError = error;
+
         if (
           isRetryableStatus(
             response.status
           ) &&
-          attempt < maxAttempts
+          attempt <
+            TAVILY_MAX_ATTEMPTS
         ) {
           const backoffMs =
-            1000 *
-            2 ** (attempt - 1);
+            getBackoffMs(
+              attempt
+            );
 
           console.warn(
             `[DeployGuard Research] Tavily returned ${response.status}. Retrying in ${backoffMs}ms...`
@@ -357,9 +356,7 @@ export async function researchTopic(
           continue;
         }
 
-        throw new Error(
-          `Tavily research request failed with status ${response.status}.`
-        );
+        throw error;
       }
 
       const data =
@@ -392,33 +389,40 @@ export async function researchTopic(
               String(error)
             );
 
-      const isNetworkFailure =
-        lastError.message ===
-          "fetch failed" ||
-        /ENOTFOUND|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN/i.test(
-          String(
-            lastError.cause ??
-              lastError.message
-          )
+      const timedOut =
+        isAbortError(error);
+
+      const retryable =
+        timedOut ||
+        isNetworkError(
+          lastError
         );
 
       if (
-        !isNetworkFailure ||
-        attempt === maxAttempts
+        !retryable ||
+        attempt ===
+          TAVILY_MAX_ATTEMPTS
       ) {
         throw lastError;
       }
 
       const backoffMs =
-        1000 *
-        2 ** (attempt - 1);
+        getBackoffMs(
+          attempt
+        );
 
       console.warn(
-        `[DeployGuard Research] Network request failed on attempt ${attempt}/${maxAttempts}. Retrying in ${backoffMs}ms...`
+        timedOut
+          ? `[DeployGuard Research] Tavily timed out on attempt ${attempt}/${TAVILY_MAX_ATTEMPTS}. Retrying in ${backoffMs}ms...`
+          : `[DeployGuard Research] Network request failed on attempt ${attempt}/${TAVILY_MAX_ATTEMPTS}. Retrying in ${backoffMs}ms...`
       );
 
       await delay(
         backoffMs
+      );
+    } finally {
+      clearTimeout(
+        timeout
       );
     }
   }
