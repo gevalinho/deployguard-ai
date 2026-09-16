@@ -1,9 +1,10 @@
 "use client";
 
-import {
-  useMemo,
-  useState,
-} from "react";
+import { useMemo, useState } from "react";
+
+/* -------------------------------------------------------------------------- */
+/*                                    Types                                   */
+/* -------------------------------------------------------------------------- */
 
 type RepositoryFact = {
   key: string;
@@ -36,6 +37,20 @@ type CheckStatus =
   | "skipped"
   | "error";
 
+type CheckEvidence = {
+  kind:
+    | "error"
+    | "warning"
+    | "test_failure"
+    | "security_finding"
+    | "diagnostic";
+  message: string;
+  file?: string;
+  line?: number;
+  column?: number;
+  code?: string;
+};
+
 type CheckResult = {
   id: string;
   category: string;
@@ -43,6 +58,7 @@ type CheckResult = {
   status: CheckStatus;
   skipReason?: string;
   summary: string;
+  evidence?: CheckEvidence[];
 };
 
 type ReadinessReport = {
@@ -70,10 +86,7 @@ type ReadinessReport = {
 
   remediation: {
     category: string;
-    priority:
-      | "low"
-      | "medium"
-      | "high";
+    priority: "low" | "medium" | "high";
     title: string;
     recommendation: string;
   }[];
@@ -101,10 +114,7 @@ type ResearchEvidenceSummary = {
   title: string;
   url: string;
   sourceType: string;
-  authority:
-    | "primary"
-    | "secondary"
-    | "community";
+  authority: "primary" | "secondary" | "community";
   publisher?: string;
   publishedAt?: string;
 };
@@ -125,59 +135,29 @@ type AssessmentResult = {
   report: ReadinessReport;
 };
 
+/* -------------------------------------------------------------------------- */
+/*                                  Constants                                 */
+/* -------------------------------------------------------------------------- */
+
 const ASSESSMENT_STAGES = [
-  {
-    stage: "repository",
-    label: "Repository",
-  },
-  {
-    stage: "scan",
-    label: "Repository Scan",
-  },
-  {
-    stage: "research",
-    label: "External Research",
-  },
-  {
-    stage: "preparation",
-    label: "Sandbox Preparation",
-  },
-  {
-    stage: "types",
-    label: "TypeScript",
-  },
-  {
-    stage: "lint",
-    label: "Lint",
-  },
-  {
-    stage: "test",
-    label: "Tests",
-  },
-  {
-    stage: "build",
-    label: "Production Build",
-  },
-  {
-    stage: "security",
-    label: "Dependency Security",
-  },
-  {
-    stage: "architect",
-    label: "Nemotron Analysis",
-  },
-  {
-    stage: "report",
-    label: "Readiness Report",
-  },
+  { stage: "repository", label: "Repository" },
+  { stage: "scan", label: "Repository Scan" },
+  { stage: "research", label: "External Research" },
+  { stage: "preparation", label: "Sandbox Preparation" },
+  { stage: "types", label: "TypeScript" },
+  { stage: "lint", label: "Lint" },
+  { stage: "test", label: "Tests" },
+  { stage: "build", label: "Production Build" },
+  { stage: "security", label: "Dependency Security" },
+  { stage: "architect", label: "Nemotron Analysis" },
+  { stage: "report", label: "Readiness Report" },
 ] as const;
 
 const PROCESS_STEPS = [
   {
     step: "01",
     title: "Evidence",
-    description:
-      "Inspect the repository and execute real checks.",
+    description: "Inspect the repository and execute real checks.",
   },
   {
     step: "02",
@@ -199,29 +179,28 @@ const PROCESS_STEPS = [
   },
 ] as const;
 
-function getStatusLabel(
-  check: CheckResult
-) {
+/* -------------------------------------------------------------------------- */
+/*                                  Helpers                                   */
+/* -------------------------------------------------------------------------- */
+
+function getStatusLabel(check: CheckResult) {
   if (
     check.status === "skipped" &&
-    check.skipReason ===
-      "not_applicable"
+    check.skipReason === "not_applicable"
   ) {
     return "Not applicable";
   }
 
   if (
     check.status === "skipped" &&
-    check.skipReason ===
-      "not_configured"
+    check.skipReason === "not_configured"
   ) {
     return "Not configured";
   }
 
   if (
     check.status === "skipped" &&
-    check.skipReason ===
-      "unsupported"
+    check.skipReason === "unsupported"
   ) {
     return "Unsupported";
   }
@@ -229,9 +208,7 @@ function getStatusLabel(
   return check.status;
 }
 
-function getProgressSymbol(
-  status: AssessmentProgressStatus
-) {
+function getProgressSymbol(status: AssessmentProgressStatus) {
   switch (status) {
     case "running":
       return "⏳";
@@ -241,6 +218,7 @@ function getProgressSymbol(
       return "✓";
 
     case "blocked":
+    case "error":
       return "!";
 
     case "skipped":
@@ -249,17 +227,12 @@ function getProgressSymbol(
     case "failed":
       return "✕";
 
-    case "error":
-      return "!";
-
     default:
       return "·";
   }
 }
 
-function getProgressTextClass(
-  status: AssessmentProgressStatus
-) {
+function getProgressTextClass(status: AssessmentProgressStatus) {
   switch (status) {
     case "passed":
     case "completed":
@@ -283,56 +256,78 @@ function getProgressTextClass(
   }
 }
 
-function getCheckStatusClass(
-  check: CheckResult
-) {
+function getCheckStatusClass(check: CheckResult) {
   if (check.status === "passed") {
-    return (
-      "border-emerald-500/30 " +
-      "bg-emerald-500/10 " +
-      "text-emerald-300"
-    );
+    return [
+      "border-emerald-500/30",
+      "bg-emerald-500/10",
+      "text-emerald-300",
+    ].join(" ");
   }
 
   if (
     check.status === "blocked" ||
     (check.status === "skipped" &&
-      check.skipReason ===
-        "not_configured")
+      check.skipReason === "not_configured")
   ) {
-    return (
-      "border-amber-500/30 " +
-      "bg-amber-500/10 " +
-      "text-amber-300"
-    );
+    return [
+      "border-amber-500/30",
+      "bg-amber-500/10",
+      "text-amber-300",
+    ].join(" ");
   }
 
   if (check.status === "failed") {
-    return (
-      "border-red-500/30 " +
-      "bg-red-500/10 " +
-      "text-red-300"
-    );
+    return [
+      "border-red-500/30",
+      "bg-red-500/10",
+      "text-red-300",
+    ].join(" ");
   }
 
   if (check.status === "error") {
-    return (
-      "border-orange-500/30 " +
-      "bg-orange-500/10 " +
-      "text-orange-300"
-    );
+    return [
+      "border-orange-500/30",
+      "bg-orange-500/10",
+      "text-orange-300",
+    ].join(" ");
   }
 
-  return (
-    "border-zinc-700 " +
-    "bg-zinc-800/50 " +
-    "text-zinc-400"
-  );
+  return [
+    "border-zinc-700",
+    "bg-zinc-800/50",
+    "text-zinc-400",
+  ].join(" ");
 }
 
-function getScoreBarClass(
-  score: number
-) {
+function getEvidenceKindClass(kind: CheckEvidence["kind"]) {
+  switch (kind) {
+    case "error":
+    case "test_failure":
+    case "security_finding":
+      return [
+        "border-red-500/20",
+        "bg-red-500/10",
+        "text-red-300",
+      ].join(" ");
+
+    case "warning":
+      return [
+        "border-amber-500/20",
+        "bg-amber-500/10",
+        "text-amber-300",
+      ].join(" ");
+
+    case "diagnostic":
+      return [
+        "border-sky-500/20",
+        "bg-sky-500/10",
+        "text-sky-300",
+      ].join(" ");
+  }
+}
+
+function getScoreBarClass(score: number) {
   if (score >= 80) {
     return "bg-emerald-400";
   }
@@ -344,25 +339,38 @@ function getScoreBarClass(
   return "bg-red-400";
 }
 
-function formatElapsed(
-  elapsedMs?: number
-) {
+function formatEvidenceKind(kind: CheckEvidence["kind"]) {
+  return kind.replace(/_/g, " ");
+}
+
+function formatEvidenceLocation(evidence: CheckEvidence) {
+  if (!evidence.file) {
+    return null;
+  }
+
+  let location = evidence.file;
+
+  if (evidence.line !== undefined) {
+    location += `:${evidence.line}`;
+
+    if (evidence.column !== undefined) {
+      location += `:${evidence.column}`;
+    }
+  }
+
+  return location;
+}
+
+function formatElapsed(elapsedMs?: number) {
   if (elapsedMs === undefined) {
     return "";
   }
 
-  const totalSeconds =
-    Math.floor(elapsedMs / 1000);
+  const totalSeconds = Math.floor(elapsedMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
 
-  const minutes =
-    Math.floor(totalSeconds / 60);
-
-  const seconds =
-    totalSeconds % 60;
-
-  return `${minutes}:${seconds
-    .toString()
-    .padStart(2, "0")}`;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
 function parseSseBlock(
@@ -371,29 +379,20 @@ function parseSseBlock(
   event: string;
   data: unknown;
 } | null {
-  const lines =
-    block.split("\n");
+  const lines = block.split("\n");
 
   let event = "message";
 
   const dataLines: string[] = [];
 
   for (const line of lines) {
-    if (
-      line.startsWith("event:")
-    ) {
-      event =
-        line.slice(6).trim();
-
+    if (line.startsWith("event:")) {
+      event = line.slice(6).trim();
       continue;
     }
 
-    if (
-      line.startsWith("data:")
-    ) {
-      dataLines.push(
-        line.slice(5).trim()
-      );
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).trim());
     }
   }
 
@@ -404,20 +403,18 @@ function parseSseBlock(
   try {
     return {
       event,
-      data: JSON.parse(
-        dataLines.join("\n")
-      ),
+      data: JSON.parse(dataLines.join("\n")),
     };
   } catch {
     return null;
   }
 }
 
-function StatusBadge({
-  check,
-}: {
-  check: CheckResult;
-}) {
+/* -------------------------------------------------------------------------- */
+/*                              Shared Components                             */
+/* -------------------------------------------------------------------------- */
+
+function StatusBadge({ check }: { check: CheckResult }) {
   return (
     <span
       className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1 text-xs font-medium capitalize ${getCheckStatusClass(
@@ -432,39 +429,38 @@ function StatusBadge({
 function ProcessOverview() {
   return (
     <div className="mt-8 grid max-w-4xl gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      {PROCESS_STEPS.map(
-        (item) => (
-          <div
-            key={item.step}
-            className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4"
-          >
-            <p className="font-mono text-xs text-zinc-600">
-              {item.step}
-            </p>
+      {PROCESS_STEPS.map((item) => (
+        <div
+          key={item.step}
+          className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4"
+        >
+          <p className="font-mono text-xs text-zinc-600">
+            {item.step}
+          </p>
 
-            <p className="mt-2 font-medium text-zinc-200">
-              {item.title}
-            </p>
+          <p className="mt-2 font-medium text-zinc-200">
+            {item.title}
+          </p>
 
-            <p className="mt-1 text-xs leading-5 text-zinc-500">
-              {item.description}
-            </p>
-          </div>
-        )
-      )}
+          <p className="mt-1 text-xs leading-5 text-zinc-500">
+            {item.description}
+          </p>
+        </div>
+      ))}
     </div>
   );
 }
+
+/* -------------------------------------------------------------------------- */
+/*                            Assessment Pipeline                             */
+/* -------------------------------------------------------------------------- */
 
 function AssessmentPipeline({
   loading,
   progressByStage,
 }: {
   loading: boolean;
-  progressByStage: Map<
-    string,
-    AssessmentProgressEvent
-  >;
+  progressByStage: Map<string, AssessmentProgressEvent>;
 }) {
   return (
     <section className="mb-10">
@@ -487,73 +483,54 @@ function AssessmentPipeline({
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900">
-        {ASSESSMENT_STAGES.map(
-          ({
-            stage,
-            label,
-          }) => {
-            const progress =
-              progressByStage.get(
-                stage
-              );
+        {ASSESSMENT_STAGES.map(({ stage, label }) => {
+          const progress = progressByStage.get(stage);
+          const status = progress?.status ?? "pending";
 
-            const status =
-              progress?.status ??
-              "pending";
-
-            return (
+          return (
+            <div
+              key={stage}
+              className="flex gap-4 border-b border-zinc-800 p-5 last:border-b-0"
+            >
               <div
-                key={stage}
-                className="flex gap-4 border-b border-zinc-800 p-5 last:border-b-0"
+                className={`w-6 shrink-0 text-center font-semibold ${getProgressTextClass(
+                  status
+                )}`}
               >
-                <div
-                  className={`w-6 shrink-0 text-center font-semibold ${getProgressTextClass(
-                    status
-                  )}`}
-                >
-                  {getProgressSymbol(
-                    status
+                {getProgressSymbol(status)}
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="font-medium">
+                    {label}
+                  </p>
+
+                  {progress?.elapsedMs !== undefined && (
+                    <span className="font-mono text-xs text-zinc-600">
+                      {formatElapsed(progress.elapsedMs)}
+                    </span>
                   )}
                 </div>
 
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="font-medium">
-                      {label}
-                    </p>
-
-                    {progress?.elapsedMs !==
-                      undefined && (
-                      <span className="font-mono text-xs text-zinc-600">
-                        {formatElapsed(
-                          progress.elapsedMs
-                        )}
-                      </span>
-                    )}
-                  </div>
-
-                  <p className="mt-1 text-sm leading-6 text-zinc-500">
-                    {progress?.message ??
-                      (status ===
-                      "pending"
-                        ? "Waiting..."
-                        : "")}
-                  </p>
-                </div>
+                <p className="mt-1 text-sm leading-6 text-zinc-500">
+                  {progress?.message ??
+                    (status === "pending" ? "Waiting..." : "")}
+                </p>
               </div>
-            );
-          }
-        )}
+            </div>
+          );
+        })}
       </div>
     </section>
   );
 }
 
-function ReadinessScoreCard({
-  score,
-}: {
-  score: number;
-}) {
+/* -------------------------------------------------------------------------- */
+/*                                Score Cards                                 */
+/* -------------------------------------------------------------------------- */
+
+function ReadinessScoreCard({ score }: { score: number }) {
   return (
     <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -564,7 +541,6 @@ function ReadinessScoreCard({
 
           <p className="mt-2 text-5xl font-semibold">
             {score}
-
             <span className="text-2xl text-zinc-500">
               /100
             </span>
@@ -581,36 +557,25 @@ function ReadinessScoreCard({
           className={`h-full rounded-full transition-all duration-500 ${getScoreBarClass(
             score
           )}`}
-          style={{
-            width: `${score}%`,
-          }}
+          style={{ width: `${score}%` }}
         />
       </div>
 
       <p className="mt-4 text-sm font-medium leading-6 text-zinc-300">
-        Score reflects verified
-        readiness only. Blocked and
-        unconfigured areas do not
-        receive readiness credit.
+        Score reflects verified readiness only. Blocked and
+        unconfigured areas do not receive readiness credit.
       </p>
 
       <p className="mt-2 text-sm leading-6 text-zinc-500">
-        Calculated from verified
-        build, type, lint, test,
-        security, database,
-        deployment and environment
-        evidence — not from an AI
-        opinion.
+        Calculated from verified build, type, lint, test,
+        security, database, deployment and environment evidence —
+        not from an AI opinion.
       </p>
     </div>
   );
 }
 
-function CoverageCard({
-  coverage,
-}: {
-  coverage: number;
-}) {
+function CoverageCard({ coverage }: { coverage: number }) {
   return (
     <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -621,7 +586,6 @@ function CoverageCard({
 
           <p className="mt-2 text-5xl font-semibold">
             {coverage}
-
             <span className="text-2xl text-zinc-500">
               %
             </span>
@@ -636,21 +600,21 @@ function CoverageCard({
       <div className="mt-5 h-2 overflow-hidden rounded-full bg-zinc-800">
         <div
           className="h-full rounded-full bg-sky-400 transition-all duration-500"
-          style={{
-            width: `${coverage}%`,
-          }}
+          style={{ width: `${coverage}%` }}
         />
       </div>
 
       <p className="mt-4 text-sm leading-6 text-zinc-500">
-        Shows how much of the
-        applicable production
-        readiness surface DeployGuard
-        was able to evaluate.
+        Shows how much of the applicable production readiness
+        surface DeployGuard was able to evaluate.
       </p>
     </div>
   );
 }
+
+/* -------------------------------------------------------------------------- */
+/*                         Verification / Check Evidence                      */
+/* -------------------------------------------------------------------------- */
 
 function VerificationChecks({
   checks,
@@ -659,13 +623,22 @@ function VerificationChecks({
 }) {
   return (
     <section>
-      <h2 className="mb-4 text-xl font-semibold">
-        Verification Checks
-      </h2>
+      <div className="mb-4">
+        <h2 className="text-xl font-semibold">
+          Verification Checks
+        </h2>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        {checks.map(
-          (check) => (
+        <p className="mt-2 text-sm leading-6 text-zinc-500">
+          Deterministic findings captured directly from repository
+          analysis and isolated sandbox execution.
+        </p>
+      </div>
+
+      <div className="grid items-start gap-4 md:grid-cols-2">
+        {checks.map((check) => {
+          const evidence = check.evidence ?? [];
+
+          return (
             <article
               key={check.id}
               className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5"
@@ -676,22 +649,78 @@ function VerificationChecks({
                     {check.name}
                   </p>
 
-                  <p className="mt-2 max-w-md text-sm leading-6 text-zinc-400">
+                  <p className="mt-2 text-sm leading-6 text-zinc-400">
                     {check.summary}
                   </p>
                 </div>
 
-                <StatusBadge
-                  check={check}
-                />
+                <StatusBadge check={check} />
               </div>
+
+              {evidence.length > 0 && (
+                <div className="mt-5 border-t border-zinc-800 pt-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <p className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-500">
+                      Captured Evidence
+                    </p>
+
+                    <span className="font-mono text-xs text-zinc-600">
+                      {evidence.length}
+                    </span>
+                  </div>
+
+                  <div className="space-y-3">
+                    {evidence.map((item, index) => {
+                      const location =
+                        formatEvidenceLocation(item);
+
+                      return (
+                        <div
+                          key={`${check.id}-evidence-${index}`}
+                          className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className={`rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide ${getEvidenceKindClass(
+                                item.kind
+                              )}`}
+                            >
+                              {formatEvidenceKind(item.kind)}
+                            </span>
+
+                            {item.code && (
+                              <span className="rounded-full border border-zinc-700 px-2.5 py-1 font-mono text-[11px] text-zinc-400">
+                                {item.code}
+                              </span>
+                            )}
+                          </div>
+
+                          {location && (
+                            <p className="mt-3 break-all font-mono text-xs leading-5 text-zinc-500">
+                              {location}
+                            </p>
+                          )}
+
+                          <p className="mt-2 break-words text-sm leading-6 text-zinc-300">
+                            {item.message}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </article>
-          )
-        )}
+          );
+        })}
       </div>
     </section>
   );
 }
+
+/* -------------------------------------------------------------------------- */
+/*                            External Evidence                               */
+/* -------------------------------------------------------------------------- */
 
 function ExternalEvidence({
   research,
@@ -702,13 +731,9 @@ function ExternalEvidence({
   showAll: boolean;
   onToggle: () => void;
 }) {
-  const visibleEvidence =
-    showAll
-      ? research.evidence
-      : research.evidence.slice(
-          0,
-          3
-        );
+  const visibleEvidence = showAll
+    ? research.evidence
+    : research.evidence.slice(0, 3);
 
   return (
     <section className="rounded-2xl border border-violet-500/20 bg-gradient-to-br from-violet-500/5 to-zinc-900 p-6">
@@ -724,66 +749,45 @@ function ExternalEvidence({
         </div>
 
         <span className="shrink-0 whitespace-nowrap rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400">
-          {
-            research.evidence
-              .length
-          }{" "}
-          sources
+          {research.evidence.length} sources
         </span>
       </div>
 
       <div className="mt-6 space-y-3">
-        {visibleEvidence.map(
-          (
-            evidence,
-            index
-          ) => (
-            <article
-              key={`${evidence.url}-${index}`}
-              className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-4"
+        {visibleEvidence.map((evidence, index) => (
+          <article
+            key={`${evidence.url}-${index}`}
+            className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-4"
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-zinc-700 px-2.5 py-1 text-xs uppercase tracking-wide text-zinc-400">
+                {evidence.authority}
+              </span>
+
+              <span className="text-xs uppercase tracking-wide text-zinc-600">
+                {evidence.sourceType.replace(/_/g, " ")}
+              </span>
+            </div>
+
+            <a
+              href={evidence.url}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-3 block break-words font-medium text-zinc-200 transition hover:text-white"
             >
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full border border-zinc-700 px-2.5 py-1 text-xs uppercase tracking-wide text-zinc-400">
-                  {
-                    evidence.authority
-                  }
-                </span>
+              {evidence.title}
+            </a>
 
-                <span className="text-xs uppercase tracking-wide text-zinc-600">
-                  {evidence.sourceType.replace(
-                    /_/g,
-                    " "
-                  )}
-                </span>
-              </div>
-
-              <a
-                href={
-                  evidence.url
-                }
-                target="_blank"
-                rel="noreferrer"
-                className="mt-3 block break-words font-medium text-zinc-200 transition hover:text-white"
-              >
-                {
-                  evidence.title
-                }
-              </a>
-
-              {evidence.publisher && (
-                <p className="mt-1 text-sm text-zinc-500">
-                  {
-                    evidence.publisher
-                  }
-                </p>
-              )}
-            </article>
-          )
-        )}
+            {evidence.publisher && (
+              <p className="mt-1 text-sm text-zinc-500">
+                {evidence.publisher}
+              </p>
+            )}
+          </article>
+        ))}
       </div>
 
-      {research.evidence.length >
-        3 && (
+      {research.evidence.length > 3 && (
         <button
           type="button"
           onClick={onToggle}
@@ -796,21 +800,21 @@ function ExternalEvidence({
       )}
 
       <p className="mt-5 border-t border-zinc-800 pt-4 text-sm leading-6 text-zinc-500">
-        External evidence informs
-        Nemotron analysis but does
-        not directly determine the
-        readiness score.
+        External evidence informs Nemotron analysis but does not
+        directly determine the readiness score.
       </p>
     </section>
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/*                              Nemotron Analysis                             */
+/* -------------------------------------------------------------------------- */
+
 function ArchitectureAnalysis({
   architecture,
 }: {
-  architecture: NonNullable<
-    ReadinessReport["architecture"]
-  >;
+  architecture: NonNullable<ReadinessReport["architecture"]>;
 }) {
   return (
     <section className="rounded-2xl border border-violet-500/20 bg-gradient-to-br from-violet-500/5 to-zinc-900 p-6">
@@ -820,8 +824,7 @@ function ArchitectureAnalysis({
         </span>
 
         <span className="text-sm text-zinc-500">
-          Powered by NVIDIA Nemotron
-          3 Super
+          Powered by NVIDIA Nemotron 3 Super
         </span>
       </div>
 
@@ -834,19 +837,20 @@ function ArchitectureAnalysis({
       </p>
 
       <p className="mt-3 text-sm text-zinc-500">
-        {
-          architecture.architectureType
-        }
+        {architecture.architectureType}
       </p>
     </section>
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/*                              Remediation Plan                              */
+/* -------------------------------------------------------------------------- */
+
 function RemediationPlan({
   items,
 }: {
-  items:
-    ReadinessReport["remediation"];
+  items: ReadinessReport["remediation"];
 }) {
   return (
     <section>
@@ -856,127 +860,73 @@ function RemediationPlan({
 
       {items.length === 0 ? (
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6 text-zinc-400">
-          No remediation items were
-          generated.
+          No remediation items were generated.
         </div>
       ) : (
         <div className="space-y-3">
-          {items.map(
-            (
-              item,
-              index
-            ) => (
-              <article
-                key={`${item.category}-${index}`}
-                className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5"
-              >
-                <div className="flex flex-wrap items-center gap-3">
-                  <h3 className="font-medium">
-                    {item.title}
-                  </h3>
+          {items.map((item, index) => (
+            <article
+              key={`${item.category}-${index}`}
+              className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5"
+            >
+              <div className="flex flex-wrap items-center gap-3">
+                <h3 className="font-medium">
+                  {item.title}
+                </h3>
 
-                  <span className="rounded-full border border-zinc-700 px-2.5 py-1 text-xs uppercase tracking-wide text-zinc-400">
-                    {
-                      item.priority
-                    }
-                  </span>
-                </div>
+                <span className="rounded-full border border-zinc-700 px-2.5 py-1 text-xs uppercase tracking-wide text-zinc-400">
+                  {item.priority}
+                </span>
+              </div>
 
-                <p className="mt-3 text-sm leading-6 text-zinc-400">
-                  {
-                    item.recommendation
-                  }
-                </p>
-              </article>
-            )
-          )}
+              <p className="mt-3 text-sm leading-6 text-zinc-400">
+                {item.recommendation}
+              </p>
+            </article>
+          ))}
         </div>
       )}
     </section>
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/*                                 Dashboard                                  */
+/* -------------------------------------------------------------------------- */
+
 export function ReadinessDashboard() {
-  const [
-    repositoryUrl,
-    setRepositoryUrl,
-  ] = useState("");
+  const [repositoryUrl, setRepositoryUrl] = useState("");
 
-  const [
-    remoteScan,
-    setRemoteScan,
-  ] =
-    useState<RemoteScanResult | null>(
-      null
-    );
+  const [remoteScan, setRemoteScan] =
+    useState<RemoteScanResult | null>(null);
 
-  const [
-    scanLoading,
-    setScanLoading,
-  ] = useState(false);
+  const [scanLoading, setScanLoading] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
 
-  const [
-    scanError,
-    setScanError,
-  ] =
-    useState<string | null>(null);
+  const [showAllResearch, setShowAllResearch] = useState(false);
 
-  const [
-    showAllResearch,
-    setShowAllResearch,
-  ] = useState(false);
+  const [assessment, setAssessment] =
+    useState<AssessmentResult | null>(null);
 
-  const [
-    assessment,
-    setAssessment,
-  ] =
-    useState<AssessmentResult | null>(
-      null
-    );
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const [
-    loading,
-    setLoading,
-  ] = useState(false);
-
-  const [
-    error,
-    setError,
-  ] =
-    useState<string | null>(null);
-
-  const [
-    progressEvents,
-    setProgressEvents,
-  ] = useState<
+  const [progressEvents, setProgressEvents] = useState<
     AssessmentProgressEvent[]
   >([]);
 
-  const report =
-    assessment?.report ?? null;
+  const report = assessment?.report ?? null;
+  const research = assessment?.research ?? null;
 
-  const research =
-    assessment?.research ?? null;
+  const progressByStage = useMemo(() => {
+    const map = new Map<string, AssessmentProgressEvent>();
 
-  const progressByStage =
-    useMemo(() => {
-      const map =
-        new Map<
-          string,
-          AssessmentProgressEvent
-        >();
+    for (const event of progressEvents) {
+      map.set(event.stage, event);
+    }
 
-      for (
-        const event of progressEvents
-      ) {
-        map.set(
-          event.stage,
-          event
-        );
-      }
-
-      return map;
-    }, [progressEvents]);
+    return map;
+  }, [progressEvents]);
 
   async function scanRepository() {
     setScanLoading(true);
@@ -984,39 +934,27 @@ export function ReadinessDashboard() {
     setRemoteScan(null);
 
     try {
-      const response =
-        await fetch(
-          "/api/repositories/scan",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-            body: JSON.stringify({
-              repositoryUrl,
-            }),
-          }
-        );
+      const response = await fetch("/api/repositories/scan", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          repositoryUrl,
+        }),
+      });
 
-      const data =
-        await response.json();
+      const data = await response.json();
 
-      if (
-        !response.ok ||
-        !data.ok
-      ) {
+      if (!response.ok || !data.ok) {
         throw new Error(
-          data.error ??
-            "Repository scan failed."
+          data.error ?? "Repository scan failed."
         );
       }
 
       setRemoteScan({
-        repository:
-          data.repository,
-        scan:
-          data.scan,
+        repository: data.repository,
+        scan: data.scan,
       });
     } catch (scanError) {
       setScanError(
@@ -1037,28 +975,21 @@ export function ReadinessDashboard() {
     setShowAllResearch(false);
 
     try {
-      const response =
-        await fetch(
-          "/api/assessment",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-            body: JSON.stringify({
-              repositoryUrl,
-            }),
-          }
-        );
+      const response = await fetch("/api/assessment", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          repositoryUrl,
+        }),
+      });
 
       if (!response.ok) {
-        const data =
-          await response.json();
+        const data = await response.json();
 
         throw new Error(
-          data.error ??
-            "Assessment failed."
+          data.error ?? "Assessment failed."
         );
       }
 
@@ -1068,118 +999,76 @@ export function ReadinessDashboard() {
         );
       }
 
-      const reader =
-        response.body.getReader();
-
-      const decoder =
-        new TextDecoder();
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
 
       let buffer = "";
-
-      let assessmentError:
-        string | null = null;
+      let assessmentError: string | null = null;
 
       while (true) {
-        const {
-          value,
-          done,
-        } = await reader.read();
+        const { value, done } = await reader.read();
 
         if (done) {
           break;
         }
 
-        buffer += decoder.decode(
-          value,
-          {
-            stream: true,
-          }
-        );
+        buffer += decoder.decode(value, {
+          stream: true,
+        });
 
-        const blocks =
-          buffer.split("\n\n");
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop() ?? "";
 
-        buffer =
-          blocks.pop() ?? "";
-
-        for (
-          const block of blocks
-        ) {
-          const parsed =
-            parseSseBlock(block);
+        for (const block of blocks) {
+          const parsed = parseSseBlock(block);
 
           if (!parsed) {
             continue;
           }
 
-          if (
-            parsed.event ===
-            "progress"
-          ) {
+          if (parsed.event === "progress") {
             const progress =
               parsed.data as AssessmentProgressEvent;
 
-            setProgressEvents(
-              (current) => [
-                ...current,
-                progress,
-              ]
-            );
+            setProgressEvents((current) => [
+              ...current,
+              progress,
+            ]);
 
             continue;
           }
 
-          if (
-            parsed.event ===
-            "result"
-          ) {
-            const payload =
-              parsed.data as {
-                ok: boolean;
-                assessment:
-                  AssessmentResult;
-              };
+          if (parsed.event === "result") {
+            const payload = parsed.data as {
+              ok: boolean;
+              assessment: AssessmentResult;
+            };
 
-            if (
-              payload.ok &&
-              payload.assessment
-            ) {
-              setAssessment(
-                payload.assessment
-              );
+            if (payload.ok && payload.assessment) {
+              setAssessment(payload.assessment);
             }
 
             continue;
           }
 
-          if (
-            parsed.event ===
-            "assessment-error"
-          ) {
-            const payload =
-              parsed.data as {
-                ok: boolean;
-                error?: string;
-              };
+          if (parsed.event === "assessment-error") {
+            const payload = parsed.data as {
+              ok: boolean;
+              error?: string;
+            };
 
             assessmentError =
-              payload.error ??
-              "Assessment failed.";
+              payload.error ?? "Assessment failed.";
           }
         }
       }
 
       if (assessmentError) {
-        throw new Error(
-          assessmentError
-        );
+        throw new Error(assessmentError);
       }
-    } catch (
-      assessmentError
-    ) {
+    } catch (assessmentError) {
       setError(
-        assessmentError instanceof
-          Error
+        assessmentError instanceof Error
           ? assessmentError.message
           : "Unknown assessment error."
       );
@@ -1197,18 +1086,14 @@ export function ReadinessDashboard() {
           </p>
 
           <h1 className="max-w-3xl text-4xl font-semibold tracking-tight md:text-5xl">
-            Production readiness,
-            backed by evidence.
+            Production readiness, backed by evidence.
           </h1>
 
           <p className="mt-5 max-w-3xl text-lg leading-8 text-zinc-400">
-            DeployGuard executes real
-            repository checks inside an
-            isolated sandbox, verifies
-            the evidence, then uses
-            NVIDIA Nemotron to explain
-            what is safe to ship and
-            what still needs attention.
+            DeployGuard executes real repository checks inside an
+            isolated sandbox, verifies the evidence, then uses NVIDIA
+            Nemotron to explain what is safe to ship and what still
+            needs attention.
           </p>
 
           <ProcessOverview />
@@ -1224,31 +1109,19 @@ export function ReadinessDashboard() {
             <input
               id="repository-url"
               type="url"
-              value={
-                repositoryUrl
-              }
-              onChange={(
-                event
-              ) =>
-                setRepositoryUrl(
-                  event.target
-                    .value
-                )
+              value={repositoryUrl}
+              onChange={(event) =>
+                setRepositoryUrl(event.target.value)
               }
               placeholder="https://github.com/owner/repository"
-              disabled={
-                loading ||
-                scanLoading
-              }
+              disabled={loading || scanLoading}
               className="mt-3 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-zinc-500 disabled:opacity-60"
             />
 
             <div className="mt-3 flex flex-col gap-3 sm:flex-row">
               <button
                 type="button"
-                onClick={
-                  scanRepository
-                }
+                onClick={scanRepository}
                 disabled={
                   scanLoading ||
                   loading ||
@@ -1256,16 +1129,12 @@ export function ReadinessDashboard() {
                 }
                 className="rounded-xl border border-zinc-700 px-5 py-3 font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {scanLoading
-                  ? "Scanning..."
-                  : "Static Scan"}
+                {scanLoading ? "Scanning..." : "Static Scan"}
               </button>
 
               <button
                 type="button"
-                onClick={
-                  runAssessment
-                }
+                onClick={runAssessment}
                 disabled={
                   loading ||
                   scanLoading ||
@@ -1280,13 +1149,9 @@ export function ReadinessDashboard() {
             </div>
 
             <p className="mt-3 text-xs leading-5 text-zinc-500">
-              Static Scan inspects
-              repository evidence
-              without executing code.
-              Full Assessment runs
-              isolated verification
-              checks inside the
-              DeployGuard sandbox.
+              Static Scan inspects repository evidence without
+              executing code. Full Assessment runs isolated
+              verification checks inside the DeployGuard sandbox.
             </p>
 
             {scanError && (
@@ -1303,14 +1168,10 @@ export function ReadinessDashboard() {
           </div>
         </header>
 
-        {(loading ||
-          progressEvents.length >
-            0) && (
+        {(loading || progressEvents.length > 0) && (
           <AssessmentPipeline
             loading={loading}
-            progressByStage={
-              progressByStage
-            }
+            progressByStage={progressByStage}
           />
         )}
 
@@ -1322,17 +1183,11 @@ export function ReadinessDashboard() {
               </p>
 
               <h2 className="mt-2 break-words text-xl font-semibold">
-                {
-                  remoteScan
-                    .repository
-                    .fullName
-                }
+                {remoteScan.repository.fullName}
               </h2>
 
               <p className="mt-2 text-sm text-zinc-500">
-                Static repository
-                evidence collected
-                successfully.
+                Static repository evidence collected successfully.
               </p>
             </div>
 
@@ -1342,33 +1197,25 @@ export function ReadinessDashboard() {
               </h2>
 
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {remoteScan.scan.facts.map(
-                  (fact) => (
-                    <article
-                      key={`${fact.key}-${fact.value}`}
-                      className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5"
-                    >
-                      <p className="text-xs uppercase tracking-wide text-zinc-500">
-                        {fact.key}
-                      </p>
+                {remoteScan.scan.facts.map((fact) => (
+                  <article
+                    key={`${fact.key}-${fact.value}`}
+                    className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5"
+                  >
+                    <p className="text-xs uppercase tracking-wide text-zinc-500">
+                      {fact.key}
+                    </p>
 
-                      <p className="mt-2 break-words text-lg font-medium">
-                        {
-                          fact.value
-                        }
-                      </p>
+                    <p className="mt-2 break-words text-lg font-medium">
+                      {fact.value}
+                    </p>
 
-                      <p className="mt-2 text-xs text-zinc-600">
-                        Confidence{" "}
-                        {Math.round(
-                          fact.confidence *
-                            100
-                        )}
-                        %
-                      </p>
-                    </article>
-                  )
-                )}
+                    <p className="mt-2 text-xs text-zinc-600">
+                      Confidence{" "}
+                      {Math.round(fact.confidence * 100)}%
+                    </p>
+                  </article>
+                ))}
               </div>
             </div>
 
@@ -1378,41 +1225,29 @@ export function ReadinessDashboard() {
               </h2>
 
               <div className="space-y-3">
-                {remoteScan.scan.facts.flatMap(
-                  (fact) =>
-                    fact.evidence.map(
-                      (
-                        evidence,
-                        index
-                      ) => (
-                        <article
-                          key={`${fact.key}-${evidence.path}-${index}`}
-                          className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5"
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="break-words font-medium">
-                                {
-                                  evidence.path
-                                }
-                              </p>
+                {remoteScan.scan.facts.flatMap((fact) =>
+                  fact.evidence.map((evidence, index) => (
+                    <article
+                      key={`${fact.key}-${evidence.path}-${index}`}
+                      className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="break-words font-medium">
+                            {evidence.path}
+                          </p>
 
-                              <p className="mt-1 text-sm leading-6 text-zinc-500">
-                                {
-                                  evidence.description
-                                }
-                              </p>
-                            </div>
+                          <p className="mt-1 text-sm leading-6 text-zinc-500">
+                            {evidence.description}
+                          </p>
+                        </div>
 
-                            <span className="shrink-0 whitespace-nowrap rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400">
-                              {
-                                fact.key
-                              }
-                            </span>
-                          </div>
-                        </article>
-                      )
-                    )
+                        <span className="shrink-0 whitespace-nowrap rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400">
+                          {fact.key}
+                        </span>
+                      </div>
+                    </article>
+                  ))
                 )}
               </div>
             </div>
@@ -1423,81 +1258,53 @@ export function ReadinessDashboard() {
           <div className="space-y-8">
             <section className="grid gap-4 md:grid-cols-2">
               <ReadinessScoreCard
-                score={
-                  report.readiness
-                    .score
-                }
+                score={report.readiness.score}
               />
 
               <CoverageCard
-                coverage={
-                  report.readiness
-                    .coverage
-                }
+                coverage={report.readiness.coverage}
               />
             </section>
 
             <section className="rounded-2xl border border-zinc-800 bg-zinc-950 p-6">
               <p className="text-xs font-medium uppercase tracking-[0.2em] text-zinc-600">
-                Evidence before AI
-                opinion
+                Evidence before AI opinion
               </p>
 
               <h2 className="mt-2 text-2xl font-semibold">
-                What DeployGuard
-                verified
+                What DeployGuard verified
               </h2>
 
               <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-400">
-                The readiness score
-                below is produced from
-                deterministic repository
-                and runtime evidence.
-                External research and
-                NVIDIA Nemotron add
-                context and explanation,
-                but they do not invent
-                the score.
+                The readiness score below is produced from
+                deterministic repository and runtime evidence.
+                External research and NVIDIA Nemotron add context and
+                explanation, but they do not invent the score.
               </p>
             </section>
 
-            <VerificationChecks
-              checks={
-                report.checks
-              }
-            />
+            <VerificationChecks checks={report.checks} />
 
-            {research &&
-              research.evidence
-                .length > 0 && (
-                <ExternalEvidence
-                  research={
-                    research
-                  }
-                  showAll={
-                    showAllResearch
-                  }
-                  onToggle={() =>
-                    setShowAllResearch(
-                      (current) =>
-                        !current
-                    )
-                  }
-                />
-              )}
-
-            {report.architecture && (
-              <ArchitectureAnalysis
-                architecture={
-                  report.architecture
+            {research && research.evidence.length > 0 && (
+              <ExternalEvidence
+                research={research}
+                showAll={showAllResearch}
+                onToggle={() =>
+                  setShowAllResearch(
+                    (current) => !current
+                  )
                 }
               />
             )}
 
+            {report.architecture && (
+              <ArchitectureAnalysis
+                architecture={report.architecture}
+              />
+            )}
+
             <RemediationPlan
-              items={
-                report.remediation
-              }
+              items={report.remediation}
             />
           </div>
         )}

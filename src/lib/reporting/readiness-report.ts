@@ -1,11 +1,83 @@
 import type { ArchitectureAnalysis } from "@/lib/agents/architect-agent";
-import type { CheckResult } from "@/lib/checks/types";
-import type { RepositoryScanResult } from "@/lib/scanner/types";
+import type {
+  CheckEvidence,
+  CheckResult,
+} from "@/lib/checks/types";
 import type {
   ProductionReadinessReport,
   RemediationItem,
 } from "@/lib/reporting/types";
+import type { RepositoryScanResult } from "@/lib/scanner/types";
 import type { ReadinessScore } from "@/lib/scoring/readiness-score";
+
+const MAX_REMEDIATION_EVIDENCE = 3;
+
+function formatEvidenceLocation(
+  evidence: CheckEvidence
+): string | undefined {
+  if (!evidence.file) {
+    return undefined;
+  }
+
+  let location = evidence.file;
+
+  if (evidence.line !== undefined) {
+    location += `:${evidence.line}`;
+
+    if (evidence.column !== undefined) {
+      location += `:${evidence.column}`;
+    }
+  }
+
+  return location;
+}
+
+function formatEvidenceReference(
+  evidence: CheckEvidence
+): string {
+  const location = formatEvidenceLocation(evidence);
+
+  const code = evidence.code
+    ? ` (${evidence.code})`
+    : "";
+
+  if (location) {
+    return `${location}${code}: ${evidence.message}`;
+  }
+
+  return `${evidence.message}${code}`;
+}
+
+function getEvidenceSummary(
+  check: CheckResult
+): string | undefined {
+  const evidence = check.evidence ?? [];
+
+  if (evidence.length === 0) {
+    return undefined;
+  }
+
+  const selectedEvidence = evidence.slice(
+    0,
+    MAX_REMEDIATION_EVIDENCE
+  );
+
+  const references = selectedEvidence.map(
+    formatEvidenceReference
+  );
+
+  const remaining =
+    evidence.length - selectedEvidence.length;
+
+  const suffix =
+    remaining > 0
+      ? ` DeployGuard captured ${remaining} additional evidence item${
+          remaining === 1 ? "" : "s"
+        }.`
+      : "";
+
+  return `${references.join(" ")}${suffix}`;
+}
 
 function getNotConfiguredRecommendation(
   check: CheckResult
@@ -50,6 +122,115 @@ function getNotConfiguredRecommendation(
   }
 }
 
+function getFailedCheckRecommendation(
+  check: CheckResult
+): string {
+  const evidenceSummary =
+    getEvidenceSummary(check);
+
+  if (!evidenceSummary) {
+    return (
+      `Resolve the failure reported by the ${check.name} check ` +
+      "and run the assessment again."
+    );
+  }
+
+  switch (check.category) {
+    case "types":
+      return (
+        "Fix the captured TypeScript diagnostics before deployment. " +
+        `${evidenceSummary} ` +
+        "Then rerun type verification."
+      );
+
+    case "lint":
+      return (
+        "Fix the captured lint violations. " +
+        `${evidenceSummary} ` +
+        "Then rerun lint verification."
+      );
+
+    case "test":
+      return (
+        "Investigate and fix the failing automated tests using the " +
+        `captured test evidence. ${evidenceSummary} ` +
+        "Then rerun the test suite."
+      );
+
+    case "build":
+      return (
+        "Resolve the production build failures identified by the " +
+        `sandbox build. ${evidenceSummary} ` +
+        "Then rerun production build verification."
+      );
+
+    case "security":
+      return (
+        "Review and remediate the reported high-severity dependency " +
+        `findings. ${evidenceSummary} ` +
+        "Update or replace affected dependencies where appropriate, " +
+        "then rerun the dependency security check."
+      );
+
+    case "database":
+      return (
+        "Resolve the database validation failure using the captured " +
+        `evidence. ${evidenceSummary} ` +
+        "Then rerun database verification."
+      );
+
+    case "deployment":
+      return (
+        "Resolve the deployment configuration failure using the " +
+        `captured evidence. ${evidenceSummary} ` +
+        "Then rerun deployment verification."
+      );
+
+    case "environment":
+      return (
+        "Resolve the environment readiness failure using the captured " +
+        `evidence. ${evidenceSummary} ` +
+        "Then rerun environment verification."
+      );
+
+    default:
+      return (
+        `Resolve the ${check.name} failure using the captured evidence. ` +
+        `${evidenceSummary} ` +
+        "Then rerun the assessment."
+      );
+  }
+}
+
+function getBlockedRecommendation(
+  check: CheckResult
+): string {
+  const evidenceSummary =
+    getEvidenceSummary(check);
+
+  if (check.category === "build") {
+    return (
+      "The production build depends on a capability that the isolated " +
+      "DeployGuard sandbox could not provide, commonly external network " +
+      "access during build execution. " +
+      (evidenceSummary
+        ? `Captured evidence: ${evidenceSummary} `
+        : "") +
+      "Review the build-time dependency or allow the required resource " +
+      "through a controlled verification policy, then rerun the assessment."
+    );
+  }
+
+  return (
+    "The check could not be fully verified because the execution " +
+    "environment or verification policy blocked a required capability. " +
+    (evidenceSummary
+      ? `Captured evidence: ${evidenceSummary} `
+      : "") +
+    "Review the restriction and rerun the assessment."
+  );
+}
+
 function createRemediationItems(
   checks: CheckResult[]
 ): RemediationItem[] {
@@ -62,8 +243,7 @@ function createRemediationItems(
         priority: "high",
         title: `${check.name} failed`,
         recommendation:
-          `Resolve the failure reported by the ${check.name} check ` +
-          "and run the assessment again.",
+          getFailedCheckRecommendation(check),
       });
 
       continue;
@@ -77,7 +257,8 @@ function createRemediationItems(
         category: check.category,
         priority: "medium",
         title: `${check.name} is not configured`,
-        recommendation: getNotConfiguredRecommendation(check),
+        recommendation:
+          getNotConfiguredRecommendation(check),
       });
 
       continue;
@@ -100,18 +281,16 @@ function createRemediationItems(
     }
 
     if (check.status === "blocked") {
-  items.push({
-    category: check.category,
-    priority: "medium",
-    title: `${check.name} verification was blocked`,
-    recommendation:
-      check.category === "build"
-        ? "The production build depends on external network access that is restricted by the DeployGuard sandbox. Review the build-time network dependency or allow the required resource through a controlled verification policy, then rerun the assessment."
-        : "The check could not be fully verified because the execution environment or verification policy blocked a required capability. Review the restriction and rerun the assessment.",
-    });
+      items.push({
+        category: check.category,
+        priority: "medium",
+        title: `${check.name} verification was blocked`,
+        recommendation:
+          getBlockedRecommendation(check),
+      });
 
-  continue;
-      }
+      continue;
+    }
 
     if (check.status === "error") {
       items.push({
@@ -144,10 +323,8 @@ export function createProductionReadinessReport(
     },
 
     architecture,
-
     checks,
     readiness,
-
     remediation: createRemediationItems(checks),
   };
 }

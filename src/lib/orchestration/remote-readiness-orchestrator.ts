@@ -43,17 +43,11 @@ export interface RemoteReadinessAssessment {
 
   research?: {
     queries: string[];
-
     evidence: {
       title: string;
       url: string;
       sourceType: string;
-
-      authority:
-        | "primary"
-        | "secondary"
-        | "community";
-
+      authority: "primary" | "secondary" | "community";
       publisher?: string;
       publishedAt?: string;
     }[];
@@ -83,9 +77,7 @@ type ArchitectureOutcome =
     };
 
 type PreparationResult = Awaited<
-  ReturnType<
-    typeof prepareSandboxWorkspace
-  >
+  ReturnType<typeof prepareSandboxWorkspace>
 >;
 
 type PreparationOutcome =
@@ -119,12 +111,8 @@ function toProgressStatus(
   return status;
 }
 
-function formatDuration(
-  durationMs: number
-): string {
-  return (
-    durationMs / 1000
-  ).toFixed(2);
+function formatDuration(durationMs: number): string {
+  return (durationMs / 1000).toFixed(2);
 }
 
 function logPerformanceSummary(
@@ -154,44 +142,93 @@ function logPerformanceSummary(
   );
 }
 
+/*
+ * External research may contain provider-specific
+ * metadata and excerpts used internally by Nemotron.
+ *
+ * Only the source metadata required by the dashboard
+ * is allowed across the public response boundary.
+ */
 function sanitizeResearch(
-  research:
-    | ResearchAgentResult
-    | undefined
+  research: ResearchAgentResult | undefined
 ): RemoteReadinessAssessment["research"] {
   if (!research) {
     return undefined;
   }
 
   return {
-    queries:
-      research.queries,
+    queries: research.queries,
 
-    evidence:
-      research.results.flatMap(
-        (result) =>
-          result.evidence.map(
-            (item) => ({
-              title:
-                item.source.title,
+    evidence: research.results.flatMap((result) =>
+      result.evidence.map((item) => ({
+        title: item.source.title,
+        url: item.source.url,
+        sourceType: item.source.sourceType,
+        authority: item.source.authority,
+        publisher: item.source.publisher,
+        publishedAt: item.source.publishedAt,
+      }))
+    ),
+  };
+}
 
-              url:
-                item.source.url,
+/*
+ * CheckResult contains raw stdout/stderr internally.
+ *
+ * Those values are useful for deterministic parsing,
+ * diagnostics, and evidence extraction, but should not
+ * be shipped directly to the browser.
+ *
+ * Explicitly constructing the public check also creates
+ * a clear allowlist for the assessment API boundary.
+ */
+function sanitizeCheck(check: CheckResult): CheckResult {
+  return {
+    id: check.id,
+    category: check.category,
+    name: check.name,
+    status: check.status,
 
-              sourceType:
-                item.source.sourceType,
+    ...(check.skipReason
+      ? {
+          skipReason: check.skipReason,
+        }
+      : {}),
 
-              authority:
-                item.source.authority,
+    ...(check.command
+      ? {
+          command: check.command,
+        }
+      : {}),
 
-              publisher:
-                item.source.publisher,
+    ...(check.exitCode !== undefined
+      ? {
+          exitCode: check.exitCode,
+        }
+      : {}),
 
-              publishedAt:
-                item.source.publishedAt,
-            })
-          )
-      ),
+    ...(check.durationMs !== undefined
+      ? {
+          durationMs: check.durationMs,
+        }
+      : {}),
+
+    summary: check.summary,
+
+    ...(check.evidence && check.evidence.length > 0
+      ? {
+          evidence: check.evidence,
+        }
+      : {}),
+  };
+}
+
+function sanitizeReport(
+  report: ProductionReadinessReport
+): ProductionReadinessReport {
+  return {
+    ...report,
+    checks: report.checks.map(sanitizeCheck),
   };
 }
 
@@ -199,11 +236,8 @@ export async function runRemoteReadinessAssessment(
   repositoryUrl: string,
   onProgress?: AssessmentProgressCallback
 ): Promise<RemoteReadinessAssessment> {
-  const assessmentStartedAt =
-    Date.now();
-
-  const timings:
-    PerformanceTiming[] = [];
+  const assessmentStartedAt = Date.now();
+  const timings: PerformanceTiming[] = [];
 
   const emitProgress = async (
     stage: string,
@@ -216,45 +250,36 @@ export async function runRemoteReadinessAssessment(
       label,
       status,
       message,
-      elapsedMs:
-        Date.now() -
-        assessmentStartedAt,
+      elapsedMs: Date.now() - assessmentStartedAt,
     });
   };
 
-  const measureStage =
-    async <T>(
-      stage: string,
-      operation: () => Promise<T>
-    ): Promise<T> => {
-      const startedAt =
-        Date.now();
+  const measureStage = async <T>(
+    stage: string,
+    operation: () => Promise<T>
+  ): Promise<T> => {
+    const startedAt = Date.now();
 
-      try {
-        return await operation();
-      } finally {
-        const durationMs =
-          Date.now() -
-          startedAt;
+    try {
+      return await operation();
+    } finally {
+      const durationMs = Date.now() - startedAt;
 
-        timings.push({
-          stage,
-          durationMs,
-        });
+      timings.push({
+        stage,
+        durationMs,
+      });
 
-        console.log(
-          `[DeployGuard Performance] ${stage}: ${formatDuration(
-            durationMs
-          )}s`
-        );
-      }
-    };
+      console.log(
+        `[DeployGuard Performance] ${stage}: ${formatDuration(
+          durationMs
+        )}s`
+      );
+    }
+  };
 
   try {
-    const repository =
-      parseGitHubRepositoryUrl(
-        repositoryUrl
-      );
+    const repository = parseGitHubRepositoryUrl(repositoryUrl);
 
     /*
      * Repository ingestion
@@ -267,21 +292,18 @@ export async function runRemoteReadinessAssessment(
       "Preparing repository..."
     );
 
-    const ingested =
-      await measureStage(
-        "Repository Ingestion",
-        () =>
-          ingestGitHubRepository(
-            repository,
-            (message) =>
-              emitProgress(
-                "repository",
-                "Repository",
-                "running",
-                message
-              )
+    const ingested = await measureStage(
+      "Repository Ingestion",
+      () =>
+        ingestGitHubRepository(repository, (message) =>
+          emitProgress(
+            "repository",
+            "Repository",
+            "running",
+            message
           )
-      );
+        )
+    );
 
     await emitProgress(
       "repository",
@@ -302,14 +324,10 @@ export async function runRemoteReadinessAssessment(
         "Inspecting repository structure..."
       );
 
-      const scan =
-        await measureStage(
-          "Repository Scan",
-          async () =>
-            scanRepository(
-              ingested.repositoryPath
-            )
-        );
+      const scan = await measureStage(
+        "Repository Scan",
+        async () => scanRepository(ingested.repositoryPath)
+      );
 
       await emitProgress(
         "scan",
@@ -319,9 +337,9 @@ export async function runRemoteReadinessAssessment(
       );
 
       /*
-       * After scanning, external research
-       * and sandbox preparation can safely
-       * begin at the same time.
+       * Research and dependency preparation can begin
+       * concurrently after deterministic repository
+       * facts have been collected.
        */
 
       await emitProgress(
@@ -341,40 +359,25 @@ export async function runRemoteReadinessAssessment(
       /*
        * External research branch.
        *
-       * Research is fail-open:
-       * repository evidence remains usable
-       * if the external provider fails.
+       * Research is fail-open. Repository evidence
+       * remains usable if the provider is unavailable.
        */
 
       const researchPromise =
-        (async (): Promise<
-          ResearchAgentResult | undefined
-        > => {
+        (async (): Promise<ResearchAgentResult | undefined> => {
           try {
-            const research =
-              await measureStage(
-                "External Research",
-                () =>
-                  runResearchAgent(
-                    scan
-                  )
-              );
+            const research = await measureStage(
+              "External Research",
+              () => runResearchAgent(scan)
+            );
 
-            const evidenceCount =
-              research.results.reduce(
-                (
-                  total,
-                  result
-                ) =>
-                  total +
-                  result.evidence.length,
-                0
-              );
-
-            if (
-              research.queries.length ===
+            const evidenceCount = research.results.reduce(
+              (total, result) =>
+                total + result.evidence.length,
               0
-            ) {
+            );
+
+            if (research.queries.length === 0) {
               await emitProgress(
                 "research",
                 "External Research",
@@ -416,13 +419,12 @@ export async function runRemoteReadinessAssessment(
       /*
        * Sandbox preparation branch.
        *
-       * The promise resolves to an outcome
-       * instead of remaining rejected while
-       * other concurrent work continues.
+       * Convert rejected preparation promises into
+       * structured outcomes so concurrent work can
+       * finish cleanly.
        */
 
-      const preparationPromise:
-        Promise<PreparationOutcome> =
+      const preparationPromise: Promise<PreparationOutcome> =
         measureStage(
           "Sandbox Preparation",
           () =>
@@ -437,8 +439,7 @@ export async function runRemoteReadinessAssessment(
               await emitProgress(
                 "preparation",
                 "Sandbox Preparation",
-                preparation.status ===
-                  "passed"
+                preparation.status === "passed"
                   ? "passed"
                   : "error",
                 preparation.summary
@@ -479,16 +480,13 @@ export async function runRemoteReadinessAssessment(
           );
 
       /*
-       * Nemotron depends on research,
-       * but does not depend on sandbox
-       * preparation or deterministic checks.
+       * Nemotron depends on research but not on
+       * sandbox preparation or deterministic checks.
        *
-       * It therefore starts immediately
-       * when the research branch settles.
+       * It starts as soon as research settles.
        */
 
-      const architecturePromise:
-        Promise<ArchitectureOutcome> =
+      const architecturePromise: Promise<ArchitectureOutcome> =
         researchPromise.then(
           async (
             research
@@ -501,15 +499,14 @@ export async function runRemoteReadinessAssessment(
             );
 
             try {
-              const analysis =
-                await measureStage(
-                  "Nemotron Analysis",
-                  () =>
-                    runArchitectAgent(
-                      scan,
-                      research
-                    )
-                );
+              const analysis = await measureStage(
+                "Nemotron Analysis",
+                () =>
+                  runArchitectAgent(
+                    scan,
+                    research
+                  )
+              );
 
               return {
                 status: "passed",
@@ -524,59 +521,39 @@ export async function runRemoteReadinessAssessment(
           }
         );
 
-      const checks:
-        CheckResult[] = [];
+      const checks: CheckResult[] = [];
 
       /*
        * Static deterministic checks.
        *
-       * These inspect scanner evidence only
-       * and execute no repository-controlled
-       * code.
+       * These use scanner evidence only and execute
+       * no repository-controlled code.
        */
 
-      const environment =
-        await measureStage(
-          "Environment Check",
-          async () =>
-            runEnvironmentAgent(
-              scan
-            )
-        );
-
-      checks.push(
-        environment
+      const environment = await measureStage(
+        "Environment Check",
+        async () => runEnvironmentAgent(scan)
       );
 
-      const deployment =
-        await measureStage(
-          "Deployment Check",
-          async () =>
-            runDeploymentAgent(
-              scan
-            )
-        );
+      checks.push(environment);
 
-      checks.push(
-        deployment
+      const deployment = await measureStage(
+        "Deployment Check",
+        async () => runDeploymentAgent(scan)
       );
+
+      checks.push(deployment);
 
       /*
-       * Sandbox preparation may already
-       * have completed while research and
-       * static checks were running.
+       * Resolve sandbox preparation.
        */
 
       const preparationOutcome =
         await preparationPromise;
 
-      if (
-        preparationOutcome.status ===
-        "error"
-      ) {
+      if (preparationOutcome.status === "error") {
         const message =
-          preparationOutcome.error
-            instanceof Error
+          preparationOutcome.error instanceof Error
             ? preparationOutcome.error.message
             : "Sandbox preparation could not be completed.";
 
@@ -589,18 +566,14 @@ export async function runRemoteReadinessAssessment(
         preparationOutcome.preparation;
 
       /*
-       * Repository-controlled deterministic
-       * checks.
+       * Repository-controlled deterministic checks.
        *
-       * These remain sequential because they
-       * share the same disposable repository
+       * They remain sequential because they operate
+       * against the same disposable repository
        * workspace.
        */
 
-      if (
-        preparation.status ===
-        "passed"
-      ) {
+      if (preparation.status === "passed") {
         /*
          * TypeScript
          */
@@ -612,25 +585,20 @@ export async function runRemoteReadinessAssessment(
           "Running TypeScript validation..."
         );
 
-        const typecheck =
-          await measureStage(
-            "TypeScript",
-            () =>
-              runSandboxTypecheckAgent(
-                ingested.repositoryPath
-              )
-          );
-
-        checks.push(
-          typecheck
+        const typecheck = await measureStage(
+          "TypeScript",
+          () =>
+            runSandboxTypecheckAgent(
+              ingested.repositoryPath
+            )
         );
+
+        checks.push(typecheck);
 
         await emitProgress(
           "types",
           "TypeScript",
-          toProgressStatus(
-            typecheck.status
-          ),
+          toProgressStatus(typecheck.status),
           typecheck.summary
         );
 
@@ -645,25 +613,20 @@ export async function runRemoteReadinessAssessment(
           "Running lint validation..."
         );
 
-        const lint =
-          await measureStage(
-            "Lint",
-            () =>
-              runSandboxLintAgent(
-                ingested.repositoryPath
-              )
-          );
-
-        checks.push(
-          lint
+        const lint = await measureStage(
+          "Lint",
+          () =>
+            runSandboxLintAgent(
+              ingested.repositoryPath
+            )
         );
+
+        checks.push(lint);
 
         await emitProgress(
           "lint",
           "Lint",
-          toProgressStatus(
-            lint.status
-          ),
+          toProgressStatus(lint.status),
           lint.summary
         );
 
@@ -678,25 +641,20 @@ export async function runRemoteReadinessAssessment(
           "Running automated tests..."
         );
 
-        const tests =
-          await measureStage(
-            "Tests",
-            () =>
-              runSandboxTestAgent(
-                ingested.repositoryPath
-              )
-          );
-
-        checks.push(
-          tests
+        const tests = await measureStage(
+          "Tests",
+          () =>
+            runSandboxTestAgent(
+              ingested.repositoryPath
+            )
         );
+
+        checks.push(tests);
 
         await emitProgress(
           "test",
           "Tests",
-          toProgressStatus(
-            tests.status
-          ),
+          toProgressStatus(tests.status),
           tests.summary
         );
 
@@ -711,25 +669,20 @@ export async function runRemoteReadinessAssessment(
           "Running production build..."
         );
 
-        const build =
-          await measureStage(
-            "Production Build",
-            () =>
-              runSandboxBuildAgent(
-                ingested.repositoryPath
-              )
-          );
-
-        checks.push(
-          build
+        const build = await measureStage(
+          "Production Build",
+          () =>
+            runSandboxBuildAgent(
+              ingested.repositoryPath
+            )
         );
+
+        checks.push(build);
 
         await emitProgress(
           "build",
           "Production Build",
-          toProgressStatus(
-            build.status
-          ),
+          toProgressStatus(build.status),
           build.summary
         );
 
@@ -744,25 +697,20 @@ export async function runRemoteReadinessAssessment(
           "Running dependency security audit..."
         );
 
-        const security =
-          await measureStage(
-            "Dependency Security",
-            () =>
-              runSandboxSecurityAgent(
-                ingested.repositoryPath
-              )
-          );
-
-        checks.push(
-          security
+        const security = await measureStage(
+          "Dependency Security",
+          () =>
+            runSandboxSecurityAgent(
+              ingested.repositoryPath
+            )
         );
+
+        checks.push(security);
 
         await emitProgress(
           "security",
           "Dependency Security",
-          toProgressStatus(
-            security.status
-          ),
+          toProgressStatus(security.status),
           security.summary
         );
       } else {
@@ -770,43 +718,38 @@ export async function runRemoteReadinessAssessment(
          * Dependency preparation returned a
          * structured failure.
          *
-         * Repository-controlled checks cannot
-         * safely run without dependencies.
+         * Repository-controlled checks cannot run
+         * reliably without prepared dependencies.
          */
 
         const preparationSummary =
           preparation.summary;
 
-        const unavailableChecks:
-          CheckResult[] = [
+        const unavailableChecks: CheckResult[] = [
           createUnavailableCheck(
             "types",
             "types",
             "TypeScript",
             preparationSummary
           ),
-
           createUnavailableCheck(
             "lint",
             "lint",
             "Lint",
             preparationSummary
           ),
-
           createUnavailableCheck(
             "test",
             "test",
             "Tests",
             preparationSummary
           ),
-
           createUnavailableCheck(
             "build",
             "build",
             "Production Build",
             preparationSummary
           ),
-
           createUnavailableCheck(
             "security",
             "security",
@@ -815,14 +758,9 @@ export async function runRemoteReadinessAssessment(
           ),
         ];
 
-        checks.push(
-          ...unavailableChecks
-        );
+        checks.push(...unavailableChecks);
 
-        for (
-          const check of
-          unavailableChecks
-        ) {
+        for (const check of unavailableChecks) {
           await emitProgress(
             check.category,
             check.name,
@@ -835,20 +773,15 @@ export async function runRemoteReadinessAssessment(
       /*
        * Deterministic readiness score.
        *
-       * AI does not participate in this
-       * calculation.
+       * AI does not participate in this calculation.
        */
 
       const readiness =
-        calculateReadinessScore(
-          checks
-        );
+        calculateReadinessScore(checks);
 
       /*
-       * Resolve research and Nemotron.
-       *
-       * Both have already been running while
-       * deterministic checks executed.
+       * Research and Nemotron have been executing
+       * concurrently with deterministic checks.
        */
 
       const research =
@@ -865,10 +798,7 @@ export async function runRemoteReadinessAssessment(
         | RemoteReadinessAssessment["verification"]
         | undefined;
 
-      if (
-        architectureOutcome.status ===
-        "passed"
-      ) {
+      if (architectureOutcome.status === "passed") {
         const verified =
           verifyArchitectureAnalysis(
             scan,
@@ -878,15 +808,12 @@ export async function runRemoteReadinessAssessment(
 
         architecture = {
           ...architectureOutcome.analysis,
-
-          risks:
-            verified.acceptedRisks,
+          risks: verified.acceptedRisks,
         };
 
         verification = {
           acceptedRisks:
             verified.acceptedRisks,
-
           rejectedRisks:
             verified.rejectedRisks,
         };
@@ -899,8 +826,7 @@ export async function runRemoteReadinessAssessment(
         );
       } else {
         const diagnostic =
-          architectureOutcome.error
-            instanceof Error
+          architectureOutcome.error instanceof Error
             ? architectureOutcome.error.message
             : "Unknown Nemotron analysis error.";
 
@@ -909,11 +835,8 @@ export async function runRemoteReadinessAssessment(
           diagnostic
         );
 
-        architecture =
-          undefined;
-
-        verification =
-          undefined;
+        architecture = undefined;
+        verification = undefined;
 
         await emitProgress(
           "architect",
@@ -924,7 +847,7 @@ export async function runRemoteReadinessAssessment(
       }
 
       /*
-       * Production readiness report
+       * Production readiness report.
        */
 
       await emitProgress(
@@ -934,21 +857,20 @@ export async function runRemoteReadinessAssessment(
         "Calculating readiness and generating the final report..."
       );
 
-      const report =
-        await measureStage(
-          "Readiness Report",
-          async () =>
-            createProductionReadinessReport(
-              scan,
-              checks,
-              readiness,
-              architecture
-            )
-        );
+      const report = await measureStage(
+        "Readiness Report",
+        async () =>
+          createProductionReadinessReport(
+            scan,
+            checks,
+            readiness,
+            architecture
+          )
+      );
 
       /*
-       * Never expose temporary host paths
-       * in the public response.
+       * Never expose the temporary host workspace
+       * path in the public response.
        */
 
       report.repository.path =
@@ -962,34 +884,30 @@ export async function runRemoteReadinessAssessment(
       );
 
       /*
-       * Only sanitized external research
-       * metadata reaches the browser.
+       * Public response boundary.
+       *
+       * Research metadata and normalized check
+       * evidence may reach the browser.
+       *
+       * Raw sandbox stdout/stderr remain server-side.
        */
 
       const publicResearch =
-        sanitizeResearch(
-          research
-        );
+        sanitizeResearch(research);
+
+      const publicReport =
+        sanitizeReport(report);
 
       return {
         repository: {
-          owner:
-            repository.owner,
-
-          name:
-            repository.name,
-
-          fullName:
-            repository.fullName,
-
-          url:
-            repository.url,
+          owner: repository.owner,
+          name: repository.name,
+          fullName: repository.fullName,
+          url: repository.url,
         },
 
-        research:
-          publicResearch,
-
-        report,
+        research: publicResearch,
+        report: publicReport,
         verification,
       };
     } finally {
@@ -1002,8 +920,7 @@ export async function runRemoteReadinessAssessment(
     }
   } finally {
     const totalDurationMs =
-      Date.now() -
-      assessmentStartedAt;
+      Date.now() - assessmentStartedAt;
 
     logPerformanceSummary(
       timings,

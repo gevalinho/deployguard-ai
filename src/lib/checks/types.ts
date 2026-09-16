@@ -20,6 +20,22 @@ export type SkipReason =
   | "not_configured"
   | "unsupported";
 
+ export type CheckEvidenceKind =
+  | "error"
+  | "warning"
+  | "test_failure"
+  | "security_finding"
+  | "diagnostic";
+
+export interface CheckEvidence {
+  kind: CheckEvidenceKind;
+  message: string;
+  file?: string;
+  line?: number;
+  column?: number;
+  code?: string;
+} 
+
 export interface CheckResult {
   id: string;
   category: CheckCategory;
@@ -35,4 +51,6 @@ export interface CheckResult {
 
   stdout?: string;
   stderr?: string;
+
+  evidence?: CheckEvidence[];
 }
