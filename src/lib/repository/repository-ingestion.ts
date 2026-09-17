@@ -14,11 +14,33 @@ import { join, resolve } from "node:path";
 import { runCommand } from "@/lib/execution/command-runner";
 import type { GitHubRepository } from "@/lib/repository/github-repository";
 
+// export interface IngestedRepository {
+//   repository: GitHubRepository;
+//   repositoryPath: string;
+//   cleanup: () => void;
+// }
+
+
+export type RepositoryIngestionSource =
+  | "fresh-remote"
+  | "verified-cache"
+  | "fresh-ttl-cache"
+  | "stale-fallback-cache";
+
+export interface RepositoryIngestionProvenance {
+  source: RepositoryIngestionSource;
+  commitSha?: string;
+  cachedAt?: string;
+  remoteVerified: boolean;
+}
+
 export interface IngestedRepository {
   repository: GitHubRepository;
   repositoryPath: string;
+  provenance: RepositoryIngestionProvenance;
   cleanup: () => void;
 }
+
 
 export type RepositoryIngestionProgress = (
   message: string
@@ -28,6 +50,11 @@ interface RepositoryCacheMetadata {
   cachedAt: string;
   repository: string;
   commitSha?: string;
+}
+
+interface CacheCopyResult {
+  hit: boolean;
+  provenance?: RepositoryIngestionProvenance;
 }
 
 const CLONE_ATTEMPTS = 1;
@@ -371,18 +398,16 @@ async function saveRepositoryToCache(
 async function copyCachedRepository(
   repository: GitHubRepository,
   repositoryPath: string
-): Promise<boolean> {
+): Promise<CacheCopyResult> {
   const cachedPath =
     getCachedRepositoryPath(
       repository
     );
 
-  if (
-    !existsSync(
-      cachedPath
-    )
-  ) {
-    return false;
+  if (!existsSync(cachedPath)) {
+    return {
+      hit: false,
+    };
   }
 
   const metadata =
@@ -395,13 +420,25 @@ async function copyCachedRepository(
     metadata.repository !==
       repository.fullName
   ) {
-    return false;
+    return {
+      hit: false,
+    };
   }
 
   const remoteCommitSha =
     await getRemoteHeadSha(
       repository
     );
+
+    const remoteHeadAvailable =
+  remoteCommitSha !== null;
+
+const cachedCommitAvailable =
+  Boolean(metadata.commitSha);
+
+  let provenance:
+  RepositoryIngestionProvenance | null =
+    null;
 
   if (
     remoteCommitSha &&
@@ -419,36 +456,79 @@ async function copyCachedRepository(
         repository
       );
 
-      return false;
+      return {
+        hit: false,
+      };
     }
 
     console.log(
       `[Repository Ingestion] Cache commit verified for ${repository.fullName} (${remoteCommitSha.slice(0, 12)}).`
     );
+
+    provenance = {
+      source:
+        "verified-cache",
+      commitSha:
+        remoteCommitSha,
+      cachedAt:
+        metadata.cachedAt,
+      remoteVerified: true,
+    };
   } else if (
-  !isCacheWithinTtl(
-    metadata
-  )
-) {
-  if (
-    !isCacheWithinStaleFallback(
+    isCacheWithinTtl(
       metadata
     )
   ) {
     console.log(
+  remoteHeadAvailable &&
+    !cachedCommitAvailable
+    ? `[Repository Ingestion] Remote HEAD available, but cached commit is unavailable; using fresh TTL cache for ${repository.fullName}.`
+    : `[Repository Ingestion] Remote HEAD unavailable; using fresh TTL cache for ${repository.fullName}.`
+);
+
+    provenance = {
+      source:
+        "fresh-ttl-cache",
+      ...(metadata.commitSha
+        ? {
+            commitSha:
+              metadata.commitSha,
+          }
+        : {}),
+      cachedAt:
+        metadata.cachedAt,
+      remoteVerified: false,
+    };
+  } else if (
+    isCacheWithinStaleFallback(
+      metadata
+    )
+  ) {
+    console.warn(
+      `[Repository Ingestion] Remote verification unavailable; using stale fallback cache for ${repository.fullName}.`
+    );
+
+    provenance = {
+      source:
+        "stale-fallback-cache",
+      ...(metadata.commitSha
+        ? {
+            commitSha:
+              metadata.commitSha,
+          }
+        : {}),
+      cachedAt:
+        metadata.cachedAt,
+      remoteVerified: false,
+    };
+  } else {
+    console.log(
       `[Repository Ingestion] Cache could not be remotely verified and stale fallback has expired for ${repository.fullName}.`
     );
 
-    return false;
-  }
-
-  console.warn(
-    `[Repository Ingestion] Remote verification unavailable; using stale fallback cache for ${repository.fullName}.`
-  );
-} else {
-    console.log(
-      `[Repository Ingestion] Remote verification unavailable; using fresh TTL cache for ${repository.fullName}.`
-    );
+    return {
+      hit: false,
+    };
   }
 
   console.log(
@@ -473,7 +553,10 @@ async function copyCachedRepository(
     )}s.`
   );
 
-  return true;
+  return {
+    hit: true,
+    provenance,
+  };
 }
 
 function createArchiveUrl(
@@ -884,23 +967,50 @@ export async function ingestGitHubRepository(
     Date.now();
 
   try {
-    const cacheHit =
+    const cacheResult =
       await copyCachedRepository(
         repository,
         repositoryPath
       );
 
-    if (
-      cacheHit
-    ) {
-      await onProgress?.(
-        "Repository loaded from verified cache."
-      );
-    }
+    let provenance:
+      RepositoryIngestionProvenance | null =
+        null;
 
     if (
-      !cacheHit
+      cacheResult.hit &&
+      cacheResult.provenance
     ) {
+      provenance =
+        cacheResult.provenance;
+
+      switch (
+        provenance.source
+      ) {
+        case "verified-cache":
+          await onProgress?.(
+            "Repository loaded from commit-verified cache."
+          );
+          break;
+
+        case "fresh-ttl-cache":
+          await onProgress?.(
+            "Remote commit verification unavailable. Repository loaded from recent cache."
+          );
+          break;
+
+        case "stale-fallback-cache":
+          await onProgress?.(
+            "Remote commit verification unavailable. Repository loaded from stale fallback cache."
+          );
+          break;
+
+        default:
+          break;
+      }
+    }
+
+    if (!cacheResult.hit) {
       console.log(
         `[Repository Ingestion] Cache miss for ${repository.fullName}.`
       );
@@ -917,9 +1027,7 @@ export async function ingestGitHubRepository(
           onProgress
         );
 
-      if (
-        !archiveSucceeded
-      ) {
+      if (!archiveSucceeded) {
         await cloneRepository(
           repository,
           temporaryRoot,
@@ -938,14 +1046,26 @@ export async function ingestGitHubRepository(
         );
       }
 
+      /*
+       * The repository contents were obtained directly
+       * from GitHub during this ingestion.
+       *
+       * This is different from commit verification:
+       * fresh-remote describes the source of the
+       * repository contents.
+       */
+      provenance = {
+        source:
+          "fresh-remote",
+        remoteVerified: true,
+      };
+
       try {
         await saveRepositoryToCache(
           repository,
           repositoryPath
         );
-      } catch (
-        cacheError
-      ) {
+      } catch (cacheError) {
         console.warn(
           "[Repository Ingestion] Repository was ingested successfully, but caching failed.",
           cacheError
@@ -968,13 +1088,21 @@ export async function ingestGitHubRepository(
         repositoryPath
       );
 
-    if (
-      !stats.isDirectory()
-    ) {
+    if (!stats.isDirectory()) {
       throw new Error(
         "Repository ingestion path is not a directory."
       );
     }
+
+    if (!provenance) {
+      throw new Error(
+        "Repository ingestion completed without provenance metadata."
+      );
+    }
+
+    console.log(
+      `[Repository Ingestion] Source: ${provenance.source}.`
+    );
 
     console.log(
       `[Repository Ingestion] Total ingestion time: ${formatDuration(
@@ -988,11 +1116,10 @@ export async function ingestGitHubRepository(
     return {
       repository,
       repositoryPath,
+      provenance,
 
       cleanup() {
-        if (
-          cleanedUp
-        ) {
+        if (cleanedUp) {
           return;
         }
 
