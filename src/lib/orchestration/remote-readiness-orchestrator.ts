@@ -30,8 +30,9 @@ import type {
 import { parseGitHubRepositoryUrl } from "@/lib/repository/github-repository";
 import { ingestGitHubRepository } from "@/lib/repository/repository-ingestion";
 
+import { sanitizeReportForPublic } from "@/lib/reporting/public-report";
 import { createProductionReadinessReport } from "@/lib/reporting/readiness-report";
-import type { ProductionReadinessReport } from "@/lib/reporting/types";
+import type { PublicProductionReadinessReport } from "@/lib/reporting/types";
 
 import { scanRepository } from "@/lib/scanner/repository-scanner";
 import { calculateReadinessScore } from "@/lib/scoring/readiness-score";
@@ -58,7 +59,7 @@ export interface RemoteReadinessAssessment {
     }[];
   };
 
-  report: ProductionReadinessReport;
+  report: PublicProductionReadinessReport;
 
   verification?: {
     acceptedRisks: ArchitectureAnalysis["risks"];
@@ -190,62 +191,6 @@ function sanitizeResearch(
   };
 }
 
-/*
- * Raw stdout/stderr stay server-side.
- *
- * The browser receives normalized evidence and
- * explicitly allowlisted check metadata only.
- */
-function sanitizeCheck(check: CheckResult): CheckResult {
-  return {
-    id: check.id,
-    category: check.category,
-    name: check.name,
-    status: check.status,
-
-    ...(check.skipReason
-      ? {
-          skipReason: check.skipReason,
-        }
-      : {}),
-
-    ...(check.command
-      ? {
-          command: check.command,
-        }
-      : {}),
-
-    ...(check.exitCode !== undefined
-      ? {
-          exitCode: check.exitCode,
-        }
-      : {}),
-
-    ...(check.durationMs !== undefined
-      ? {
-          durationMs: check.durationMs,
-        }
-      : {}),
-
-    summary: check.summary,
-
-    ...(check.evidence && check.evidence.length > 0
-      ? {
-          evidence: check.evidence,
-        }
-      : {}),
-  };
-}
-
-function sanitizeReport(
-  report: ProductionReadinessReport
-): ProductionReadinessReport {
-  return {
-    ...report,
-    checks: report.checks.map(sanitizeCheck),
-  };
-}
-
 export async function runRemoteReadinessAssessment(
   repositoryUrl: string,
   onProgress?: AssessmentProgressCallback
@@ -277,7 +222,8 @@ export async function runRemoteReadinessAssessment(
     try {
       return await operation();
     } finally {
-      const durationMs = Date.now() - startedAt;
+      const durationMs =
+        Date.now() - startedAt;
 
       timings.push({
         stage,
@@ -310,13 +256,15 @@ export async function runRemoteReadinessAssessment(
     const ingested = await measureStage(
       "Repository Ingestion",
       () =>
-        ingestGitHubRepository(repository, (message) =>
-          emitProgress(
-            "repository",
-            "Repository",
-            "running",
-            message
-          )
+        ingestGitHubRepository(
+          repository,
+          (message) =>
+            emitProgress(
+              "repository",
+              "Repository",
+              "running",
+              message
+            )
         )
     );
 
@@ -342,7 +290,9 @@ export async function runRemoteReadinessAssessment(
       const scan = await measureStage(
         "Repository Scan",
         async () =>
-          scanRepository(ingested.repositoryPath)
+          scanRepository(
+            ingested.repositoryPath
+          )
       );
 
       await emitProgress(
@@ -378,21 +328,28 @@ export async function runRemoteReadinessAssessment(
        */
 
       const researchPromise =
-        (async (): Promise<ResearchAgentResult | undefined> => {
+        (async (): Promise<
+          ResearchAgentResult | undefined
+        > => {
           try {
-            const research = await measureStage(
-              "External Research",
-              () => runResearchAgent(scan)
-            );
+            const research =
+              await measureStage(
+                "External Research",
+                () =>
+                  runResearchAgent(scan)
+              );
 
             const evidenceCount =
               research.results.reduce(
                 (total, result) =>
-                  total + result.evidence.length,
+                  total +
+                  result.evidence.length,
                 0
               );
 
-            if (research.queries.length === 0) {
+            if (
+              research.queries.length === 0
+            ) {
               await emitProgress(
                 "research",
                 "External Research",
@@ -450,7 +407,8 @@ export async function runRemoteReadinessAssessment(
               await emitProgress(
                 "preparation",
                 "Sandbox Preparation",
-                preparation.status === "passed"
+                preparation.status ===
+                  "passed"
                   ? "passed"
                   : "error",
                 preparation.summary
@@ -508,14 +466,15 @@ export async function runRemoteReadinessAssessment(
             );
 
             try {
-              const analysis = await measureStage(
-                "Nemotron Analysis",
-                () =>
-                  runArchitectAgent(
-                    scan,
-                    research
-                  )
-              );
+              const analysis =
+                await measureStage(
+                  "Nemotron Analysis",
+                  () =>
+                    runArchitectAgent(
+                      scan,
+                      research
+                    )
+                );
 
               return {
                 status: "passed",
@@ -536,17 +495,21 @@ export async function runRemoteReadinessAssessment(
        * Static deterministic checks.
        */
 
-      const environment = await measureStage(
-        "Environment Check",
-        async () => runEnvironmentAgent(scan)
-      );
+      const environment =
+        await measureStage(
+          "Environment Check",
+          async () =>
+            runEnvironmentAgent(scan)
+        );
 
       checks.push(environment);
 
-      const deployment = await measureStage(
-        "Deployment Check",
-        async () => runDeploymentAgent(scan)
-      );
+      const deployment =
+        await measureStage(
+          "Deployment Check",
+          async () =>
+            runDeploymentAgent(scan)
+        );
 
       checks.push(deployment);
 
@@ -557,10 +520,15 @@ export async function runRemoteReadinessAssessment(
       const preparationOutcome =
         await preparationPromise;
 
-      if (preparationOutcome.status === "error") {
+      if (
+        preparationOutcome.status ===
+        "error"
+      ) {
         const message =
-          preparationOutcome.error instanceof Error
-            ? preparationOutcome.error.message
+          preparationOutcome.error instanceof
+          Error
+            ? preparationOutcome.error
+                .message
             : "Sandbox preparation could not be completed.";
 
         throw new Error(
@@ -578,7 +546,9 @@ export async function runRemoteReadinessAssessment(
        * the disposable repository workspace.
        */
 
-      if (preparation.status === "passed") {
+      if (
+        preparation.status === "passed"
+      ) {
         /*
          * TypeScript
          */
@@ -590,20 +560,23 @@ export async function runRemoteReadinessAssessment(
           "Running TypeScript validation..."
         );
 
-        const typecheck = await measureStage(
-          "TypeScript",
-          () =>
-            runSandboxTypecheckAgent(
-              ingested.repositoryPath
-            )
-        );
+        const typecheck =
+          await measureStage(
+            "TypeScript",
+            () =>
+              runSandboxTypecheckAgent(
+                ingested.repositoryPath
+              )
+          );
 
         checks.push(typecheck);
 
         await emitProgress(
           "types",
           "TypeScript",
-          toProgressStatus(typecheck.status),
+          toProgressStatus(
+            typecheck.status
+          ),
           typecheck.summary
         );
 
@@ -618,13 +591,14 @@ export async function runRemoteReadinessAssessment(
           "Running lint validation..."
         );
 
-        const lint = await measureStage(
-          "Lint",
-          () =>
-            runSandboxLintAgent(
-              ingested.repositoryPath
-            )
-        );
+        const lint =
+          await measureStage(
+            "Lint",
+            () =>
+              runSandboxLintAgent(
+                ingested.repositoryPath
+              )
+          );
 
         checks.push(lint);
 
@@ -646,13 +620,14 @@ export async function runRemoteReadinessAssessment(
           "Running automated tests..."
         );
 
-        const tests = await measureStage(
-          "Tests",
-          () =>
-            runSandboxTestAgent(
-              ingested.repositoryPath
-            )
-        );
+        const tests =
+          await measureStage(
+            "Tests",
+            () =>
+              runSandboxTestAgent(
+                ingested.repositoryPath
+              )
+          );
 
         checks.push(tests);
 
@@ -674,13 +649,14 @@ export async function runRemoteReadinessAssessment(
           "Running production build..."
         );
 
-        const build = await measureStage(
-          "Production Build",
-          () =>
-            runSandboxBuildAgent(
-              ingested.repositoryPath
-            )
-        );
+        const build =
+          await measureStage(
+            "Production Build",
+            () =>
+              runSandboxBuildAgent(
+                ingested.repositoryPath
+              )
+          );
 
         checks.push(build);
 
@@ -702,20 +678,23 @@ export async function runRemoteReadinessAssessment(
           "Running dependency security audit..."
         );
 
-        const security = await measureStage(
-          "Dependency Security",
-          () =>
-            runSandboxSecurityAgent(
-              ingested.repositoryPath
-            )
-        );
+        const security =
+          await measureStage(
+            "Dependency Security",
+            () =>
+              runSandboxSecurityAgent(
+                ingested.repositoryPath
+              )
+          );
 
         checks.push(security);
 
         await emitProgress(
           "security",
           "Dependency Security",
-          toProgressStatus(security.status),
+          toProgressStatus(
+            security.status
+          ),
           security.summary
         );
       } else {
@@ -730,42 +709,48 @@ export async function runRemoteReadinessAssessment(
         const preparationSummary =
           preparation.summary;
 
-        const unavailableChecks: CheckResult[] = [
-          createUnavailableCheck(
-            "types",
-            "types",
-            "TypeScript",
-            preparationSummary
-          ),
-          createUnavailableCheck(
-            "lint",
-            "lint",
-            "Lint",
-            preparationSummary
-          ),
-          createUnavailableCheck(
-            "test",
-            "test",
-            "Tests",
-            preparationSummary
-          ),
-          createUnavailableCheck(
-            "build",
-            "build",
-            "Production Build",
-            preparationSummary
-          ),
-          createUnavailableCheck(
-            "security",
-            "security",
-            "Dependency Security",
-            preparationSummary
-          ),
-        ];
+        const unavailableChecks: CheckResult[] =
+          [
+            createUnavailableCheck(
+              "types",
+              "types",
+              "TypeScript",
+              preparationSummary
+            ),
+            createUnavailableCheck(
+              "lint",
+              "lint",
+              "Lint",
+              preparationSummary
+            ),
+            createUnavailableCheck(
+              "test",
+              "test",
+              "Tests",
+              preparationSummary
+            ),
+            createUnavailableCheck(
+              "build",
+              "build",
+              "Production Build",
+              preparationSummary
+            ),
+            createUnavailableCheck(
+              "security",
+              "security",
+              "Dependency Security",
+              preparationSummary
+            ),
+          ];
 
-        checks.push(...unavailableChecks);
+        checks.push(
+          ...unavailableChecks
+        );
 
-        for (const check of unavailableChecks) {
+        for (
+          const check of
+          unavailableChecks
+        ) {
           await emitProgress(
             check.category,
             check.name,
@@ -801,71 +786,49 @@ export async function runRemoteReadinessAssessment(
             check.status === "error"
         );
 
-      // const remediationPromise: Promise<RemediationOutcome> =
-      //   actionableChecks.length === 0
-      //     ? Promise.resolve({
-      //         status: "skipped",
-      //       })
-      //     : (async (): Promise<RemediationOutcome> => {
-      //         try {
-      //           const analysis = await measureStage(
-      //             "Nemotron Remediation",
-      //             () =>
-      //               runRemediationAgent(checks)
-      //           );
-
-      //           return {
-      //             status: "passed",
-      //             analysis,
-      //           };
-      //         } catch (error) {
-      //           return {
-      //             status: "error",
-      //             error,
-      //           };
-      //         }
-      //       })();
-
-
       const remediationPromise: Promise<RemediationOutcome> =
-  actionableChecks.length === 0
-    ? (async (): Promise<RemediationOutcome> => {
-        await emitProgress(
-          "remediation",
-          "Nemotron Remediation",
-          "skipped",
-          "No failed, blocked, or errored checks require AI remediation."
-        );
+        actionableChecks.length === 0
+          ? (async (): Promise<RemediationOutcome> => {
+              await emitProgress(
+                "remediation",
+                "Nemotron Remediation",
+                "skipped",
+                "No failed, blocked, or errored checks require AI remediation."
+              );
 
-        return {
-          status: "skipped",
-        };
-      })()
-    : (async (): Promise<RemediationOutcome> => {
-        await emitProgress(
-          "remediation",
-          "Nemotron Remediation",
-          "running",
-          "Generating evidence-grounded remediation guidance..."
-        );
+              return {
+                status: "skipped",
+              };
+            })()
+          : (async (): Promise<RemediationOutcome> => {
+              await emitProgress(
+                "remediation",
+                "Nemotron Remediation",
+                "running",
+                "Generating evidence-grounded remediation guidance..."
+              );
 
-        try {
-          const analysis = await measureStage(
-            "Nemotron Remediation",
-            () => runRemediationAgent(checks)
-          );
+              try {
+                const analysis =
+                  await measureStage(
+                    "Nemotron Remediation",
+                    () =>
+                      runRemediationAgent(
+                        checks
+                      )
+                  );
 
-          return {
-            status: "passed",
-            analysis,
-          };
-        } catch (error) {
-          return {
-            status: "error",
-            error,
-          };
-        }
-      })();
+                return {
+                  status: "passed",
+                  analysis,
+                };
+              } catch (error) {
+                return {
+                  status: "error",
+                  error,
+                };
+              }
+            })();
 
       /*
        * Resolve architecture analysis.
@@ -888,7 +851,10 @@ export async function runRemoteReadinessAssessment(
         | RemoteReadinessAssessment["verification"]
         | undefined;
 
-      if (architectureOutcome.status === "passed") {
+      if (
+        architectureOutcome.status ===
+        "passed"
+      ) {
         const verified =
           verifyArchitectureAnalysis(
             scan,
@@ -898,7 +864,8 @@ export async function runRemoteReadinessAssessment(
 
         architecture = {
           ...architectureOutcome.analysis,
-          risks: verified.acceptedRisks,
+          risks:
+            verified.acceptedRisks,
         };
 
         verification = {
@@ -916,8 +883,10 @@ export async function runRemoteReadinessAssessment(
         );
       } else {
         const diagnostic =
-          architectureOutcome.error instanceof Error
-            ? architectureOutcome.error.message
+          architectureOutcome.error instanceof
+          Error
+            ? architectureOutcome.error
+                .message
             : "Unknown Nemotron analysis error.";
 
         console.error(
@@ -947,16 +916,17 @@ export async function runRemoteReadinessAssessment(
         "Calculating readiness and generating the final report..."
       );
 
-      const report = await measureStage(
-        "Readiness Report",
-        async () =>
-          createProductionReadinessReport(
-            scan,
-            checks,
-            readiness,
-            architecture
-          )
-      );
+      const report =
+        await measureStage(
+          "Readiness Report",
+          async () =>
+            createProductionReadinessReport(
+              scan,
+              checks,
+              readiness,
+              architecture
+            )
+        );
 
       /*
        * Resolve and independently verify Nemotron
@@ -969,96 +939,67 @@ export async function runRemoteReadinessAssessment(
       const remediationOutcome =
         await remediationPromise;
 
-      // if (remediationOutcome.status === "passed") {
-      //   const verifiedRemediation =
-      //     verifyRemediationAnalysis(
-      //       checks,
-      //       remediationOutcome.analysis
-      //     );
+      if (
+        remediationOutcome.status ===
+        "passed"
+      ) {
+        const verifiedRemediation =
+          verifyRemediationAnalysis(
+            checks,
+            remediationOutcome.analysis
+          );
 
-      //   if (
-      //     verifiedRemediation.acceptedActions.length > 0
-      //   ) {
-      //     report.aiRemediation = {
-      //       summary:
-      //         verifiedRemediation.summary,
-      //       actions:
-      //         verifiedRemediation.acceptedActions,
-      //     };
-      //   }
+        if (
+          verifiedRemediation
+            .acceptedActions.length > 0
+        ) {
+          report.aiRemediation = {
+            summary:
+              verifiedRemediation.summary,
+            actions:
+              verifiedRemediation
+                .acceptedActions,
+          };
+        }
 
-      //   if (
-      //     verifiedRemediation.rejectedActions.length > 0
-      //   ) {
-      //     console.warn(
-      //       `[DeployGuard Remediation Verifier] Rejected ${verifiedRemediation.rejectedActions.length} unverified remediation action(s).`
-      //     );
-      //   }
-      // } else if (remediationOutcome.status === "error") {
-      //   const diagnostic =
-      //     remediationOutcome.error instanceof Error
-      //       ? remediationOutcome.error.message
-      //       : "Unknown remediation error.";
+        if (
+          verifiedRemediation
+            .rejectedActions.length > 0
+        ) {
+          console.warn(
+            `[DeployGuard Remediation Verifier] Rejected ${verifiedRemediation.rejectedActions.length} unverified remediation action(s).`
+          );
+        }
 
-      //   console.error(
-      //     "[DeployGuard Remediation Agent]",
-      //     diagnostic
-      //   );
-      // }
+        await emitProgress(
+          "remediation",
+          "Nemotron Remediation",
+          "passed",
+          `AI remediation completed with ${verifiedRemediation.acceptedActions.length} verified action(s).`
+        );
+      } else if (
+        remediationOutcome.status ===
+        "error"
+      ) {
+        const diagnostic =
+          remediationOutcome.error instanceof
+          Error
+            ? remediationOutcome.error
+                .message
+            : "Unknown remediation error.";
 
+        console.error(
+          "[DeployGuard Remediation Agent]",
+          diagnostic
+        );
 
-
-
-      if (remediationOutcome.status === "passed") {
-  const verifiedRemediation =
-    verifyRemediationAnalysis(
-      checks,
-      remediationOutcome.analysis
-    );
-
-  if (
-    verifiedRemediation.acceptedActions.length > 0
-  ) {
-    report.aiRemediation = {
-      summary: verifiedRemediation.summary,
-      actions: verifiedRemediation.acceptedActions,
-    };
-  }
-
-  if (
-    verifiedRemediation.rejectedActions.length > 0
-  ) {
-    console.warn(
-      `[DeployGuard Remediation Verifier] Rejected ${verifiedRemediation.rejectedActions.length} unverified remediation action(s).`
-    );
-  }
-
-  await emitProgress(
-    "remediation",
-    "Nemotron Remediation",
-    "passed",
-    `AI remediation completed with ${verifiedRemediation.acceptedActions.length} verified action(s).`
-  );
-} else if (remediationOutcome.status === "error") {
-  const diagnostic =
-    remediationOutcome.error instanceof Error
-      ? remediationOutcome.error.message
-      : "Unknown remediation error.";
-
-  console.error(
-    "[DeployGuard Remediation Agent]",
-    diagnostic
-  );
-
-  await emitProgress(
-    "remediation",
-    "Nemotron Remediation",
-    "error",
-    "AI remediation was unavailable. Deterministic remediation remains available."
-  );
-}
-
-
+        await emitProgress(
+          "remediation",
+          "Nemotron Remediation",
+          "error",
+          "AI remediation was unavailable. Deterministic remediation remains available."
+        );
+      }
 
       /*
        * Never expose the temporary host workspace
@@ -1085,13 +1026,16 @@ export async function runRemoteReadinessAssessment(
         sanitizeResearch(research);
 
       const publicReport =
-        sanitizeReport(report);
+        sanitizeReportForPublic(
+          report
+        );
 
       return {
         repository: {
           owner: repository.owner,
           name: repository.name,
-          fullName: repository.fullName,
+          fullName:
+            repository.fullName,
           url: repository.url,
         },
 
@@ -1109,7 +1053,8 @@ export async function runRemoteReadinessAssessment(
     }
   } finally {
     const totalDurationMs =
-      Date.now() - assessmentStartedAt;
+      Date.now() -
+      assessmentStartedAt;
 
     logPerformanceSummary(
       timings,
