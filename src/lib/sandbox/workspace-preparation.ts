@@ -460,34 +460,57 @@ const result =
     `[Dependency Cache] Package installation completed in ${((Date.now() - installStartedAt) / 1000).toFixed(2)}s with status: ${result.status}.`
   );
 
-  if (
-    result.status === "passed" &&
-    dependencyCacheKey
-  ) {
-    try {
-      const saveStartedAt =
-        Date.now();
 
-      const saved =
-        saveDependencyCache(
-          dependencyCacheKey,
-          repositoryPath
-        );
+  if (result.status !== "passed") {
+  console.error(
+    "[Sandbox Preparation] Installation failure diagnostics:"
+  );
 
-      console.log(
-        saved
-          ? `[Dependency Cache] Saved in ${((Date.now() - saveStartedAt) / 1000).toFixed(2)}s.`
-          : "[Dependency Cache] No node_modules directory was available to cache."
-      );
-    } catch (error) {
-      console.warn(
-        "[Dependency Cache] Cache save failed. Assessment will continue normally.",
-        error instanceof Error
-          ? error.message
-          : "Unknown cache error"
-      );
-    }
+  console.error(
+    `Exit code: ${result.exitCode}`
+  );
+
+  if (result.stdout.trim()) {
+    console.error(
+      `STDOUT:\n${result.stdout}`
+    );
   }
+
+  if (result.stderr.trim()) {
+    console.error(
+      `STDERR:\n${result.stderr}`
+    );
+  }
+}
+
+  // if (
+  //   result.status === "passed" &&
+  //   dependencyCacheKey
+  // ) {
+  //   try {
+  //     const saveStartedAt =
+  //       Date.now();
+
+  //     const saved =
+  //       saveDependencyCache(
+  //         dependencyCacheKey,
+  //         repositoryPath
+  //       );
+
+  //     console.log(
+  //       saved
+  //         ? `[Dependency Cache] Saved in ${((Date.now() - saveStartedAt) / 1000).toFixed(2)}s.`
+  //         : "[Dependency Cache] No node_modules directory was available to cache."
+  //     );
+  //   } catch (error) {
+  //     console.warn(
+  //       "[Dependency Cache] Cache save failed. Assessment will continue normally.",
+  //       error instanceof Error
+  //         ? error.message
+  //         : "Unknown cache error"
+  //     );
+  //   }
+  // }
 
   const networkFailure =
     detectNetworkFailure(

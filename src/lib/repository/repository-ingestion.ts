@@ -8,7 +8,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+// import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { runCommand } from "@/lib/execution/command-runner";
@@ -80,6 +80,12 @@ const CACHE_ROOT = resolve(
   ".deployguard",
   "cache",
   "repositories"
+);
+
+const WORKSPACE_ROOT = resolve(
+  process.cwd(),
+  ".deployguard",
+  "workspaces"
 );
 
 function delay(
@@ -949,13 +955,20 @@ export async function ingestGitHubRepository(
     }
   );
 
-  const temporaryRoot =
-    mkdtempSync(
-      join(
-        tmpdir(),
-        "deployguard-repo-"
-      )
-    );
+  mkdirSync(
+  WORKSPACE_ROOT,
+  {
+    recursive: true,
+  }
+);
+
+const temporaryRoot =
+  mkdtempSync(
+    join(
+      WORKSPACE_ROOT,
+      "deployguard-repo-"
+    )
+  );
 
   const repositoryPath =
     join(
