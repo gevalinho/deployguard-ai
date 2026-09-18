@@ -483,34 +483,34 @@ const result =
   }
 }
 
-  // if (
-  //   result.status === "passed" &&
-  //   dependencyCacheKey
-  // ) {
-  //   try {
-  //     const saveStartedAt =
-  //       Date.now();
+  if (
+    result.status === "passed" &&
+    dependencyCacheKey
+  ) {
+    try {
+      const saveStartedAt =
+        Date.now();
 
-  //     const saved =
-  //       saveDependencyCache(
-  //         dependencyCacheKey,
-  //         repositoryPath
-  //       );
+      const saved =
+        saveDependencyCache(
+          dependencyCacheKey,
+          repositoryPath
+        );
 
-  //     console.log(
-  //       saved
-  //         ? `[Dependency Cache] Saved in ${((Date.now() - saveStartedAt) / 1000).toFixed(2)}s.`
-  //         : "[Dependency Cache] No node_modules directory was available to cache."
-  //     );
-  //   } catch (error) {
-  //     console.warn(
-  //       "[Dependency Cache] Cache save failed. Assessment will continue normally.",
-  //       error instanceof Error
-  //         ? error.message
-  //         : "Unknown cache error"
-  //     );
-  //   }
-  // }
+      console.log(
+        saved
+          ? `[Dependency Cache] Saved in ${((Date.now() - saveStartedAt) / 1000).toFixed(2)}s.`
+          : "[Dependency Cache] No node_modules directory was available to cache."
+      );
+    } catch (error) {
+      console.warn(
+        "[Dependency Cache] Cache save failed. Assessment will continue normally.",
+        error instanceof Error
+          ? error.message
+          : "Unknown cache error"
+      );
+    }
+  }
 
   const networkFailure =
     detectNetworkFailure(
