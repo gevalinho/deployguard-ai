@@ -1,4 +1,5 @@
 import type {
+  CheckEvidence,
   CheckResult,
 } from "@/lib/checks/types";
 
@@ -29,7 +30,7 @@ type AuditSeverity =
   | "high"
   | "critical";
 
-interface AuditFinding {
+export interface AuditFinding {
   packageName: string;
   severity: AuditSeverity;
 }
@@ -132,7 +133,7 @@ function isAuditSeverity(
   );
 }
 
-function extractNpmStyleFindings(
+export function extractNpmStyleFindings(
   stdout: string
 ): AuditFinding[] {
   const parsed =
@@ -271,6 +272,39 @@ function getHighRiskFindings(
       finding.severity ===
         "critical"
   );
+}
+
+export function createSecurityEvidence(
+  findings: AuditFinding[]
+): CheckEvidence[] {
+  const highRisk =
+    getHighRiskFindings(findings);
+
+  const seen =
+    new Set<string>();
+
+  const evidence:
+    CheckEvidence[] = [];
+
+  for (const finding of highRisk) {
+    const identity =
+      `${finding.packageName}:${finding.severity}`;
+
+    if (seen.has(identity)) {
+      continue;
+    }
+
+    seen.add(identity);
+
+    evidence.push({
+      kind: "security_finding",
+      message:
+        `${finding.packageName} has a ${finding.severity}-severity dependency vulnerability.`,
+      code: finding.severity,
+    });
+  }
+
+  return evidence;
 }
 
 function createFailureSummary(
@@ -511,6 +545,11 @@ export async function runSandboxSecurityAgent(
       result.stdout
     );
 
+  const securityEvidence =
+  createSecurityEvidence(
+    findings
+  );
+
   if (highSeverityFinding) {
     return {
       id: "security",
@@ -571,5 +610,11 @@ export async function runSandboxSecurityAgent(
 
     stderr:
       result.stderr,
+      ...(securityEvidence.length > 0
+  ? {
+      evidence:
+        securityEvidence,
+    }
+  : {}),
   };
 }
