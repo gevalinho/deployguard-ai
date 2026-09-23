@@ -1,6 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type {
+  PublicCheckResult,
+  PublicProductionReadinessReport,
+} from "@/lib/reporting/types";
 
 /* -------------------------------------------------------------------------- */
 /*                                    Types                                   */
@@ -30,79 +34,9 @@ type RemoteScanResult = {
   };
 };
 
-type CheckStatus =
-  | "passed"
-  | "failed"
-  | "blocked"
-  | "skipped"
-  | "error";
-
-type CheckEvidence = {
-  kind:
-    | "error"
-    | "warning"
-    | "test_failure"
-    | "security_finding"
-    | "diagnostic";
-  message: string;
-  file?: string;
-  line?: number;
-  column?: number;
-  code?: string;
-};
-
-type CheckResult = {
-  id: string;
-  category: string;
-  name: string;
-  status: CheckStatus;
-  skipReason?: string;
-  summary: string;
-  evidence?: CheckEvidence[];
-};
-
-type ReadinessReport = {
-  generatedAt: string;
-
-  architecture?: {
-    summary: string;
-    architectureType: string;
-    recommendedChecks: string[];
-  };
-
-  checks: CheckResult[];
-
-  readiness: {
-    score: number;
-    coverage: number;
-    passed: number;
-    failed: number;
-    blocked: number;
-    skipped: number;
-    errors: number;
-    readinessGaps: string[];
-    notApplicableCategories: string[];
-  };
-
-  remediation: {
-    category: string;
-    priority: "low" | "medium" | "high";
-    title: string;
-    recommendation: string;
-  }[];
-
-    aiRemediation?: {
-    summary: string;
-    actions: {
-      title: string;
-      explanation: string;
-      recommendation: string;
-      priority: "low" | "medium" | "high" | "critical";
-      checkId: string;
-      evidenceIndexes: number[];
-    }[];
-  };
-};
+type CheckResult = PublicCheckResult;
+type CheckEvidence = NonNullable<PublicCheckResult["evidence"]>[number];
+type ReadinessReport = PublicProductionReadinessReport;
 
 type AssessmentProgressStatus =
   | "pending"
@@ -147,6 +81,70 @@ type AssessmentResult = {
   report: ReadinessReport;
 };
 
+type RemediationProofCheck = {
+  id: string;
+  category: string;
+  name: string;
+  status: string;
+  summary: string;
+};
+
+type RemediationResult = {
+  repository: {
+    owner: string;
+    name: string;
+    fullName: string;
+    url: string;
+  };
+
+  remediation: {
+    proposal: {
+      id: string;
+      title: string;
+      description: string;
+
+      target: {
+        checkId: string;
+        category: string;
+        evidenceIndexes: number[];
+      };
+
+      strategy: "dependency_security";
+      risk: "safe" | "breaking_change_allowed";
+      packageName?: string;
+    };
+
+    execution: {
+      status:
+        | "proposed"
+        | "applied"
+        | "failed"
+        | "unsupported";
+      summary: string;
+      durationMs?: number;
+    };
+
+    proof?: {
+      status:
+        | "proven"
+        | "not_proven"
+        | "inconclusive";
+
+      summary: string;
+
+      comparisons: {
+        checkId: string;
+        before: RemediationProofCheck;
+        after: RemediationProofCheck;
+        improved: boolean;
+      }[];
+
+      regressionChecks:
+        RemediationProofCheck[];
+    };
+  };
+};
+
 /* -------------------------------------------------------------------------- */
 /*                                  Constants                                 */
 /* -------------------------------------------------------------------------- */
@@ -182,7 +180,7 @@ const PROCESS_STEPS = [
     step: "03",
     title: "AI Reasoning",
     description:
-      "Nemotron reasons only over collected evidence.",
+      "NVIDIA Nemotron reasons over verified evidence.",
   },
   {
     step: "04",
@@ -278,11 +276,11 @@ function getCheckStatusClass(check: CheckResult) {
     ].join(" ");
   }
 
-  if (
-    check.status === "blocked" ||
-    (check.status === "skipped" &&
-      check.skipReason === "not_configured")
-  ) {
+  if (check.status === "skipped" && check.skipReason === "not_configured") {
+    return "border-sky-500/30 bg-sky-500/10 text-sky-300";
+  }
+
+  if (check.status === "blocked") {
     return [
       "border-amber-500/30",
       "bg-amber-500/10",
@@ -436,6 +434,113 @@ function StatusBadge({ check }: { check: CheckResult }) {
     >
       {getStatusLabel(check)}
     </span>
+  );
+}
+
+function getCheckStateDescription(check: CheckResult) {
+  if (check.status === "skipped") {
+    switch (check.skipReason) {
+      case "not_configured": return "Required configuration is missing; check did not run.";
+      case "not_applicable": return "Outside this repository’s applicable assessment scope.";
+      case "unsupported": return "This check is not supported for the detected setup.";
+      default: return "Check was skipped; no pass or failure was established.";
+    }
+  }
+  switch (check.status) {
+    case "passed": return "Check ran and met its verification criteria.";
+    case "failed": return "Check ran and found a readiness issue.";
+    case "blocked": return "A prerequisite prevented verification.";
+    case "error": return "Verification encountered an execution error.";
+  }
+}
+
+function FindingEvidence({ evidence }: { evidence: CheckEvidence[] }) {
+  const prioritized = evidence.filter((item) => item.kind !== "warning");
+  const findings = prioritized.length > 0 ? prioritized : evidence;
+
+  return (
+    <ul className="mt-3 space-y-3">
+      {findings.slice(0, 3).map((item, index) => {
+        const location = formatEvidenceLocation(item);
+        const isSeverity = item.kind === "security_finding" &&
+          /^(critical|high|moderate|medium|low|info)$/i.test(item.code ?? "");
+        return (
+          <li key={index} className="min-w-0 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
+            <p className="text-sm leading-6 text-zinc-300">{item.message}</p>
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-400">
+              <span className="capitalize">{formatEvidenceKind(item.kind)}</span>
+              {item.code && <span>{isSeverity ? "Severity" : "Code"}: {item.code}</span>}
+              {location && <span className="font-mono">File: {location}</span>}
+            </div>
+          </li>
+        );
+      })}
+      {findings.length > 3 && (
+        <li className="text-xs text-zinc-400">
+          {findings.length - 3} more findings in Verification Checks.
+        </li>
+      )}
+    </ul>
+  );
+}
+
+function AssessmentSummary({ report, completion }: {
+  report: ReadinessReport;
+  completion?: AssessmentProgressEvent;
+}) {
+  const counts = new Map<string, number>();
+  for (const check of report.checks) {
+    const label = getStatusLabel(check);
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  const actions = report.aiRemediation?.actions.length ?? 0;
+  const elapsed = completion?.status === "completed" ? completion.elapsedMs : undefined;
+
+  return (
+    <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+      <h2 className="text-sm font-medium text-zinc-200">Assessment complete</h2>
+      <ul aria-label="Assessment summary" className="mt-3 flex flex-wrap gap-2 text-xs text-zinc-300">
+        <li className="rounded-full border border-zinc-700 px-3 py-1">{report.checks.length} checks</li>
+        {Array.from(counts, ([label, count]) => (
+          <li key={label} className="rounded-full border border-zinc-700 px-3 py-1">{count} {label.toLowerCase()}</li>
+        ))}
+        <li className="rounded-full border border-violet-500/30 px-3 py-1 text-violet-300">
+          {actions} verified AI {actions === 1 ? "action" : "actions"}
+        </li>
+      </ul>
+      <p className="mt-3 text-xs leading-5 text-zinc-400">
+        {elapsed !== undefined && Number.isFinite(elapsed) && elapsed >= 0 && (
+          <span className="mr-2 inline-block">Assessment completed in {(elapsed / 1000).toFixed(1)}s ·</span>
+        )}
+        Repository evidence verified • AI claims independently checked
+      </p>
+    </div>
+  );
+}
+
+function KeyFindings({ checks }: { checks: CheckResult[] }) {
+  const failed = checks.filter((check) => check.status === "failed");
+  if (failed.length === 0) return null;
+
+  return (
+    <section aria-labelledby="key-findings-title" className="rounded-2xl border border-red-500/20 bg-zinc-900 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 id="key-findings-title" className="text-lg font-semibold">Key Findings</h2>
+        <span className="text-xs text-zinc-400">Deterministic evidence · Verified by DeployGuard</span>
+      </div>
+      <div className="mt-4 grid min-w-0 gap-4 md:grid-cols-2">
+        {failed.map((check) => (
+          <article key={check.id} className="min-w-0 [overflow-wrap:anywhere]">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="font-medium">{check.name}</h3>
+              <StatusBadge check={check} />
+            </div>
+            <p className="mt-2 text-sm leading-6 text-zinc-300">{check.summary}</p>
+            <FindingEvidence evidence={check.evidence ?? []} />
+          </article>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -656,7 +761,7 @@ function VerificationChecks({
               key={check.id}
               className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5"
             >
-              <div className="flex items-start justify-between gap-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <p className="font-medium">
                     {check.name}
@@ -669,6 +774,10 @@ function VerificationChecks({
 
                 <StatusBadge check={check} />
               </div>
+
+              <p className="mt-3 text-xs leading-5 text-zinc-400">
+                {getCheckStateDescription(check)}
+              </p>
 
               {evidence.length > 0 && (
                 <div className="mt-5 border-t border-zinc-800 pt-4">
@@ -845,6 +954,9 @@ function ArchitectureAnalysis({
         AI Architecture Analysis
       </h2>
 
+      <p className="mt-3 text-sm leading-6 text-zinc-400">
+        Nemotron reasons over verified evidence. DeployGuard executes checks and calculates the deterministic readiness score.
+      </p>
       <p className="mt-4 leading-7 text-zinc-300">
         {architecture.summary}
       </p>
@@ -862,8 +974,10 @@ function ArchitectureAnalysis({
 
 function RemediationPlan({
   items,
+  checks,
 }: {
   items: ReadinessReport["remediation"];
+  checks: CheckResult[];
 }) {
   return (
     <section>
@@ -871,6 +985,7 @@ function RemediationPlan({
         Remediation Plan
       </h2>
 
+      <p className="mb-4 text-sm text-zinc-400">Deterministic recommendations from check outcomes and repository evidence.</p>
       {items.length === 0 ? (
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6 text-zinc-400">
           No remediation items were generated.
@@ -895,6 +1010,12 @@ function RemediationPlan({
               <p className="mt-3 text-sm leading-6 text-zinc-400">
                 {item.recommendation}
               </p>
+              {checks.filter((check) => check.category === item.category && check.status === "failed" && check.evidence?.length).map((check) => (
+                <div key={check.id} className="mt-4 min-w-0 border-t border-zinc-800 pt-3 [overflow-wrap:anywhere]">
+                  <p className="text-xs font-medium text-zinc-400">Verified evidence · {check.name}</p>
+                  <FindingEvidence evidence={check.evidence ?? []} />
+                </div>
+              ))}
             </article>
           ))}
         </div>
@@ -911,9 +1032,22 @@ function RemediationPlan({
 function AiRemediationGuidance({
   remediation,
   checks,
+  onExecute,
+  executing,
 }: {
-  remediation: NonNullable<ReadinessReport["aiRemediation"]>;
+  remediation: NonNullable<
+    ReadinessReport["aiRemediation"]
+  >;
+
   checks: CheckResult[];
+
+  onExecute: (
+    action: NonNullable<
+      ReadinessReport["aiRemediation"]
+    >["actions"][number]
+  ) => Promise<void>;
+
+  executing: boolean;
 }) {
   const checksById = new Map(
     checks.map((check) => [check.id, check])
@@ -966,6 +1100,7 @@ function AiRemediationGuidance({
         {remediation.actions.map((action, actionIndex) => {
           const check = checksById.get(action.checkId);
 
+         
           const referencedEvidence =
             check?.evidence
               ? action.evidenceIndexes
@@ -982,6 +1117,17 @@ function AiRemediationGuidance({
                     } => item.evidence !== undefined
                   )
               : [];
+
+               const canExecute =
+  action.checkId === "security" &&
+  check?.category === "security" &&
+  check.status === "failed" &&
+  referencedEvidence.some(
+    ({ evidence }) =>
+      evidence.kind ===
+      "security_finding"
+  );
+
 
           return (
             <article
@@ -1092,6 +1238,32 @@ function AiRemediationGuidance({
                   without structured diagnostic evidence.
                 </p>
               )}
+            
+
+
+
+            {canExecute && (
+  <div className="mt-5 border-t border-zinc-800 pt-4">
+    <button
+      type="button"
+      disabled={executing}
+      onClick={() =>
+        void onExecute(action)
+      }
+      className="rounded-xl border border-violet-500/40 bg-violet-500/10 px-4 py-2.5 text-sm font-medium text-violet-200 transition hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {executing
+        ? "Running controlled remediation..."
+        : "Run Controlled Remediation"}
+    </button>
+
+    <p className="mt-2 text-xs leading-5 text-zinc-500">
+      Runs against a disposable DeployGuard
+      workspace. Your GitHub repository is not
+      modified.
+    </p>
+  </div>
+)}
             </article>
           );
         })}
@@ -1110,6 +1282,148 @@ function AiRemediationGuidance({
 /*                                 Dashboard                                  */
 /* -------------------------------------------------------------------------- */
 
+
+function RemediationProof({
+  result,
+}: {
+  result: RemediationResult;
+}) {
+  const remediation =
+    result.remediation;
+
+  const proof =
+    remediation.proof;
+
+  const proven =
+    proof?.status === "proven";
+
+  return (
+    <section
+      className={`rounded-2xl border p-6 ${
+        proven
+          ? "border-emerald-500/30 bg-emerald-500/5"
+          : "border-amber-500/30 bg-amber-500/5"
+      }`}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-[0.18em] text-zinc-500">
+            Controlled Remediation
+          </p>
+
+          <h2 className="mt-2 text-xl font-semibold">
+            {proven
+              ? "Remediation Proven"
+              : "Remediation Result"}
+          </h2>
+        </div>
+
+        <span
+          className={`rounded-full border px-3 py-1 text-xs font-medium uppercase ${
+            proven
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+              : "border-amber-500/30 bg-amber-500/10 text-amber-300"
+          }`}
+        >
+          {proof?.status ??
+            remediation.execution.status}
+        </span>
+      </div>
+
+      <p className="mt-4 text-sm leading-6 text-zinc-300">
+        {proof?.summary ??
+          remediation.execution.summary}
+      </p>
+
+      {proof &&
+        proof.comparisons.length > 0 && (
+          <div className="mt-6 space-y-3">
+            {proof.comparisons.map(
+              (comparison) => (
+                <div
+                  key={comparison.checkId}
+                  className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4"
+                >
+                  <p className="text-sm font-medium">
+                    {
+                      comparison.before
+                        .name
+                    }
+                  </p>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+                    <span className="rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-red-300">
+                      {
+                        comparison.before
+                          .status
+                      }
+                    </span>
+
+                    <span className="text-zinc-600">
+                      →
+                    </span>
+
+                    <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-emerald-300">
+                      {
+                        comparison.after
+                          .status
+                      }
+                    </span>
+
+                    {comparison.improved && (
+                      <span className="text-xs font-medium text-emerald-400">
+                        ✓ Improved
+                      </span>
+                    )}
+                  </div>
+
+                  <p className="mt-3 text-xs leading-5 text-zinc-500">
+                    {
+                      comparison.after
+                        .summary
+                    }
+                  </p>
+                </div>
+              )
+            )}
+          </div>
+        )}
+
+      {proof &&
+        proof.regressionChecks.length >
+          0 && (
+          <div className="mt-6">
+            <p className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-600">
+              Regression Verification
+            </p>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              {proof.regressionChecks.map(
+                (check) => (
+                  <span
+                    key={check.id}
+                    className="rounded-full border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300"
+                  >
+                    {check.name}:{" "}
+                    {check.status}
+                  </span>
+                )
+              )}
+            </div>
+          </div>
+        )}
+
+      <div className="mt-6 border-t border-zinc-800 pt-4">
+        <p className="text-xs leading-5 text-zinc-500">
+          Executed in a disposable DeployGuard
+          workspace. The source GitHub repository
+          was not modified.
+        </p>
+      </div>
+    </section>
+  );
+}
+
 export function ReadinessDashboard() {
   const [repositoryUrl, setRepositoryUrl] = useState("");
 
@@ -1123,6 +1437,15 @@ export function ReadinessDashboard() {
 
   const [assessment, setAssessment] =
     useState<AssessmentResult | null>(null);
+
+  const [remediationLoading, setRemediationLoading] =
+  useState(false);
+
+const [remediationError, setRemediationError] =
+  useState<string | null>(null);
+
+const [remediationResult, setRemediationResult] =
+  useState<RemediationResult | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1189,6 +1512,8 @@ export function ReadinessDashboard() {
     setAssessment(null);
     setProgressEvents([]);
     setShowAllResearch(false);
+    setRemediationResult(null);
+    setRemediationError(null);
 
     try {
       const response = await fetch("/api/assessment", {
@@ -1292,6 +1617,160 @@ export function ReadinessDashboard() {
       setLoading(false);
     }
   }
+
+  async function runDependencyRemediation(
+  action: NonNullable<
+    ReadinessReport["aiRemediation"]
+  >["actions"][number]
+) {
+  setRemediationLoading(true);
+  setRemediationError(null);
+  setRemediationResult(null);
+
+  try {
+    const check =
+      report?.checks.find(
+        (item) =>
+          item.id === action.checkId
+      );
+
+    if (!check) {
+      throw new Error(
+        "The remediation target check could not be found."
+      );
+    }
+
+    if (
+      action.checkId !== "security" ||
+      check.category !== "security"
+    ) {
+      throw new Error(
+        "Controlled execution currently supports dependency security remediation only."
+      );
+    }
+
+    const referencedEvidence =
+      action.evidenceIndexes
+        .map(
+          (index) =>
+            check.evidence?.[index]
+        )
+        .filter(
+          (
+            evidence
+          ): evidence is CheckEvidence =>
+            evidence !== undefined
+        );
+
+    const securityFinding =
+      referencedEvidence.find(
+        (evidence) =>
+          evidence.kind ===
+          "security_finding"
+      );
+
+    if (!securityFinding) {
+      throw new Error(
+        "No verified dependency security finding was available for this remediation."
+      );
+    }
+
+    /*
+     * Security evidence currently follows:
+     *
+     *   "<package> has a high-severity dependency vulnerability."
+     *
+     * Extract only the verified package identifier.
+     */
+    const packageName =
+      securityFinding.message.match(
+        /^(.+?) has a (?:high|critical)-severity dependency vulnerability\.$/i
+      )?.[1];
+
+    if (!packageName) {
+      throw new Error(
+        "DeployGuard could not determine the affected package from verified evidence."
+      );
+    }
+
+    const response =
+      await fetch("/api/remediation", {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+
+        body: JSON.stringify({
+          repositoryUrl,
+
+          proposal: {
+            id:
+              `dependency-security-${packageName}`,
+
+            title:
+              `Remediate ${packageName} vulnerability`,
+
+            description:
+              "Apply controlled dependency security remediation and verify the result.",
+
+            target: {
+              checkId:
+                action.checkId,
+
+              category:
+                check.category,
+
+              evidenceIndexes:
+                action.evidenceIndexes,
+            },
+
+            strategy:
+              "dependency_security",
+
+            /*
+             * Current dependency remediation may
+             * require npm audit fix --force.
+             *
+             * DeployGuard verifies the result with
+             * regression checks before claiming
+             * success.
+             */
+            risk:
+              "breaking_change_allowed",
+
+            packageName,
+          },
+        }),
+      });
+
+    const data =
+      await response.json();
+
+    if (
+      !response.ok ||
+      !data.ok
+    ) {
+      throw new Error(
+        data.error ??
+          "Dependency remediation failed."
+      );
+    }
+
+    setRemediationResult(
+      data.remediation
+    );
+  } catch (remediationError) {
+    setRemediationError(
+      remediationError instanceof Error
+        ? remediationError.message
+        : "Unknown remediation error."
+    );
+  } finally {
+    setRemediationLoading(false);
+  }
+}
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -1471,7 +1950,7 @@ export function ReadinessDashboard() {
         )}
 
         {report && (
-          <div className="space-y-8">
+          <div className="min-w-0 space-y-8 [overflow-wrap:anywhere]">
             <section className="grid gap-4 md:grid-cols-2">
               <ReadinessScoreCard
                 score={report.readiness.score}
@@ -1481,6 +1960,9 @@ export function ReadinessDashboard() {
                 coverage={report.readiness.coverage}
               />
             </section>
+
+            <AssessmentSummary report={report} completion={progressByStage.get("report")} />
+            <KeyFindings checks={report.checks} />
 
             <section className="rounded-2xl border border-zinc-800 bg-zinc-950 p-6">
               <p className="text-xs font-medium uppercase tracking-[0.2em] text-zinc-600">
@@ -1492,7 +1974,7 @@ export function ReadinessDashboard() {
               </h2>
 
               <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-400">
-                The readiness score below is produced from
+                The readiness score above is produced from
                 deterministic repository and runtime evidence.
                 External research and NVIDIA Nemotron add context and
                 explanation, but they do not invent the score.
@@ -1521,15 +2003,36 @@ export function ReadinessDashboard() {
 
             <RemediationPlan
   items={report.remediation}
+  checks={report.checks}
 />
 
 {report.aiRemediation &&
   report.aiRemediation.actions.length > 0 && (
-    <AiRemediationGuidance
-      remediation={report.aiRemediation}
-      checks={report.checks}
-    />
+       <AiRemediationGuidance
+  remediation={report.aiRemediation}
+  checks={report.checks}
+  onExecute={runDependencyRemediation}
+  executing={remediationLoading}
+/>
   )}
+
+  {remediationError && (
+  <section className="rounded-2xl border border-red-500/30 bg-red-500/5 p-5">
+    <p className="font-medium text-red-300">
+      Controlled remediation failed
+    </p>
+
+    <p className="mt-2 text-sm text-red-200/70">
+      {remediationError}
+    </p>
+  </section>
+)}
+
+{remediationResult && (
+  <RemediationProof
+    result={remediationResult}
+  />
+)}
           </div>
         )}
       </div>

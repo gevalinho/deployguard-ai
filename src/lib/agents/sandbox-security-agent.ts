@@ -551,34 +551,41 @@ export async function runSandboxSecurityAgent(
   );
 
   if (highSeverityFinding) {
-    return {
-      id: "security",
-      category: "security",
-      name:
-        "Dependency Security",
-      status: "failed",
+  return {
+    id: "security",
+    category: "security",
+    name:
+      "Dependency Security",
+    status: "failed",
 
-      command:
-        auditCommand.display,
+    command:
+      auditCommand.display,
 
-      exitCode:
-        result.exitCode,
+    exitCode:
+      result.exitCode,
 
-      durationMs:
-        result.durationMs,
+    durationMs:
+      result.durationMs,
 
-      summary:
-        createFailureSummary(
-          findings
-        ),
+    summary:
+      createFailureSummary(
+        findings
+      ),
 
-      stdout:
-        result.stdout,
+    stdout:
+      result.stdout,
 
-      stderr:
-        result.stderr,
-    };
-  }
+    stderr:
+      result.stderr,
+
+    ...(securityEvidence.length > 0
+      ? {
+          evidence:
+            securityEvidence,
+        }
+      : {}),
+  };
+}
 
   return {
     id: "security",

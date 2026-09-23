@@ -9,7 +9,7 @@ async function main() {
   );
 
   const repositoryUrl =
-    "https://github.com/gevalinho/deployguard-ai";
+  "https://github.com/gevalinho/deployguard-vulnerable-fixture";
 
   console.log(
     `Repository: ${repositoryUrl}`
