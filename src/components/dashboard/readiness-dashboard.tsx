@@ -1288,137 +1288,307 @@ function RemediationProof({
 }: {
   result: RemediationResult;
 }) {
-  const remediation =
-    result.remediation;
-
-  const proof =
-    remediation.proof;
+  const remediation = result.remediation;
+  const proof = remediation.proof;
 
   const proven =
     proof?.status === "proven";
 
+  const comparisons =
+    proof?.comparisons ?? [];
+
+  const regressionChecks =
+    proof?.regressionChecks ?? [];
+
+  const regressionPassed =
+    regressionChecks.length > 0 &&
+    regressionChecks.every(
+      (check) =>
+        check.status === "passed"
+    );
+
+  const securityImproved =
+    comparisons.length > 0 &&
+    comparisons.every(
+      (comparison) =>
+        comparison.improved
+    );
+
+  const stages = [
+    {
+      label: "Vulnerability detected",
+      complete:
+        comparisons.length > 0,
+    },
+    {
+      label: "Controlled fix applied",
+      complete:
+        remediation.execution.status ===
+        "applied",
+    },
+    {
+      label: "Regression checks passed",
+      complete: regressionPassed,
+    },
+    {
+      label: "Security re-verified",
+      complete: securityImproved,
+    },
+    {
+      label: "Remediation proven",
+      complete: proven,
+    },
+  ];
+
   return (
     <section
-      className={`rounded-2xl border p-6 ${
+      className={`overflow-hidden rounded-2xl border ${
         proven
           ? "border-emerald-500/30 bg-emerald-500/5"
           : "border-amber-500/30 bg-amber-500/5"
       }`}
     >
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-zinc-500">
-            Controlled Remediation
-          </p>
+      <div className="p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-zinc-500">
+              Controlled Remediation
+            </p>
 
-          <h2 className="mt-2 text-xl font-semibold">
-            {proven
-              ? "Remediation Proven"
-              : "Remediation Result"}
-          </h2>
+            <h2 className="mt-2 text-2xl font-semibold">
+              {proven
+                ? "Remediation Proven"
+                : "Remediation Result"}
+            </h2>
+
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-400">
+              {proof?.summary ??
+                remediation.execution.summary}
+            </p>
+          </div>
+
+          <span
+            className={`rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-wide ${
+              proven
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                : "border-amber-500/30 bg-amber-500/10 text-amber-300"
+            }`}
+          >
+            {proof?.status ??
+              remediation.execution.status}
+          </span>
         </div>
 
-        <span
-          className={`rounded-full border px-3 py-1 text-xs font-medium uppercase ${
-            proven
-              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-              : "border-amber-500/30 bg-amber-500/10 text-amber-300"
-          }`}
-        >
-          {proof?.status ??
-            remediation.execution.status}
-        </span>
-      </div>
+        {/* Proof lifecycle */}
 
-      <p className="mt-4 text-sm leading-6 text-zinc-300">
-        {proof?.summary ??
-          remediation.execution.summary}
-      </p>
+        <div className="mt-8">
+          <p className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-600">
+            Verification Lifecycle
+          </p>
 
-      {proof &&
-        proof.comparisons.length > 0 && (
-          <div className="mt-6 space-y-3">
-            {proof.comparisons.map(
-              (comparison) => (
+          <div className="mt-4 grid gap-3 sm:grid-cols-5">
+            {stages.map(
+              (stage, index) => (
                 <div
-                  key={comparison.checkId}
-                  className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4"
+                  key={stage.label}
+                  className={`relative rounded-xl border p-4 ${
+                    stage.complete
+                      ? "border-emerald-500/20 bg-emerald-500/5"
+                      : "border-zinc-800 bg-zinc-950/40"
+                  }`}
                 >
-                  <p className="text-sm font-medium">
-                    {
-                      comparison.before
-                        .name
-                    }
-                  </p>
-
-                  <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
-                    <span className="rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-red-300">
-                      {
-                        comparison.before
-                          .status
-                      }
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs ${
+                        stage.complete
+                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                          : "border-zinc-700 text-zinc-600"
+                      }`}
+                    >
+                      {stage.complete
+                        ? "✓"
+                        : index + 1}
                     </span>
 
-                    <span className="text-zinc-600">
-                      →
+                    <span className="text-xs text-zinc-500">
+                      Step {index + 1}
                     </span>
-
-                    <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-emerald-300">
-                      {
-                        comparison.after
-                          .status
-                      }
-                    </span>
-
-                    {comparison.improved && (
-                      <span className="text-xs font-medium text-emerald-400">
-                        ✓ Improved
-                      </span>
-                    )}
                   </div>
 
-                  <p className="mt-3 text-xs leading-5 text-zinc-500">
-                    {
-                      comparison.after
-                        .summary
-                    }
+                  <p
+                    className={`mt-3 text-sm font-medium leading-5 ${
+                      stage.complete
+                        ? "text-zinc-200"
+                        : "text-zinc-500"
+                    }`}
+                  >
+                    {stage.label}
                   </p>
                 </div>
               )
             )}
           </div>
-        )}
+        </div>
 
-      {proof &&
-        proof.regressionChecks.length >
-          0 && (
-          <div className="mt-6">
+        {/* Before / after evidence */}
+
+        {comparisons.length > 0 && (
+          <div className="mt-8">
             <p className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-600">
-              Regression Verification
+              Before / After Verification
             </p>
 
-            <div className="mt-3 flex flex-wrap gap-2">
-              {proof.regressionChecks.map(
-                (check) => (
-                  <span
-                    key={check.id}
-                    className="rounded-full border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300"
+            <div className="mt-4 space-y-4">
+              {comparisons.map(
+                (comparison) => (
+                  <article
+                    key={
+                      comparison.checkId
+                    }
+                    className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5"
                   >
-                    {check.name}:{" "}
-                    {check.status}
-                  </span>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <h3 className="font-medium text-zinc-200">
+                        {
+                          comparison.before
+                            .name
+                        }
+                      </h3>
+
+                      {comparison.improved && (
+                        <span className="text-xs font-medium text-emerald-400">
+                          ✓ Verified improvement
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="mt-5 grid items-stretch gap-3 sm:grid-cols-[1fr_auto_1fr]">
+                      <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4">
+                        <p className="text-xs font-medium uppercase tracking-[0.14em] text-red-400/70">
+                          Before
+                        </p>
+
+                        <p className="mt-2 text-lg font-semibold capitalize text-red-300">
+                          {
+                            comparison.before
+                              .status
+                          }
+                        </p>
+
+                        <p className="mt-2 text-xs leading-5 text-zinc-500">
+                          {
+                            comparison.before
+                              .summary
+                          }
+                        </p>
+                      </div>
+
+                      <div className="flex items-center justify-center px-2 text-xl text-zinc-600">
+                        →
+                      </div>
+
+                      <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+                        <p className="text-xs font-medium uppercase tracking-[0.14em] text-emerald-400/70">
+                          After
+                        </p>
+
+                        <p className="mt-2 text-lg font-semibold capitalize text-emerald-300">
+                          {
+                            comparison.after
+                              .status
+                          }
+                        </p>
+
+                        <p className="mt-2 text-xs leading-5 text-zinc-500">
+                          {
+                            comparison.after
+                              .summary
+                          }
+                        </p>
+                      </div>
+                    </div>
+                  </article>
                 )
               )}
             </div>
           </div>
         )}
 
-      <div className="mt-6 border-t border-zinc-800 pt-4">
-        <p className="text-xs leading-5 text-zinc-500">
-          Executed in a disposable DeployGuard
-          workspace. The source GitHub repository
-          was not modified.
-        </p>
+        {/* Regression safety */}
+
+        {regressionChecks.length >
+          0 && (
+          <div className="mt-8">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-600">
+                Regression Safety
+              </p>
+
+              {regressionPassed && (
+                <span className="text-xs font-medium text-emerald-400">
+                  ✓ Available regression checks passed
+                </span>
+              )}
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {regressionChecks.map(
+                (check) => (
+                  <div
+                    key={check.id}
+                    className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4"
+                  >
+                    <p className="text-sm font-medium text-zinc-200">
+                      {check.name}
+                    </p>
+
+                    <p
+                      className={`mt-2 text-xs font-medium uppercase ${
+                        check.status ===
+                        "passed"
+                          ? "text-emerald-400"
+                          : "text-amber-400"
+                      }`}
+                    >
+                      {check.status ===
+                      "passed"
+                        ? "✓ "
+                        : ""}
+                      {check.status}
+                    </p>
+
+                    <p className="mt-2 text-xs leading-5 text-zinc-500">
+                      {check.summary}
+                    </p>
+                  </div>
+                )
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Trust boundary */}
+
+      <div className="border-t border-zinc-800 bg-zinc-950/40 px-6 py-4">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 text-emerald-400">
+            ✓
+          </span>
+
+          <div>
+            <p className="text-xs font-medium text-zinc-300">
+              Source repository protected
+            </p>
+
+            <p className="mt-1 text-xs leading-5 text-zinc-500">
+              Remediation was executed inside a
+              disposable DeployGuard workspace.
+              The source GitHub repository was
+              not modified.
+            </p>
+          </div>
+        </div>
       </div>
     </section>
   );
