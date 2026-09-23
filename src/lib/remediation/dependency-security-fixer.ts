@@ -11,7 +11,8 @@ import {
   detectPackageManager,
 } from "@/lib/sandbox/package-manager";
 
-const FIX_TIMEOUT_MS = 60_000;
+
+const FIX_TIMEOUT_MS = 120_000;
 
 export async function applyDependencySecurityFix(
   repositoryPath: string,
@@ -113,27 +114,6 @@ export async function applyDependencySecurityFix(
     },
   });
 
-
-
-// console.log({
-//   status: result.status,
-//   exitCode: result.exitCode,
-//   durationMs: result.durationMs,
-// });
-
-// if (result.stdout) {
-//   console.log(
-//     "\n[Dependency Security Fix] stdout:\n",
-//     result.stdout
-//   );
-// }
-
-// if (result.stderr) {
-//   console.error(
-//     "\n[Dependency Security Fix] stderr:\n",
-//     result.stderr
-//   );
-// }
 
   if (result.status === "timed_out") {
     return {
