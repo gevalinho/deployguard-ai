@@ -4,8 +4,12 @@ import type {
 
 import {
   validateArtifactAccessCapability,
-  type ArtifactAccessCapability,
 } from "@/lib/remediation/artifact-access-capability";
+
+import {
+  verifySignedArtifactAccessCapability,
+  type SignedArtifactAccessCapability,
+} from "@/lib/remediation/artifact-capability-signing";
 
 export type ArtifactConsumer =
   | "public_api"
@@ -43,7 +47,8 @@ function createArtifactMetadata(
 export function authorizeArtifactAccess(
   artifact: VerifiedPatchArtifact,
   consumer: ArtifactConsumer,
-  capability?: ArtifactAccessCapability
+  signedCapability?: SignedArtifactAccessCapability,
+  signingSecret?: string
 ): ArtifactAccessDecision {
   const metadata =
     createArtifactMetadata(
@@ -60,29 +65,35 @@ export function authorizeArtifactAccess(
       };
 
     case "trusted_agent":
-case "github_integration": {
-  if (
-    !capability ||
-    !validateArtifactAccessCapability(
-      capability,
-      consumer,
-      artifact.sha256
-    )
-  ) {
-    return {
-      consumer,
-      access: "metadata",
-      metadata,
-    };
-  }
+    case "github_integration": {
+      if (
+        !signedCapability ||
+        !signingSecret ||
+        !verifySignedArtifactAccessCapability(
+          signedCapability,
+          signingSecret
+        ) ||
+        !validateArtifactAccessCapability(
+          signedCapability.capability,
+          consumer,
+          artifact.sha256
+        )
+      ) {
+        return {
+          consumer,
+          access: "metadata",
+          metadata,
+        };
+      }
 
-  return {
-    consumer,
-    access: "content",
-    metadata,
-    content: artifact.content,
-  };
-}
+      return {
+        consumer,
+        access: "content",
+        metadata,
+        content:
+          artifact.content,
+      };
+    }
 
     default: {
       const exhaustiveCheck: never =

@@ -2,13 +2,20 @@ import {
   authorizeArtifactAccess,
 } from "@/lib/remediation/artifact-access-policy";
 
+import {
+  issueArtifactAccessCapability,
+} from "@/lib/remediation/artifact-access-capability";
+
+import {
+  signArtifactAccessCapability,
+} from "@/lib/remediation/artifact-capability-signing";
+
 import type {
   VerifiedPatchArtifact,
 } from "@/lib/remediation/verified-patch-artifact";
 
-import {
-  issueArtifactAccessCapability,
-} from "@/lib/remediation/artifact-access-capability";
+const signingSecret =
+  "deployguard-test-signing-secret";
 
 const secret =
   "DEPLOYGUARD_PRIVATE_PATCH_CONTENT";
@@ -16,8 +23,7 @@ const secret =
 const artifact: VerifiedPatchArtifact = {
   format: "unified_diff",
 
-  content:
-    `diff --git a/example.js b/example.js
+  content: `diff --git a/example.js b/example.js
 -${secret}
 +safe replacement
 `,
@@ -27,6 +33,10 @@ const artifact: VerifiedPatchArtifact = {
 
   byteSize: 123,
 };
+
+/*
+ * Public consumers receive metadata only.
+ */
 
 const publicAccess =
   authorizeArtifactAccess(
@@ -41,45 +51,53 @@ const dashboardAccess =
   );
 
 /*
- * Issue capabilities for consumers that are
- * allowed to receive verified artifact content.
+ * Trusted consumers require capabilities issued
+ * by DeployGuard and cryptographically signed.
  */
 
 const agentCapability =
-  issueArtifactAccessCapability(
-    "trusted_agent",
-    artifact.sha256
+  signArtifactAccessCapability(
+    issueArtifactAccessCapability(
+      "trusted_agent",
+      artifact.sha256
+    ),
+    signingSecret
   );
 
 const githubCapability =
-  issueArtifactAccessCapability(
-    "github_integration",
-    artifact.sha256
+  signArtifactAccessCapability(
+    issueArtifactAccessCapability(
+      "github_integration",
+      artifact.sha256
+    ),
+    signingSecret
   );
 
 /*
- * Authorized consumers present their capability
- * when requesting artifact access.
+ * Authorized consumers must present both the
+ * signed capability and the signing secret used
+ * by the trusted authorization boundary.
  */
 
 const agentAccess =
   authorizeArtifactAccess(
     artifact,
     "trusted_agent",
-    agentCapability
+    agentCapability,
+    signingSecret
   );
 
 const githubAccess =
   authorizeArtifactAccess(
     artifact,
     "github_integration",
-    githubCapability
+    githubCapability,
+    signingSecret
   );
 
-
-  /*
- * Merely claiming to be a trusted agent must
- * not grant access to private artifact content.
+/*
+ * Merely claiming to be a trusted consumer must
+ * never grant private artifact access.
  */
 
 const unauthorizedAgentAccess =
@@ -95,7 +113,7 @@ if (
     undefined
 ) {
   throw new Error(
-    "Trusted agent received artifact content without a capability."
+    "Trusted agent received artifact content without a signed capability."
   );
 }
 
@@ -104,24 +122,33 @@ console.log(
 );
 
 /*
- * Expired capabilities must not authorize
- * private artifact access.
+ * An expired capability must remain invalid even
+ * when it carries a cryptographically valid
+ * signature.
+ *
+ * This distinguishes authenticity from temporal
+ * authorization.
  */
 
-const now = Date.now();
+const now =
+  Date.now();
 
 const expiredCapability =
-  issueArtifactAccessCapability(
-    "trusted_agent",
-    artifact.sha256,
-    now - 10 * 60 * 1000
+  signArtifactAccessCapability(
+    issueArtifactAccessCapability(
+      "trusted_agent",
+      artifact.sha256,
+      now - 10 * 60 * 1000
+    ),
+    signingSecret
   );
 
 const expiredAccess =
   authorizeArtifactAccess(
     artifact,
     "trusted_agent",
-    expiredCapability
+    expiredCapability,
+    signingSecret
   );
 
 if (
@@ -131,12 +158,106 @@ if (
     undefined
 ) {
   throw new Error(
-    "Expired capability authorized private artifact content."
+    "Expired signed capability authorized private artifact content."
   );
 }
 
 console.log(
-  "✓ Expired artifact capability rejected."
+  "✓ Expired signed artifact capability rejected."
+);
+
+/*
+ * A correctly structured and correctly signed
+ * capability must still fail when verification
+ * uses the wrong trust secret.
+ */
+
+const wrongSecretAccess =
+  authorizeArtifactAccess(
+    artifact,
+    "trusted_agent",
+    agentCapability,
+    "attacker-controlled-secret"
+  );
+
+if (
+  wrongSecretAccess.access !==
+    "metadata" ||
+  wrongSecretAccess.content !==
+    undefined
+) {
+  throw new Error(
+    "Artifact content was authorized with the wrong signing secret."
+  );
+}
+
+console.log(
+  "✓ Wrong signing secret denied artifact content."
+);
+
+/*
+ * A capability for one trusted consumer cannot
+ * be replayed by another trusted consumer.
+ */
+
+const crossConsumerAccess =
+  authorizeArtifactAccess(
+    artifact,
+    "github_integration",
+    agentCapability,
+    signingSecret
+  );
+
+if (
+  crossConsumerAccess.access !==
+    "metadata" ||
+  crossConsumerAccess.content !==
+    undefined
+) {
+  throw new Error(
+    "Trusted-agent capability was replayed by the GitHub integration."
+  );
+}
+
+console.log(
+  "✓ Cross-consumer capability replay rejected."
+);
+
+/*
+ * A signed capability bound to another artifact
+ * cannot authorize this artifact.
+ */
+
+const otherArtifactCapability =
+  signArtifactAccessCapability(
+    issueArtifactAccessCapability(
+      "trusted_agent",
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    ),
+    signingSecret
+  );
+
+const wrongArtifactAccess =
+  authorizeArtifactAccess(
+    artifact,
+    "trusted_agent",
+    otherArtifactCapability,
+    signingSecret
+  );
+
+if (
+  wrongArtifactAccess.access !==
+    "metadata" ||
+  wrongArtifactAccess.content !==
+    undefined
+) {
+  throw new Error(
+    "Capability for another artifact authorized private content."
+  );
+}
+
+console.log(
+  "✓ Cross-artifact capability replay rejected."
 );
 
 /*
@@ -148,22 +269,28 @@ for (const access of [
   publicAccess,
   dashboardAccess,
 ]) {
-  if (access.access !== "metadata") {
+  if (
+    access.access !==
+    "metadata"
+  ) {
     throw new Error(
       `${access.consumer} received unexpected artifact access.`
     );
   }
 
-  if (access.content !== undefined) {
+  if (
+    access.content !==
+    undefined
+  ) {
     throw new Error(
       `${access.consumer} received private artifact content.`
     );
   }
 
   if (
-    JSON.stringify(access).includes(
-      secret
-    )
+    JSON.stringify(
+      access
+    ).includes(secret)
   ) {
     throw new Error(
       `${access.consumer} leaked private artifact content.`
@@ -172,15 +299,18 @@ for (const access of [
 }
 
 /*
- * Trusted consumers may receive the proven
- * artifact content.
+ * Properly authenticated trusted consumers may
+ * receive verified artifact content.
  */
 
 for (const access of [
   agentAccess,
   githubAccess,
 ]) {
-  if (access.access !== "content") {
+  if (
+    access.access !==
+    "content"
+  ) {
     throw new Error(
       `${access.consumer} did not receive authorized content access.`
     );
@@ -199,7 +329,7 @@ for (const access of [
 
 /*
  * Every consumer receives the same immutable
- * artifact identity.
+ * artifact identity regardless of access level.
  */
 
 for (const access of [
@@ -227,11 +357,11 @@ console.log(
 );
 
 console.log(
-  "✓ Trusted agent authorized for artifact content."
+  "✓ Trusted agent authorized with signed capability."
 );
 
 console.log(
-  "✓ GitHub integration authorized for artifact content."
+  "✓ GitHub integration authorized with signed capability."
 );
 
 console.log(
