@@ -26,11 +26,10 @@ export interface FixProposal {
   description: string;
   target: FixTarget;
 
-  // strategy:
-  //   | "dependency_security";
 
 strategy:
-  | "dependency_security";
+  | "dependency_security"
+  | "lint_autofix";
 
 risk:
   | "safe"

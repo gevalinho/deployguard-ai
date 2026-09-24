@@ -46,10 +46,7 @@ function isFixProposal(
   }
 
   const proposal =
-    value as Record<
-      string,
-      unknown
-    >;
+    value as Record<string, unknown>;
 
   if (
     !isString(proposal.id) ||
@@ -60,52 +57,35 @@ function isFixProposal(
   }
 
   if (
-    proposal.strategy !==
-    "dependency_security"
+    proposal.strategy !== "dependency_security" &&
+    proposal.strategy !== "lint_autofix"
   ) {
     return false;
   }
 
   if (
     proposal.risk !== "safe" &&
-    proposal.risk !==
-      "breaking_change_allowed"
+    proposal.risk !== "breaking_change_allowed"
   ) {
     return false;
   }
 
   if (
-    proposal.packageName !==
-      undefined &&
-    !isString(
-      proposal.packageName
-    )
+    proposal.packageName !== undefined &&
+    !isString(proposal.packageName)
   ) {
     return false;
   }
 
   if (
     !proposal.target ||
-    typeof proposal.target !==
-      "object"
+    typeof proposal.target !== "object"
   ) {
     return false;
   }
 
   const target =
-    proposal.target as Record<
-      string,
-      unknown
-    >;
-
-  if (
-    target.checkId !==
-      "security" ||
-    target.category !==
-      "security"
-  ) {
-    return false;
-  }
+    proposal.target as Record<string, unknown>;
 
   if (
     !isNonNegativeIntegerArray(
@@ -115,7 +95,58 @@ function isFixProposal(
     return false;
   }
 
-  return true;
+  /*
+   * Keep strategy and target tightly coupled.
+   *
+   * A dependency-security proposal may only
+   * target the security check.
+   *
+   * A lint-autofix proposal may only target
+   * the lint check.
+   */
+  if (
+    proposal.strategy === "dependency_security"
+  ) {
+    if (
+      target.checkId !== "security" ||
+      target.category !== "security"
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  if (
+    proposal.strategy === "lint_autofix"
+  ) {
+    if (
+      target.checkId !== "lint" ||
+      target.category !== "lint"
+    ) {
+      return false;
+    }
+
+    /*
+     * packageName has meaning only for
+     * dependency-security remediation.
+     */
+    if (proposal.packageName !== undefined) {
+      return false;
+    }
+
+    /*
+     * Lint autofix is the restricted safe
+     * remediation path.
+     */
+    if (proposal.risk !== "safe") {
+      return false;
+    }
+
+    return true;
+  }
+
+  return false;
 }
 
 export async function POST(

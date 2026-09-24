@@ -52,6 +52,14 @@ import {
   type PublicRemediationRun,
 } from "@/lib/remediation/public-remediation";
 
+import {
+  applyLintAutofix,
+} from "@/lib/remediation/lint-autofix-fixer";
+
+import {
+  verifyLintAutofix,
+} from "@/lib/remediation/lint-autofix-verifier";
+
 export interface RemoteRemediationResult {
   repository: {
     owner: string;
@@ -137,171 +145,224 @@ export async function runRemoteRemediation(
         `Remediation sandbox preparation failed: ${preparation.summary}`
       );
     }
+/*
+ * Re-detect the requested problem against the
+ * fresh repository state.
+ *
+ * Each remediation strategy owns its deterministic
+ * detector, controlled executor and independent
+ * verifier.
+ */
 
-    /*
-     * Re-detect the requested security problem
-     * against the fresh repository state.
-     */
+let before: CheckResult;
 
-    const before =
+switch (proposal.strategy) {
+  case "dependency_security":
+    before =
       await runSandboxSecurityAgent(
         ingested.repositoryPath
       );
 
     if (
-      proposal.strategy !==
-      "dependency_security"
-    ) {
-      throw new Error(
-        "The requested remediation strategy is not supported."
-      );
-    }
-
-    if (
-      proposal.target.checkId !==
-      "security" ||
-      before.id !==
-        proposal.target.checkId
+      proposal.target.checkId !== "security" ||
+      proposal.target.category !== "security" ||
+      before.id !== proposal.target.checkId
     ) {
       throw new Error(
         "The remediation proposal does not target the dependency security check."
       );
     }
 
+    break;
+
+  case "lint_autofix":
+    before =
+      await runSandboxLintAgent(
+        ingested.repositoryPath
+      );
+
     if (
-      before.status !== "failed"
+      proposal.target.checkId !== "lint" ||
+      proposal.target.category !== "lint" ||
+      before.id !== proposal.target.checkId
     ) {
       throw new Error(
-        "The dependency security failure could not be reproduced against the current repository state."
+        "The remediation proposal does not target the lint check."
       );
     }
 
-    /*
-     * The current MVP supports dependency
-     * security remediation only when the
-     * requested evidence still exists.
-     */
+    break;
 
-    const currentEvidence =
-      before.evidence ?? [];
+  default: {
+    const unsupportedStrategy: never =
+      proposal.strategy;
 
-    const referencedEvidence =
-      proposal.target.evidenceIndexes
-        .map(
-          (index) =>
-            currentEvidence[index]
-        )
-        .filter(
-          (
-            evidence
-          ): evidence is NonNullable<
-            typeof evidence
-          > =>
-            evidence !== undefined
-        );
+    throw new Error(
+      `Unsupported remediation strategy: ${unsupportedStrategy}`
+    );
+  }
+}
 
-    if (
-      proposal.target
-        .evidenceIndexes.length >
-        0 &&
-      referencedEvidence.length !==
-        proposal.target
-          .evidenceIndexes.length
-    ) {
-      throw new Error(
-        "The remediation proposal references security evidence that no longer exists."
-      );
-    }
+if (before.status !== "failed") {
+  throw new Error(
+    `The ${proposal.target.category} failure could not be reproduced against the current repository state.`
+  );
+}
 
-    if (
-      proposal.packageName
-    ) {
-      const packageStillPresent =
-        currentEvidence.some(
-          (evidence) =>
-            evidence.kind ===
-              "security_finding" &&
-            evidence.message
+/*
+ * Verify that every evidence reference supplied
+ * by the proposal still exists in the freshly
+ * reproduced check result.
+ */
+
+const currentEvidence =
+  before.evidence ?? [];
+
+const referencedEvidence =
+  proposal.target.evidenceIndexes
+    .map(
+      (index) =>
+        currentEvidence[index]
+    )
+    .filter(
+      (
+        evidence
+      ): evidence is NonNullable<
+        typeof evidence
+      > =>
+        evidence !== undefined
+    );
+
+if (
+  proposal.target.evidenceIndexes.length > 0 &&
+  referencedEvidence.length !==
+    proposal.target.evidenceIndexes.length
+) {
+  throw new Error(
+    `The remediation proposal references ${proposal.target.category} evidence that no longer exists.`
+  );
+}
+
+/*
+ * Dependency security proposals may additionally
+ * identify a package.
+ *
+ * Confirm that the package is still represented
+ * by verified security evidence before mutation.
+ */
+
+if (
+  proposal.strategy ===
+    "dependency_security" &&
+  proposal.packageName
+) {
+  const packageStillPresent =
+    currentEvidence.some(
+      (evidence) =>
+        evidence.kind ===
+          "security_finding" &&
+        evidence.message
+          .toLowerCase()
+          .includes(
+            proposal.packageName!
               .toLowerCase()
-              .includes(
-                proposal.packageName!
-                  .toLowerCase()
-              )
-        );
+          )
+    );
 
-      if (!packageStillPresent) {
-        throw new Error(
-          `The requested package finding (${proposal.packageName}) could not be reproduced against the current repository state.`
-        );
-      }
-    }
+  if (!packageStillPresent) {
+    throw new Error(
+      `The requested package finding (${proposal.packageName}) could not be reproduced against the current repository state.`
+    );
+  }
+}
 
-    /*
-     * Apply the controlled mutation.
-     *
-     * The executor chooses the command.
-     * The AI/user does not supply arbitrary
-     * shell commands.
-     */
+/*
+ * Apply the controlled mutation.
+ *
+ * The strategy determines the executor.
+ * No arbitrary shell command crosses this
+ * boundary from the AI or user.
+ */
 
-    const execution =
-      await applyDependencySecurityFix(
+const execution =
+  proposal.strategy ===
+  "dependency_security"
+    ? await applyDependencySecurityFix(
+        ingested.repositoryPath,
+        proposal
+      )
+    : await applyLintAutofix(
         ingested.repositoryPath,
         proposal
       );
 
-    const remediation: RemediationRun = {
-      proposal,
-      execution,
-    };
+const remediation: RemediationRun = {
+  proposal,
+  execution,
+};
 
-    if (
-      execution.status !==
-      "applied"
-    ) {
-      return {
-        repository: {
-          owner:
-            repository.owner,
-          name:
-            repository.name,
-          fullName:
-            repository.fullName,
-          url:
-            repository.url,
-        },
+if (
+  execution.status !== "applied"
+) {
+  return {
+    repository: {
+      owner: repository.owner,
+      name: repository.name,
+      fullName: repository.fullName,
+      url: repository.url,
+    },
 
-        remediation:
-  sanitizeRemediationForPublic(
-    remediation
-  ),
-      };
-    }
+    remediation:
+      sanitizeRemediationForPublic(
+        remediation
+      ),
+  };
+}
 
-    /*
-     * Re-run deterministic application checks
-     * after mutation.
-     */
+/*
+ * Re-run deterministic application checks after
+ * mutation.
+ *
+ * The target check is independently executed by
+ * its verifier below, so remove it from the
+ * regression set. This prevents the target check
+ * from proving itself twice.
+ */
 
-    const regressionChecks =
-      await runRegressionChecks(
-        ingested.repositoryPath
-      );
+const allRegressionChecks =
+  await runRegressionChecks(
+    ingested.repositoryPath
+  );
 
-    /*
-     * Independently re-run security and compare
-     * before/after evidence.
-     */
+const regressionChecks =
+  allRegressionChecks.filter(
+    (check) =>
+      check.id !==
+      proposal.target.checkId
+  );
 
-    const proof =
-      await verifyDependencySecurityFix(
+/*
+ * Independently verify the mutated repository.
+ *
+ * Successful execution alone is never proof.
+ */
+
+const proof =
+  proposal.strategy ===
+  "dependency_security"
+    ? await verifyDependencySecurityFix(
+        ingested.repositoryPath,
+        before,
+        regressionChecks
+      )
+    : await verifyLintAutofix(
         ingested.repositoryPath,
         before,
         regressionChecks
       );
 
-    remediation.proof =
-      proof;
+remediation.proof =
+  proof;
 
     return {
       repository: {
