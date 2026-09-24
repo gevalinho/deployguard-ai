@@ -64,6 +64,15 @@ export interface PublicRemediationRun {
 
   proof?: PublicFixProof;
   verifiedPatch?: PublicVerifiedPatch;
+
+  verifiedPatchArtifact?:
+  PublicVerifiedPatchArtifact;
+}
+
+export interface PublicVerifiedPatchArtifact {
+  format: "unified_diff";
+  sha256: string;
+  byteSize: number;
 }
 
 export function sanitizeRemediationForPublic(
@@ -165,6 +174,26 @@ export function sanitizeRemediationForPublic(
       }
     : undefined;
 
+    const verifiedPatchArtifact =
+  remediation.verifiedPatchArtifact
+    ? {
+        format:
+          remediation
+            .verifiedPatchArtifact
+            .format,
+
+        sha256:
+          remediation
+            .verifiedPatchArtifact
+            .sha256,
+
+        byteSize:
+          remediation
+            .verifiedPatchArtifact
+            .byteSize,
+      }
+    : undefined;
+
  return {
   proposal:
     remediation.proposal,
@@ -182,5 +211,11 @@ export function sanitizeRemediationForPublic(
         verifiedPatch,
       }
     : {}),
+
+    ...(verifiedPatchArtifact
+  ? {
+      verifiedPatchArtifact,
+    }
+  : {}),
 };
 }

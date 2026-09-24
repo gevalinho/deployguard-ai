@@ -15,6 +15,10 @@ import type {
   VerifiedPatch,
 } from "@/lib/remediation/verified-patch";
 
+import type {
+  VerifiedPatchArtifact,
+} from "@/lib/remediation/verified-patch-artifact";
+
 export type FixStatus =
   | "proposed"
   | "applied"
@@ -113,4 +117,13 @@ export interface RemediationRun {
    * without sanitization.
    */
   verifiedPatch?: VerifiedPatch;
+
+  /*
+ * Cryptographically identifiable representation
+ * of the proven workspace change.
+ *
+ * The artifact may contain source content and must
+ * remain inside the trusted remediation boundary.
+ */
+verifiedPatchArtifact?: VerifiedPatchArtifact;
 }

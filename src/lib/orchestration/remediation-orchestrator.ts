@@ -36,6 +36,10 @@ import type {
 } from "@/lib/remediation/types";
 
 import {
+  createVerifiedPatchArtifact,
+} from "@/lib/remediation/verified-patch-artifact";
+
+import {
   parseGitHubRepositoryUrl,
 } from "@/lib/repository/github-repository";
 
@@ -460,6 +464,18 @@ if (proof.status === "proven") {
 
   remediation.verifiedPatch =
     verifiedPatch;
+
+  const verifiedPatchArtifact =
+  createVerifiedPatchArtifact(
+    verifiedPatch
+  );
+
+remediation.verifiedPatchArtifact =
+  verifiedPatchArtifact;
+
+console.log(
+  `[DeployGuard Remediation] Verified patch artifact generated: ${verifiedPatchArtifact.byteSize} bytes, SHA-256 ${verifiedPatchArtifact.sha256}.`
+);  
 
   console.log(
     `[DeployGuard Remediation] Verified patch captured: ${verifiedPatch.fileCount} changed file(s).`

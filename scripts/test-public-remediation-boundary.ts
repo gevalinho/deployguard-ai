@@ -222,6 +222,22 @@ const remediation: RemediationRun = {
     },
   ],
 },
+
+verifiedPatchArtifact: {
+  format: "unified_diff",
+
+  content:
+    `diff --git a/package.json b/package.json
+-${sourceSecret}
++safe replacement
+`,
+
+  byteSize: 123,
+
+  sha256:
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+},
+
 };
 
 const publicResult =
@@ -231,6 +247,55 @@ const publicResult =
 
 const serialized =
   JSON.stringify(publicResult);
+
+if (
+  serialized.includes(sourceSecret)
+) {
+  throw new Error(
+    "Verified patch artifact content crossed the public remediation boundary."
+  );
+}
+
+if (
+  serialized.includes(
+    '"content"'
+  )
+) {
+  throw new Error(
+    "Verified patch artifact content field crossed the public remediation boundary."
+  );
+}
+
+if (
+  publicResult
+    .verifiedPatchArtifact
+    ?.format !== "unified_diff"
+) {
+  throw new Error(
+    "Verified patch artifact format was not preserved."
+  );
+}
+
+if (
+  publicResult
+    .verifiedPatchArtifact
+    ?.byteSize !== 123
+) {
+  throw new Error(
+    "Verified patch artifact byte size was not preserved."
+  );
+}
+
+if (
+  publicResult
+    .verifiedPatchArtifact
+    ?.sha256 !==
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+) {
+  throw new Error(
+    "Verified patch artifact SHA-256 was not preserved."
+  );
+}
 
 
   if (
@@ -282,11 +347,6 @@ if (
     "Safe verified patch metadata was not preserved."
   );
 }
-
-
-
-
-
 
 
 if (
@@ -389,4 +449,16 @@ console.log(
 
 console.log(
   "✓ safe verified patch metadata preserved."
+);
+
+console.log(
+  "✓ verified artifact content excluded."
+);
+
+console.log(
+  "✓ verified artifact metadata preserved."
+);
+
+console.log(
+  "✓ verified artifact SHA-256 preserved."
 );
