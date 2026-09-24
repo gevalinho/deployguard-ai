@@ -19,6 +19,20 @@ export type PublicFixExecutionResult =
     "status" | "summary" | "durationMs" | "evidence"
   >;
 
+  export interface PublicVerifiedPatchFile {
+  path: string;
+
+  changeType:
+    | "added"
+    | "modified"
+    | "deleted";
+}
+
+export interface PublicVerifiedPatch {
+  fileCount: number;
+  files: PublicVerifiedPatchFile[];
+}
+
 export interface PublicVerificationComparison {
   checkId: string;
 
@@ -49,6 +63,7 @@ export interface PublicRemediationRun {
     PublicFixExecutionResult;
 
   proof?: PublicFixProof;
+  verifiedPatch?: PublicVerifiedPatch;
 }
 
 export function sanitizeRemediationForPublic(
@@ -129,16 +144,43 @@ export function sanitizeRemediationForPublic(
         }
       : undefined;
 
-  return {
-    proposal:
-      remediation.proposal,
+      const verifiedPatch =
+  remediation.verifiedPatch
+    ? {
+        fileCount:
+          remediation.verifiedPatch
+            .fileCount,
 
-    execution,
+        files:
+          remediation.verifiedPatch
+            .files.map(
+              (file) => ({
+                path:
+                  file.path,
 
-    ...(proof
-      ? {
-          proof,
-        }
-      : {}),
-  };
+                changeType:
+                  file.changeType,
+              })
+            ),
+      }
+    : undefined;
+
+ return {
+  proposal:
+    remediation.proposal,
+
+  execution,
+
+  ...(proof
+    ? {
+        proof,
+      }
+    : {}),
+
+  ...(verifiedPatch
+    ? {
+        verifiedPatch,
+      }
+    : {}),
+};
 }

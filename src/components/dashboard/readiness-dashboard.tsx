@@ -156,6 +156,19 @@ type RemediationResult = {
         delta: number;
       };
     };
+
+    verifiedPatch?: {
+  fileCount: number;
+
+  files: {
+    path: string;
+
+    changeType:
+      | "added"
+      | "modified"
+      | "deleted";
+  }[];
+};
   };
 };
 
@@ -1380,6 +1393,9 @@ function RemediationProof({
   const remediation = result.remediation;
   const proof = remediation.proof;
 
+  const verifiedPatch =
+  remediation.verifiedPatch;
+
   const proven =
     proof?.status === "proven";
 
@@ -1756,6 +1772,84 @@ const stages = [
           </div>
         )}
       </div>
+
+
+      {/* Verified changes */}
+
+{verifiedPatch &&
+  verifiedPatch.fileCount > 0 && (
+    <div className="mt-8">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-600">
+            Verified Changes
+          </p>
+
+          <p className="mt-2 text-sm leading-6 text-zinc-400">
+            DeployGuard captured these workspace
+            changes only after deterministic
+            verification proved the remediation.
+          </p>
+        </div>
+
+        <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300">
+          ✓ Proven patch
+        </span>
+      </div>
+
+      <div className="mt-4 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950/60">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-5 py-4">
+          <p className="text-sm font-medium text-zinc-300">
+            {verifiedPatch.fileCount}{" "}
+            {verifiedPatch.fileCount === 1
+              ? "file"
+              : "files"}{" "}
+            changed
+          </p>
+
+          <p className="text-xs text-zinc-600">
+            Source contents protected
+          </p>
+        </div>
+
+        <div className="divide-y divide-zinc-800">
+          {verifiedPatch.files.map(
+            (file) => (
+              <div
+                key={file.path}
+                className="flex flex-wrap items-center justify-between gap-3 px-5 py-4"
+              >
+                <p className="break-all font-mono text-sm text-zinc-300">
+                  {file.path}
+                </p>
+
+                <span
+                  className={`rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide ${
+                    file.changeType ===
+                    "added"
+                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                      : file.changeType ===
+                          "deleted"
+                        ? "border-red-500/30 bg-red-500/10 text-red-300"
+                        : "border-amber-500/30 bg-amber-500/10 text-amber-300"
+                  }`}
+                >
+                  {file.changeType}
+                </span>
+              </div>
+            )
+          )}
+        </div>
+      </div>
+
+      <p className="mt-3 text-xs leading-5 text-zinc-600">
+        Full before/after source content remains
+        inside the trusted DeployGuard execution
+        boundary and is not returned by the public
+        remediation API.
+      </p>
+    </div>
+  )}
 
       {/* Trust boundary */}
 

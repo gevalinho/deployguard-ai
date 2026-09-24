@@ -11,6 +11,10 @@ import type {
   ReadinessScoreComparison,
 } from "@/lib/scoring/readiness-score";
 
+import type {
+  VerifiedPatch,
+} from "@/lib/remediation/verified-patch";
+
 export type FixStatus =
   | "proposed"
   | "applied"
@@ -98,4 +102,15 @@ export interface RemediationRun {
     FixExecutionResult;
 
   proof?: FixProof;
+
+  /*
+   * Present only when remediation was independently
+   * proven and a workspace change was captured.
+   *
+   * This is an internal representation and may
+   * contain complete before/after source content.
+   * It must not cross the public API boundary
+   * without sanitization.
+   */
+  verifiedPatch?: VerifiedPatch;
 }

@@ -65,6 +65,11 @@ import {
   compareReadinessScores,
 } from "@/lib/scoring/readiness-score";
 
+import {
+  captureWorkspaceSnapshot,
+  createVerifiedPatch,
+} from "@/lib/remediation/verified-patch";
+
 export interface RemoteRemediationResult {
   repository: {
     owner: string;
@@ -320,6 +325,19 @@ if (
   }
 }
 
+
+/*
+ * Capture the verified repository state before
+ * any controlled mutation occurs.
+ *
+ * This snapshot becomes the baseline for a patch
+ * only if remediation is independently proven.
+ */
+const workspaceBefore =
+  captureWorkspaceSnapshot(
+    ingested.repositoryPath
+  );
+
 /*
  * Apply the controlled mutation.
  *
@@ -419,6 +437,33 @@ if (targetComparison) {
       targetComparison.after,
       regressionChecks
     );
+}
+
+/*
+ * A workspace diff is considered verified only
+ * when independent remediation proof succeeds.
+ *
+ * Failed or inconclusive remediation must never
+ * produce a verified patch.
+ */
+if (proof.status === "proven") {
+  const workspaceAfter =
+    captureWorkspaceSnapshot(
+      ingested.repositoryPath
+    );
+
+  const verifiedPatch =
+    createVerifiedPatch(
+      workspaceBefore,
+      workspaceAfter
+    );
+
+  remediation.verifiedPatch =
+    verifiedPatch;
+
+  console.log(
+    `[DeployGuard Remediation] Verified patch captured: ${verifiedPatch.fileCount} changed file(s).`
+  );
 }
 
 remediation.proof =

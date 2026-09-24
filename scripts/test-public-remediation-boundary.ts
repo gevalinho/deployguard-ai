@@ -9,7 +9,11 @@ import type {
 const secret =
   "DEPLOYGUARD_SECRET_SENTINEL";
 
+  const sourceSecret =
+  "DEPLOYGUARD_SOURCE_SECRET_SENTINEL";
+
 const remediation: RemediationRun = {
+  
   proposal: {
     id: "security-fix",
     title: "Security fix",
@@ -190,6 +194,34 @@ const remediation: RemediationRun = {
       introducedGaps: [],
     },
   },
+
+  verifiedPatch: {
+  fileCount: 2,
+
+  files: [
+    {
+      path: "package.json",
+      changeType: "modified",
+
+      before:
+        `{"dependency":"old","secret":"${sourceSecret}"}`,
+
+      after:
+        `{"dependency":"fixed","secret":"${sourceSecret}"}`,
+    },
+
+    {
+      path: "package-lock.json",
+      changeType: "modified",
+
+      before:
+        `old lockfile ${sourceSecret}`,
+
+      after:
+        `new lockfile ${sourceSecret}`,
+    },
+  ],
+},
 };
 
 const publicResult =
@@ -199,6 +231,63 @@ const publicResult =
 
 const serialized =
   JSON.stringify(publicResult);
+
+
+  if (
+  serialized.includes(
+    sourceSecret
+  )
+) {
+  throw new Error(
+    "Raw verified patch source content crossed the public remediation boundary."
+  );
+}
+
+
+const publicPatchFiles =
+  publicResult.verifiedPatch?.files ?? [];
+
+for (const file of publicPatchFiles) {
+  if (
+    "before" in file ||
+    "after" in file
+  ) {
+    throw new Error(
+      "Raw before/after fields crossed the verified patch public boundary."
+    );
+  }
+}
+
+
+
+
+if (
+  publicResult.verifiedPatch
+    ?.fileCount !== 2
+) {
+  throw new Error(
+    "Verified patch file count was not preserved."
+  );
+}
+
+if (
+  publicResult.verifiedPatch
+    .files[0]?.path !==
+    "package.json" ||
+  publicResult.verifiedPatch
+    .files[0]?.changeType !==
+    "modified"
+) {
+  throw new Error(
+    "Safe verified patch metadata was not preserved."
+  );
+}
+
+
+
+
+
+
 
 if (
   serialized.includes(secret)
@@ -273,6 +362,7 @@ if (
   );
 }
 
+
 console.log(
   "✓ deterministic readiness impact preserved."
 );
@@ -291,4 +381,12 @@ console.log(
 
 console.log(
   "✓ structured proof evidence preserved."
+);
+
+console.log(
+  "✓ verified patch source content excluded."
+);
+
+console.log(
+  "✓ safe verified patch metadata preserved."
 );
