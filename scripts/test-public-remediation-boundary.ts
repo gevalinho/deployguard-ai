@@ -114,6 +114,81 @@ const remediation: RemediationRun = {
           `test stderr ${secret}`,
       },
     ],
+
+        readinessImpact: {
+      before: {
+        score: 67,
+        coverage: 30,
+
+        earnedWeight: 20,
+        evaluatedWeight: 30,
+        applicableWeight: 100,
+        totalWeight: 100,
+
+        passed: 1,
+        failed: 1,
+        blocked: 0,
+        skipped: 0,
+        errors: 0,
+        totalChecks: 2,
+
+        readinessGaps: [
+          "security",
+        ],
+
+        unevaluatedCategories: [
+          "build",
+          "types",
+          "lint",
+          "database",
+          "deployment",
+          "environment",
+        ],
+
+        notApplicableCategories: [],
+      },
+
+      after: {
+        score: 100,
+        coverage: 30,
+
+        earnedWeight: 30,
+        evaluatedWeight: 30,
+        applicableWeight: 100,
+        totalWeight: 100,
+
+        passed: 2,
+        failed: 0,
+        blocked: 0,
+        skipped: 0,
+        errors: 0,
+        totalChecks: 2,
+
+        readinessGaps: [],
+
+        unevaluatedCategories: [
+          "build",
+          "types",
+          "lint",
+          "database",
+          "deployment",
+          "environment",
+        ],
+
+        notApplicableCategories: [],
+      },
+
+      scoreDelta: 33,
+      coverageDelta: 0,
+
+      improved: true,
+
+      resolvedGaps: [
+        "security",
+      ],
+
+      introducedGaps: [],
+    },
   },
 };
 
@@ -176,6 +251,31 @@ if (
     "Structured security evidence was not preserved."
   );
 }
+
+if (
+  publicResult.proof
+    ?.readinessImpact
+    ?.scoreDelta !== 33
+) {
+  throw new Error(
+    "Readiness impact was not preserved across the public remediation boundary."
+  );
+}
+
+if (
+  publicResult.proof
+    ?.readinessImpact
+    ?.resolvedGaps[0] !==
+  "security"
+) {
+  throw new Error(
+    "Resolved readiness gaps were not preserved."
+  );
+}
+
+console.log(
+  "✓ deterministic readiness impact preserved."
+);
 
 console.log(
   "✓ Public remediation boundary passed."

@@ -200,3 +200,55 @@ export function calculateReadinessScore(
     notApplicableCategories,
   };
 }
+
+export interface ReadinessScoreComparison {
+  before: ReadinessScore;
+  after: ReadinessScore;
+
+  scoreDelta: number;
+  coverageDelta: number;
+
+  improved: boolean;
+
+  resolvedGaps: CheckCategory[];
+  introducedGaps: CheckCategory[];
+}
+
+export function compareReadinessScores(
+  before: ReadinessScore,
+  after: ReadinessScore
+): ReadinessScoreComparison {
+  const resolvedGaps =
+    before.readinessGaps.filter(
+      (category) =>
+        !after.readinessGaps.includes(
+          category
+        )
+    );
+
+  const introducedGaps =
+    after.readinessGaps.filter(
+      (category) =>
+        !before.readinessGaps.includes(
+          category
+        )
+    );
+
+  return {
+    before,
+    after,
+
+    scoreDelta:
+      after.score - before.score,
+
+    coverageDelta:
+      after.coverage - before.coverage,
+
+    improved:
+      after.score > before.score ||
+      resolvedGaps.length > 0,
+
+    resolvedGaps,
+    introducedGaps,
+  };
+}

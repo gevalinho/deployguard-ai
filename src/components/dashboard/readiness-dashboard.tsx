@@ -139,8 +139,22 @@ type RemediationResult = {
         improved: boolean;
       }[];
 
-      regressionChecks:
+            regressionChecks:
         RemediationProofCheck[];
+
+            readinessImpact?: {
+        before: {
+          score: number;
+          coverage: number;
+        };
+
+        after: {
+          score: number;
+          coverage: number;
+        };
+
+        delta: number;
+      };
     };
   };
 };
@@ -1369,6 +1383,9 @@ function RemediationProof({
   const proven =
     proof?.status === "proven";
 
+  const readinessImpact =
+    proof?.readinessImpact;
+
   const comparisons =
     proof?.comparisons ?? [];
 
@@ -1382,38 +1399,46 @@ function RemediationProof({
         check.status === "passed"
     );
 
-  const securityImproved =
-    comparisons.length > 0 &&
-    comparisons.every(
-      (comparison) =>
-        comparison.improved
-    );
+  const isLintRemediation =
+  remediation.proposal.strategy ===
+  "lint_autofix";
 
-  const stages = [
-    {
-      label: "Vulnerability detected",
-      complete:
-        comparisons.length > 0,
-    },
-    {
-      label: "Controlled fix applied",
-      complete:
-        remediation.execution.status ===
-        "applied",
-    },
-    {
-      label: "Regression checks passed",
-      complete: regressionPassed,
-    },
-    {
-      label: "Security re-verified",
-      complete: securityImproved,
-    },
-    {
-      label: "Remediation proven",
-      complete: proven,
-    },
-  ];
+const targetImproved =
+  comparisons.length > 0 &&
+  comparisons.every(
+    (comparison) =>
+      comparison.improved
+  );
+
+const stages = [
+  {
+    label: isLintRemediation
+      ? "Lint failure detected"
+      : "Vulnerability detected",
+    complete:
+      comparisons.length > 0,
+  },
+  {
+    label: "Controlled fix applied",
+    complete:
+      remediation.execution.status ===
+      "applied",
+  },
+  {
+  label: "Available regression checks passed",
+  complete: regressionPassed,
+  },
+  {
+    label: isLintRemediation
+      ? "Lint re-verified"
+      : "Security re-verified",
+    complete: targetImproved,
+  },
+  {
+    label: "Remediation proven",
+    complete: proven,
+  },
+];
 
   return (
     <section
@@ -1639,6 +1664,95 @@ function RemediationProof({
                 )
               )}
             </div>
+          </div>
+        )}
+
+                {/* Deterministic readiness impact */}
+
+                {/* Deterministic readiness impact */}
+
+        {readinessImpact && (
+          <div className="mt-8">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-600">
+                Deterministic Readiness Impact
+              </p>
+
+              {readinessImpact.delta > 0 && (
+                <span className="text-xs font-medium text-emerald-400">
+                  ✓ Readiness improved
+                </span>
+              )}
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4">
+                <p className="text-xs font-medium uppercase tracking-[0.14em] text-zinc-600">
+                  Before
+                </p>
+
+                <p className="mt-2 text-2xl font-semibold text-zinc-200">
+                  {readinessImpact.before.score}
+                  <span className="text-sm text-zinc-600">
+                    /100
+                  </span>
+                </p>
+
+                <p className="mt-2 text-xs text-zinc-500">
+                  Coverage{" "}
+                  {readinessImpact.before.coverage}%
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+                <p className="text-xs font-medium uppercase tracking-[0.14em] text-emerald-400/70">
+                  After
+                </p>
+
+                <p className="mt-2 text-2xl font-semibold text-emerald-300">
+                  {readinessImpact.after.score}
+                  <span className="text-sm text-zinc-600">
+                    /100
+                  </span>
+                </p>
+
+                <p className="mt-2 text-xs text-zinc-500">
+                  Coverage{" "}
+                  {readinessImpact.after.coverage}%
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+                <p className="text-xs font-medium uppercase tracking-[0.14em] text-emerald-400/70">
+                  Score Change
+                </p>
+
+                <p
+                  className={`mt-2 text-2xl font-semibold ${
+                    readinessImpact.delta > 0
+                      ? "text-emerald-300"
+                      : readinessImpact.delta < 0
+                        ? "text-red-300"
+                        : "text-zinc-300"
+                  }`}
+                >
+                  {readinessImpact.delta > 0
+                    ? "+"
+                    : ""}
+                  {readinessImpact.delta}
+                </p>
+
+                <p className="mt-2 text-xs text-zinc-500">
+                  Deterministic delta
+                </p>
+              </div>
+            </div>
+
+            <p className="mt-3 text-xs leading-5 text-zinc-500">
+              Recalculated deterministically from verified
+              post-remediation checks. AI does not modify
+              this score.
+            </p>
           </div>
         )}
       </div>

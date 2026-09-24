@@ -37,6 +37,9 @@ export interface PublicFixProof {
 
   regressionChecks:
     PublicCheckResult[];
+
+  readinessImpact?:
+    FixProof["readinessImpact"];
 }
 
 export interface PublicRemediationRun {
@@ -115,6 +118,14 @@ export function sanitizeRemediationForPublic(
               .regressionChecks.map(
                 sanitizeCheckForPublic
               ),
+                        ...(remediation.proof
+            .readinessImpact
+            ? {
+                readinessImpact:
+                  remediation.proof
+                    .readinessImpact,
+              }
+            : {}),
         }
       : undefined;
 

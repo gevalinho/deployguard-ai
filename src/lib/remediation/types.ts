@@ -3,6 +3,14 @@ import type {
   CheckResult,
 } from "@/lib/checks/types";
 
+import type {
+  ReadinessScore,
+} from "@/lib/scoring/readiness-score";
+
+import type {
+  ReadinessScoreComparison,
+} from "@/lib/scoring/readiness-score";
+
 export type FixStatus =
   | "proposed"
   | "applied"
@@ -26,6 +34,7 @@ export interface FixProposal {
   description: string;
   target: FixTarget;
 
+  
 
 strategy:
   | "dependency_security"
@@ -38,6 +47,8 @@ risk:
 
   packageName?: string;
 }
+
+
 
 export interface FixExecutionResult {
   status: FixStatus;
@@ -69,6 +80,15 @@ export interface FixProof {
 
   regressionChecks:
     CheckResult[];
+
+  readinessImpact?:
+    ReadinessScoreComparison;
+}
+
+export interface ReadinessImpact {
+  before: ReadinessScore;
+  after: ReadinessScore;
+  delta: number;
 }
 
 export interface RemediationRun {

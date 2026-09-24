@@ -60,6 +60,11 @@ import {
   verifyLintAutofix,
 } from "@/lib/remediation/lint-autofix-verifier";
 
+import {
+  calculateReadinessScore,
+  compareReadinessScores,
+} from "@/lib/scoring/readiness-score";
+
 export interface RemoteRemediationResult {
   repository: {
     owner: string;
@@ -106,6 +111,45 @@ async function runRegressionChecks(
 
   return checks.filter(
     shouldRunRegressionCheck
+  );
+}
+
+function createRemediationReadinessImpact(
+  before: CheckResult,
+  after: CheckResult,
+  regressionChecks: CheckResult[]
+) {
+  /*
+   * Construct equivalent before/after verification
+   * sets from checks actually executed during this
+   * remediation run.
+   *
+   * The target check changes between the two sets.
+   * Regression checks remain identical.
+   */
+  const beforeChecks = [
+    ...regressionChecks,
+    before,
+  ];
+
+  const afterChecks = [
+    ...regressionChecks,
+    after,
+  ];
+
+  const beforeReadiness =
+    calculateReadinessScore(
+      beforeChecks
+    );
+
+  const afterReadiness =
+    calculateReadinessScore(
+      afterChecks
+    );
+
+  return compareReadinessScores(
+    beforeReadiness,
+    afterReadiness
   );
 }
 
@@ -360,6 +404,22 @@ const proof =
         before,
         regressionChecks
       );
+
+const targetComparison =
+  proof.comparisons.find(
+    (comparison) =>
+      comparison.checkId ===
+      proposal.target.checkId
+  );
+
+if (targetComparison) {
+  proof.readinessImpact =
+    createRemediationReadinessImpact(
+      targetComparison.before,
+      targetComparison.after,
+      regressionChecks
+    );
+}
 
 remediation.proof =
   proof;
