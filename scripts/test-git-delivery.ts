@@ -378,6 +378,55 @@ async function main() {
     );
 
     /*
+ * Delivery preparation must expose a
+ * cryptographic identity for the exact Git
+ * working-tree state prepared for commit.
+ */
+if (
+  !result.preparedDiffSha256 ||
+  !/^[a-f0-9]{64}$/.test(
+    result.preparedDiffSha256
+  )
+) {
+  throw new Error(
+    "Git delivery did not produce a valid prepared-state SHA-256."
+  );
+}
+
+const preparedDiffResult =
+  await requireGit(
+    [
+      "diff",
+      "--binary",
+      "HEAD",
+    ],
+    "Unable to independently inspect prepared Git state"
+  );
+
+const independentlyCalculatedSha256 =
+  createHash("sha256")
+    .update(
+      preparedDiffResult.stdout
+    )
+    .digest("hex");
+
+if (
+  independentlyCalculatedSha256 !==
+  result.preparedDiffSha256
+) {
+  throw new Error(
+    "Prepared Git state identity could not be independently reproduced."
+  );
+}
+
+console.log(
+  "✓ Prepared Git state cryptographically identified."
+);
+
+
+
+
+    /*
      * The protected main branch must still point
      * at the untouched original commit.
      */

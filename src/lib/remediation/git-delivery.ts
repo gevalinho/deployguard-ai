@@ -4,7 +4,9 @@ import {
   writeFileSync,
 } from "node:fs";
 
-
+import {
+  createHash,
+} from "node:crypto";
 
 import {
   tmpdir,
@@ -44,6 +46,8 @@ export interface GitDeliveryResult {
   deliveryHead?: string;
 
   changedFiles?: string[];
+
+  preparedDiffSha256?: string;
 
   artifactSha256: string;
 
@@ -276,6 +280,7 @@ export async function prepareVerifiedGitDelivery(
           branchName,
         ]
       );
+      
 
       return {
         status:
@@ -402,19 +407,88 @@ export async function prepareVerifiedGitDelivery(
       };
     }
 
+
+    /*
+ * Cryptographically identify the exact
+ * repository state prepared for commit.
+ *
+ * Commit authorization alone is insufficient:
+ * the working tree could be modified between
+ * artifact application and commit execution.
+ *
+ * The prepared diff identity allows the commit
+ * boundary to independently detect such drift.
+ */
+const diffResult =
+  await runGit(
+    repositoryPath,
+    [
+      "diff",
+      "--binary",
+      "HEAD",
+    ]
+  );
+
+if (
+  diffResult.status !== "passed"
+) {
+  return {
+    status:
+      "verification_failed",
+
+    artifactSha256:
+      artifact.sha256,
+
+    originalHead,
+    branchName,
+
+    summary:
+      "Unable to capture the prepared Git remediation state.",
+  };
+}
+
+if (
+  !diffResult.stdout
+) {
+  return {
+    status:
+      "verification_failed",
+
+    artifactSha256:
+      artifact.sha256,
+
+    originalHead,
+    branchName,
+
+    summary:
+      "Prepared Git remediation state produced no diff.",
+  };
+}
+
+const preparedDiffSha256 =
+  createHash("sha256")
+    .update(
+      diffResult.stdout
+    )
+    .digest("hex");
+
+
+
     return {
-      status: "prepared",
+  status: "prepared",
 
-      artifactSha256:
-        artifact.sha256,
+  artifactSha256:
+    artifact.sha256,
 
-      originalHead,
-      branchName,
-      changedFiles,
+  originalHead,
+  branchName,
+  changedFiles,
 
-      summary:
-        "Verified artifact was safely applied to an isolated remediation branch.",
-    };
+  preparedDiffSha256,
+
+  summary:
+    "Verified artifact was safely applied to an isolated remediation branch.",
+};
   } finally {
     rmSync(
       patchDirectory,
