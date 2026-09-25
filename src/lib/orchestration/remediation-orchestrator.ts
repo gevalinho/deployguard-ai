@@ -74,6 +74,10 @@ import {
   createVerifiedPatch,
 } from "@/lib/remediation/verified-patch";
 
+import {
+  persistProvenRemediationArtifact,
+} from "@/lib/remediation/verified-remediation-persistence";
+
 export interface RemoteRemediationResult {
   repository: {
     owner: string;
@@ -465,7 +469,8 @@ if (proof.status === "proven") {
   remediation.verifiedPatch =
     verifiedPatch;
 
-  const verifiedPatchArtifact =
+
+const verifiedPatchArtifact =
   createVerifiedPatchArtifact(
     verifiedPatch
   );
@@ -473,9 +478,35 @@ if (proof.status === "proven") {
 remediation.verifiedPatchArtifact =
   verifiedPatchArtifact;
 
+/*
+ * Persist source-bearing remediation evidence
+ * only after independent verification succeeds.
+ *
+ * Persistence records verified evidence.
+ * It does not authorize delivery, commit,
+ * or push operations.
+ */
+const persistedArtifact =
+  await persistProvenRemediationArtifact(
+    repository.fullName,
+    proof.status,
+    verifiedPatchArtifact
+  );
+
+if (!persistedArtifact) {
+  throw new Error(
+    "Proven remediation artifact was not persisted."
+  );
+}
+
+console.log(
+  `[DeployGuard Remediation] Verified artifact persisted: ${persistedArtifact.id}, SHA-256 ${persistedArtifact.sha256}.`
+);
+
 console.log(
   `[DeployGuard Remediation] Verified patch artifact generated: ${verifiedPatchArtifact.byteSize} bytes, SHA-256 ${verifiedPatchArtifact.sha256}.`
-);  
+);
+
 
   console.log(
     `[DeployGuard Remediation] Verified patch captured: ${verifiedPatch.fileCount} changed file(s).`
