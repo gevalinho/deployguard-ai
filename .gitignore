@@ -4,3 +4,5 @@ node_modules
 .deployguard/
 .next/
 tsconfig.tsbuildinfo
+
+/src/generated/prisma

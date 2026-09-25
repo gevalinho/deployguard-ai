@@ -1,0 +1,75 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RemediationDeliveryStatus {
+  PREPARED
+  COMMITTED
+  PUSHED
+  FAILED
+}
+
+model VerifiedRemediationArtifact {
+  id String @id @default(cuid())
+
+  repositoryIdentity String
+
+  format String
+
+  sha256   String
+  byteSize Int
+
+  // Trusted source-bearing content.
+  //
+  // This field must never be exposed through
+  // public API serialization.
+  content String
+
+  createdAt DateTime @default(now())
+
+  deliveries RemediationDelivery[]
+
+  @@index([sha256])
+  @@index([repositoryIdentity])
+  @@index([createdAt])
+}
+
+model RemediationDelivery {
+  id String @id @default(cuid())
+
+  artifactId String
+
+  artifact VerifiedRemediationArtifact @relation(fields: [artifactId], references: [id], onDelete: Restrict)
+
+  status RemediationDeliveryStatus @default(PREPARED)
+
+  repositoryIdentity String
+
+  originalHead String
+
+  branchName String
+
+  preparedDiffSha256 String
+
+  commitSha String?
+
+  remoteName String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  committedAt DateTime?
+  pushedAt    DateTime?
+
+  @@index([artifactId])
+  @@index([repositoryIdentity])
+  @@index([status])
+  @@index([commitSha])
+  @@index([createdAt])
+}
