@@ -79,7 +79,7 @@ async function runGit(
   );
 }
 
-function createBranchName(
+export function createRemediationBranchName(
   artifactSha256: string
 ): string {
   return (
@@ -185,9 +185,9 @@ export async function prepareVerifiedGitDelivery(
     headResult.stdout.trim();
 
   const branchName =
-    createBranchName(
-      artifact.sha256
-    );
+  createRemediationBranchName(
+    artifact.sha256
+  );
 
   const branchResult =
     await runGit(

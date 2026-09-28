@@ -26,10 +26,10 @@ import {
   prisma,
 } from "@/lib/database/prisma";
 
-import {
-  commitPersistedRemediationDelivery,
-  preparePersistedRemediationDelivery,
-} from "@/lib/remediation/remediation-delivery-pipeline";
+// import {
+//   commitPersistedRemediationDelivery,
+//   preparePersistedRemediationDelivery,
+// } from "@/lib/remediation/remediation-delivery-pipeline";
 
 import {
   persistVerifiedArtifact,
@@ -38,6 +38,12 @@ import {
 import type {
   VerifiedPatchArtifact,
 } from "@/lib/remediation/verified-patch-artifact";
+
+import {
+  commitPersistedRemediationDelivery,
+  preparePersistedRemediationDelivery,
+  pushPersistedRemediationDelivery,
+} from "@/lib/remediation/remediation-delivery-pipeline";
 
 function runGit(
   repositoryPath: string,
@@ -67,6 +73,14 @@ async function main() {
         "deployguard-delivery-pipeline-"
       )
     );
+
+    const remotePath =
+  mkdtempSync(
+    join(
+      tmpdir(),
+      "deployguard-delivery-remote-"
+    )
+  );
 
   const artifactIds:
     string[] = [];
@@ -121,6 +135,30 @@ runGit(
         "deployguard@example.test",
       ]
     );
+
+
+    /*
+ * Create an isolated bare Git repository that
+ * acts as the remote for this integration test.
+ */
+runGit(
+  remotePath,
+  [
+    "init",
+    "--bare",
+  ]
+);
+
+runGit(
+  repositoryPath,
+  [
+    "remote",
+    "add",
+    "origin",
+    remotePath,
+  ]
+);
+
 
     const targetPath =
       join(
@@ -695,6 +733,173 @@ console.log(
   "✓ COMMITTED delivery replay rejected without Git mutation."
 );
 
+
+/*
+ * A COMMITTED remediation may now cross the
+ * separately authorized remote delivery boundary.
+ */
+const pushResult =
+  await pushPersistedRemediationDelivery(
+    repositoryPath,
+    repositoryIdentity,
+    result.delivery.id,
+    "origin",
+    signingSecret
+  );
+
+if (
+  pushResult.status !==
+    "pushed" ||
+  !pushResult.delivery ||
+  !pushResult.gitPush
+) {
+  throw new Error(
+    `Persisted remediation push failed: ${pushResult.summary}`
+  );
+}
+
+console.log(
+  "✓ COMMITTED remediation crossed authorized Git push boundary."
+);
+
+if (
+  pushResult.delivery.status !==
+    "PUSHED"
+) {
+  throw new Error(
+    "Successful Git push was not durably recorded as PUSHED."
+  );
+}
+
+console.log(
+  "✓ COMMITTED → PUSHED transition persisted."
+);
+
+/*
+ * Independently inspect the bare remote.
+ */
+const remoteCommit =
+  runGit(
+    remotePath,
+    [
+      "rev-parse",
+      `refs/heads/${pushResult.delivery.branchName}`,
+    ]
+  );
+
+if (
+  remoteCommit !==
+    committedHead
+) {
+  throw new Error(
+    "Remote remediation branch does not contain the exact authorized commit."
+  );
+}
+
+console.log(
+  "✓ Remote contains exact authorized remediation commit."
+);
+
+/*
+ * The protected source branch must not have been
+ * created or modified by DeployGuard.
+ */
+const remoteMainExists =
+  runGit(
+    remotePath,
+    [
+      "branch",
+      "--list",
+      "main",
+    ]
+  ) !== "";
+
+if (remoteMainExists) {
+  throw new Error(
+    "DeployGuard unexpectedly pushed directly to main."
+  );
+}
+
+console.log(
+  "✓ Protected main branch remained untouched."
+);
+
+/*
+ * Reload durable PUSHED evidence independently.
+ */
+const pushedDatabaseRecord =
+  await prisma
+    .remediationDelivery
+    .findUnique({
+      where: {
+        id:
+          result.delivery.id,
+      },
+    });
+
+if (
+  !pushedDatabaseRecord ||
+  pushedDatabaseRecord.status !==
+    "PUSHED" ||
+  pushedDatabaseRecord.commitSha !==
+    committedHead ||
+  pushedDatabaseRecord.remoteName !==
+    "origin" ||
+  !pushedDatabaseRecord.pushedAt
+) {
+  throw new Error(
+    "Durable PUSHED evidence differs from independently observed remote state."
+  );
+}
+
+console.log(
+  "✓ Database PUSHED evidence independently verified."
+);
+
+/*
+ * PUSHED is terminal. Replaying the delivery must
+ * not cross the push boundary again.
+ */
+const pushReplay =
+  await pushPersistedRemediationDelivery(
+    repositoryPath,
+    repositoryIdentity,
+    result.delivery.id,
+    "origin",
+    signingSecret
+  );
+
+if (
+  pushReplay.status !==
+    "invalid_delivery_state"
+) {
+  throw new Error(
+    `Expected PUSHED replay rejection, received ${pushReplay.status}.`
+  );
+}
+
+const remoteCommitAfterReplay =
+  runGit(
+    remotePath,
+    [
+      "rev-parse",
+      `refs/heads/${pushResult.delivery.branchName}`,
+    ]
+  );
+
+if (
+  remoteCommitAfterReplay !==
+    remoteCommit
+) {
+  throw new Error(
+    "Rejected PUSHED replay changed remote Git state."
+  );
+}
+
+console.log(
+  "✓ PUSHED delivery replay rejected without remote mutation."
+);
+
     console.log(
       "\n✓ Persisted remediation delivery pipeline passed."
     );
@@ -743,6 +948,15 @@ console.log(
         force: true,
       }
     );
+
+    rmSync(
+  remotePath,
+  {
+    recursive: true,
+    force: true,
+  }
+);
+
   }
 }
 

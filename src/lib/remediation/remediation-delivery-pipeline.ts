@@ -20,6 +20,7 @@ import {
 
 import {
   getTrustedVerifiedArtifact,
+  getVerifiedArtifactMetadata,
 } from "@/lib/remediation/trusted-artifact-repository";
 
 import type {
@@ -36,6 +37,23 @@ import {
   type GitCommitExecutionResult,
 } from "@/lib/remediation/git-commit-executor";
 
+import {
+  issueGitPushCapability,
+  signGitPushCapability,
+} from "@/lib/remediation/git-push-capability";
+
+import {
+  executeVerifiedGitPush,
+  type GitPushExecutionResult,
+} from "@/lib/remediation/git-push-executor";
+
+import {
+  createRemediationBranchName,
+} from "@/lib/remediation/git-delivery";
+
+import {
+  markDeliveryPushed,
+} from "@/lib/remediation/remediation-delivery-repository";
 
 
 export interface PreparePersistedRemediationDeliveryResult {
@@ -86,6 +104,206 @@ export interface CommitPersistedRemediationDeliveryResult {
 
   summary: string;
 }
+
+
+export interface PersistedRemediationPushResult {
+  status:
+    | "pushed"
+    | "delivery_not_found"
+    | "invalid_delivery_state"
+    | "repository_mismatch"
+    | "invalid_remediation_branch"
+    | "push_failed"
+    | "persistence_failed";
+
+  delivery?:
+    RemediationDeliveryMetadata;
+
+  gitPush?:
+    GitPushExecutionResult;
+
+  summary: string;
+}
+
+export async function pushPersistedRemediationDelivery(
+  repositoryPath: string,
+  repositoryIdentity: string,
+  deliveryId: string,
+  remoteName: string,
+  signingSecret: string
+): Promise<PersistedRemediationPushResult> {
+  const delivery =
+    await getRemediationDelivery(
+      deliveryId
+    );
+
+  if (!delivery) {
+    return {
+      status:
+        "delivery_not_found",
+
+      summary:
+        "Persisted remediation delivery was not found.",
+    };
+  }
+
+  /*
+   * Only an independently verified COMMITTED
+   * delivery may cross the remote push boundary.
+   */
+  if (
+    delivery.status !==
+      "COMMITTED" ||
+    !delivery.commitSha
+  ) {
+    return {
+      status:
+        "invalid_delivery_state",
+
+      delivery,
+
+      summary:
+        "Only a committed remediation delivery may be pushed.",
+    };
+  }
+
+  if (
+    delivery.repositoryIdentity !==
+    repositoryIdentity
+  ) {
+    return {
+      status:
+        "repository_mismatch",
+
+      delivery,
+
+      summary:
+        "Persisted remediation delivery belongs to another repository.",
+    };
+  }
+
+  /*
+   * DeployGuard owns exactly one deterministic
+   * branch for this verified artifact.
+   *
+   * Merely being a non-main branch is not enough.
+   */
+  const artifact =
+    await getVerifiedArtifactMetadata(
+      delivery.artifactId
+    );
+
+  if (!artifact) {
+    return {
+      status:
+        "invalid_delivery_state",
+
+      delivery,
+
+      summary:
+        "Verified remediation artifact metadata could not be recovered.",
+    };
+  }
+
+  const expectedBranch =
+    createRemediationBranchName(
+      artifact.sha256
+    );
+
+  if (
+    delivery.branchName !==
+    expectedBranch
+  ) {
+    return {
+      status:
+        "invalid_remediation_branch",
+
+      delivery,
+
+      summary:
+        "DeployGuard may push only the deterministic remediation branch owned by the verified artifact.",
+    };
+  }
+
+  const capability =
+    issueGitPushCapability(
+      repositoryIdentity,
+      remoteName,
+      delivery.branchName,
+      delivery.commitSha,
+      artifact.sha256
+    );
+
+  const signedCapability =
+    signGitPushCapability(
+      capability,
+      signingSecret
+    );
+
+  const gitPush =
+    await executeVerifiedGitPush(
+      repositoryPath,
+      repositoryIdentity,
+      artifact.sha256,
+      signedCapability,
+      signingSecret
+    );
+
+  if (
+    gitPush.status !==
+    "pushed"
+  ) {
+    return {
+      status:
+        "push_failed",
+
+      delivery,
+      gitPush,
+
+      summary:
+        gitPush.summary,
+    };
+  }
+
+  /*
+   * Git has already independently verified that
+   * the remote branch resolves to the exact
+   * authorized immutable commit.
+   *
+   * Only now may durable state become PUSHED.
+   */
+  const pushed =
+    await markDeliveryPushed(
+      delivery.id,
+      remoteName
+    );
+
+  if (!pushed) {
+    return {
+      status:
+        "persistence_failed",
+
+      delivery,
+      gitPush,
+
+      summary:
+        "Verified Git push succeeded but durable PUSHED transition failed.",
+    };
+  }
+
+  return {
+    status: "pushed",
+
+    delivery:
+      pushed,
+
+    gitPush,
+
+    summary:
+      "Committed verified remediation was pushed to its isolated DeployGuard branch and durably recorded.",
+  };
+}
+
 
 /*
  * Reconstruct a VerifiedPatchArtifact only after
