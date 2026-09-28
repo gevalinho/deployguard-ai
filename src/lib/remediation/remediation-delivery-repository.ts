@@ -6,6 +6,7 @@ export interface PreparedDeliveryInput {
   artifactId: string;
   repositoryIdentity: string;
   originalHead: string;
+  sourceBranch: string;
   branchName: string;
   preparedDiffSha256: string;
 }
@@ -22,6 +23,7 @@ export interface RemediationDeliveryMetadata {
 
   repositoryIdentity: string;
   originalHead: string;
+  sourceBranch: string;
   branchName: string;
   preparedDiffSha256: string;
 
@@ -62,6 +64,9 @@ export async function createPreparedDelivery(
       originalHead:
         input.originalHead,
 
+      sourceBranch:
+        input.sourceBranch,
+
       branchName:
         input.branchName,
 
@@ -74,7 +79,9 @@ export async function createPreparedDelivery(
 export async function markDeliveryCommitted(
   deliveryId: string,
   commitSha: string
-): Promise<RemediationDeliveryMetadata | null> {
+): Promise<
+  RemediationDeliveryMetadata | null
+> {
   /*
    * This conditional update makes the database
    * transition atomic.
@@ -84,13 +91,19 @@ export async function markDeliveryCommitted(
   const result =
     await prisma.remediationDelivery.updateMany({
       where: {
-        id: deliveryId,
-        status: "PREPARED",
+        id:
+          deliveryId,
+
+        status:
+          "PREPARED",
       },
 
       data: {
-        status: "COMMITTED",
+        status:
+          "COMMITTED",
+
         commitSha,
+
         committedAt:
           new Date(),
       },
@@ -102,7 +115,8 @@ export async function markDeliveryCommitted(
 
   return prisma.remediationDelivery.findUnique({
     where: {
-      id: deliveryId,
+      id:
+        deliveryId,
     },
   });
 }
@@ -110,7 +124,9 @@ export async function markDeliveryCommitted(
 export async function markDeliveryPushed(
   deliveryId: string,
   remoteName: string
-): Promise<RemediationDeliveryMetadata | null> {
+): Promise<
+  RemediationDeliveryMetadata | null
+> {
   /*
    * A delivery may be recorded as PUSHED only
    * after a successful COMMITTED transition.
@@ -118,8 +134,11 @@ export async function markDeliveryPushed(
   const result =
     await prisma.remediationDelivery.updateMany({
       where: {
-        id: deliveryId,
-        status: "COMMITTED",
+        id:
+          deliveryId,
+
+        status:
+          "COMMITTED",
 
         commitSha: {
           not: null,
@@ -127,8 +146,11 @@ export async function markDeliveryPushed(
       },
 
       data: {
-        status: "PUSHED",
+        status:
+          "PUSHED",
+
         remoteName,
+
         pushedAt:
           new Date(),
       },
@@ -140,14 +162,17 @@ export async function markDeliveryPushed(
 
   return prisma.remediationDelivery.findUnique({
     where: {
-      id: deliveryId,
+      id:
+        deliveryId,
     },
   });
 }
 
 export async function markDeliveryFailed(
   deliveryId: string
-): Promise<RemediationDeliveryMetadata | null> {
+): Promise<
+  RemediationDeliveryMetadata | null
+> {
   /*
    * PUSHED is terminal.
    *
@@ -158,7 +183,8 @@ export async function markDeliveryFailed(
   const result =
     await prisma.remediationDelivery.updateMany({
       where: {
-        id: deliveryId,
+        id:
+          deliveryId,
 
         status: {
           in: [
@@ -169,7 +195,8 @@ export async function markDeliveryFailed(
       },
 
       data: {
-        status: "FAILED",
+        status:
+          "FAILED",
       },
     });
 
@@ -179,17 +206,21 @@ export async function markDeliveryFailed(
 
   return prisma.remediationDelivery.findUnique({
     where: {
-      id: deliveryId,
+      id:
+        deliveryId,
     },
   });
 }
 
 export async function getRemediationDelivery(
   deliveryId: string
-): Promise<RemediationDeliveryMetadata | null> {
+): Promise<
+  RemediationDeliveryMetadata | null
+> {
   return prisma.remediationDelivery.findUnique({
     where: {
-      id: deliveryId,
+      id:
+        deliveryId,
     },
   });
 }

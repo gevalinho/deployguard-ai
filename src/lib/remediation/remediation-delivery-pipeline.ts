@@ -333,11 +333,17 @@ function reconstructVerifiedPatchArtifact(
   };
 }
 
+export interface VerifiedRepositoryDeliveryProvenance {
+  commitSha: string;
+  sourceBranch: string;
+}
+
 export async function preparePersistedRemediationDelivery(
   repositoryPath: string,
   repositoryIdentity: string,
   artifactId: string,
-  artifactSigningSecret: string
+  artifactSigningSecret: string,
+  provenance: VerifiedRepositoryDeliveryProvenance
 ): Promise<PreparePersistedRemediationDeliveryResult> {
   /*
    * Retrieve source-bearing evidence only inside
@@ -496,11 +502,74 @@ export async function preparePersistedRemediationDelivery(
   }
 
   /*
-   * Persist PREPARED only after the real Git
-   * preparation boundary succeeds.
+   * Repository provenance must be complete.
+   *
+   * The source branch is remote-observed evidence,
+   * not a value that may be guessed from a local
+   * branch name or hard-coded default.
+   */
+  if (
+    !provenance.commitSha ||
+    !provenance.sourceBranch
+  ) {
+    return {
+      status:
+        "delivery_failed",
+
+      artifactId,
+
+      artifactSha256:
+        artifact.sha256,
+
+      gitDelivery,
+
+      summary:
+        "Verified repository branch provenance is incomplete.",
+    };
+  }
+
+  /*
+   * Bind Git delivery to the exact commit whose
+   * source branch was independently established
+   * during repository ingestion.
+   *
+   * A mismatch means repository state changed or
+   * the supplied provenance belongs to another
+   * repository state. In either case persistence
+   * must be denied.
+   */
+  if (
+    gitDelivery.originalHead !==
+    provenance.commitSha
+  ) {
+    return {
+      status:
+        "delivery_failed",
+
+      artifactId,
+
+      artifactSha256:
+        artifact.sha256,
+
+      gitDelivery,
+
+      summary:
+        "Git delivery HEAD does not match the verified repository provenance commit.",
+    };
+  }
+
+  /*
+   * Persist PREPARED only after:
+   *
+   * 1. verified artifact recovery,
+   * 2. capability authorization,
+   * 3. real Git preparation,
+   * 4. complete Git evidence,
+   * 5. verified branch provenance, and
+   * 6. exact provenance/Git HEAD agreement.
    *
    * The database records what was proven.
-   * It does not authorize the preparation.
+   * It does not authorize preparation.
    */
   const delivery =
     await createPreparedDelivery({
@@ -511,6 +580,9 @@ export async function preparePersistedRemediationDelivery(
       originalHead:
         gitDelivery.originalHead,
 
+      sourceBranch:
+        provenance.sourceBranch,
+
       branchName:
         gitDelivery.branchName,
 
@@ -519,7 +591,8 @@ export async function preparePersistedRemediationDelivery(
     });
 
   return {
-    status: "prepared",
+    status:
+      "prepared",
 
     artifactId,
 
@@ -531,7 +604,7 @@ export async function preparePersistedRemediationDelivery(
     gitDelivery,
 
     summary:
-      "Persisted verified artifact was safely prepared for Git delivery and recorded as PREPARED.",
+      "Persisted verified remediation artifact was safely prepared for Git delivery with verified source-branch provenance.",
   };
 }
 

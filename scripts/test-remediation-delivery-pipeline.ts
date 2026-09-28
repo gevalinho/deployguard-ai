@@ -274,13 +274,20 @@ runGit(
      * Cross-repository replay must be rejected
      * before any Git mutation occurs.
      */
-    const mismatch =
-      await preparePersistedRemediationDelivery(
-        repositoryPath,
-        "deployguard-test/other-repository",
-        persisted.id,
-        signingSecret
-      );
+   const mismatch =
+  await preparePersistedRemediationDelivery(
+    repositoryPath,
+    "deployguard-test/other-repository",
+    persisted.id,
+    signingSecret,
+    {
+      commitSha:
+        originalHead,
+
+      sourceBranch:
+        "main",
+    }
+  );
 
     if (
       mismatch.status !==
@@ -339,12 +346,19 @@ runGit(
      * Execute the authorized preparation path.
      */
     const result =
-      await preparePersistedRemediationDelivery(
-        repositoryPath,
-        repositoryIdentity,
-        persisted.id,
-        signingSecret
-      );
+  await preparePersistedRemediationDelivery(
+    repositoryPath,
+    repositoryIdentity,
+    persisted.id,
+    signingSecret,
+    {
+      commitSha:
+        originalHead,
+
+      sourceBranch:
+        "main",
+    }
+  );
 
     if (
       result.status !==
@@ -360,6 +374,19 @@ runGit(
     deliveryIds.push(
       result.delivery.id
     );
+
+    if (
+  result.delivery.sourceBranch !==
+  "main"
+) {
+  throw new Error(
+    "Prepared delivery did not preserve source branch provenance."
+  );
+}
+
+console.log(
+  "✓ Verified source branch provenance persisted."
+);
 
     console.log(
       "✓ Persisted artifact crossed authorized Git preparation boundary."

@@ -53,6 +53,8 @@ model RemediationDelivery {
 
   originalHead String
 
+  sourceBranch String
+
   branchName String
 
   preparedDiffSha256 String

@@ -97,6 +97,9 @@ async function main() {
 
         preparedDiffSha256:
           sha256,
+
+        sourceBranch:
+  "main",  
       });
 
     deliveryId =
@@ -326,6 +329,9 @@ async function main() {
 
         preparedDiffSha256:
           sha256,
+
+          sourceBranch:
+  "main",
       });
 
     const failed =
