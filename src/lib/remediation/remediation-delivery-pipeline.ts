@@ -14,6 +14,8 @@ import {
 import {
   createPreparedDelivery,
   type RemediationDeliveryMetadata,
+  getRemediationDelivery,
+  markDeliveryCommitted,
 } from "@/lib/remediation/remediation-delivery-repository";
 
 import {
@@ -23,6 +25,18 @@ import {
 import type {
   VerifiedPatchArtifact,
 } from "@/lib/remediation/verified-patch-artifact";
+
+import {
+  issueGitCommitCapability,
+  signGitCommitCapability,
+} from "@/lib/remediation/git-commit-capability";
+
+import {
+  executeVerifiedGitCommit,
+  type GitCommitExecutionResult,
+} from "@/lib/remediation/git-commit-executor";
+
+
 
 export interface PreparePersistedRemediationDeliveryResult {
   status:
@@ -42,6 +56,33 @@ export interface PreparePersistedRemediationDeliveryResult {
 
   gitDelivery?:
     GitDeliveryResult;
+
+  summary: string;
+}
+
+export interface CommitPersistedRemediationDeliveryResult {
+  status:
+    | "committed"
+    | "delivery_not_found"
+    | "invalid_delivery_state"
+    | "repository_mismatch"
+    | "artifact_not_found"
+    | "artifact_mismatch"
+    | "commit_denied"
+    | "commit_failed"
+    | "persistence_failed";
+
+  deliveryId: string;
+
+  artifactId?: string;
+  artifactSha256?: string;
+  commitSha?: string;
+
+  delivery?:
+    RemediationDeliveryMetadata;
+
+  gitCommit?:
+    GitCommitExecutionResult;
 
   summary: string;
 }
@@ -273,5 +314,281 @@ export async function preparePersistedRemediationDelivery(
 
     summary:
       "Persisted verified artifact was safely prepared for Git delivery and recorded as PREPARED.",
+  };
+}
+
+export async function commitPersistedRemediationDelivery(
+  repositoryPath: string,
+  repositoryIdentity: string,
+  deliveryId: string,
+  commitSigningSecret: string
+): Promise<CommitPersistedRemediationDeliveryResult> {
+  /*
+   * Load durable evidence describing the exact
+   * Git state that previously crossed the
+   * PREPARED boundary.
+   *
+   * Persistence is evidence, not commit authority.
+   */
+  const delivery =
+    await getRemediationDelivery(
+      deliveryId
+    );
+
+  if (!delivery) {
+    return {
+      status:
+        "delivery_not_found",
+
+      deliveryId,
+
+      summary:
+        "Persisted remediation delivery was not found.",
+    };
+  }
+
+  if (
+    delivery.status !==
+    "PREPARED"
+  ) {
+    return {
+      status:
+        "invalid_delivery_state",
+
+      deliveryId,
+
+      artifactId:
+        delivery.artifactId,
+
+      delivery,
+
+      summary:
+        `Remediation delivery is ${delivery.status}; only PREPARED delivery may cross the commit boundary.`,
+    };
+  }
+
+  if (
+    delivery.repositoryIdentity !==
+    repositoryIdentity
+  ) {
+    return {
+      status:
+        "repository_mismatch",
+
+      deliveryId,
+
+      artifactId:
+        delivery.artifactId,
+
+      delivery,
+
+      summary:
+        "Persisted delivery repository identity does not match the commit repository.",
+    };
+  }
+
+  /*
+   * Recover the referenced immutable artifact
+   * identity independently from persistence.
+   */
+  const artifact =
+    await getTrustedVerifiedArtifact(
+      delivery.artifactId
+    );
+
+  if (!artifact) {
+    return {
+      status:
+        "artifact_not_found",
+
+      deliveryId,
+
+      artifactId:
+        delivery.artifactId,
+
+      delivery,
+
+      summary:
+        "Verified remediation artifact referenced by the delivery was not found.",
+    };
+  }
+
+  if (
+    artifact.repositoryIdentity !==
+      repositoryIdentity ||
+    artifact.repositoryIdentity !==
+      delivery.repositoryIdentity
+  ) {
+    return {
+      status:
+        "artifact_mismatch",
+
+      deliveryId,
+
+      artifactId:
+        delivery.artifactId,
+
+      artifactSha256:
+        artifact.sha256,
+
+      delivery,
+
+      summary:
+        "Verified artifact identity does not match the persisted remediation delivery.",
+    };
+  }
+
+  /*
+   * Issue fresh, short-lived authority scoped to
+   * the exact state that was previously proven:
+   *
+   * artifact
+   * + original HEAD
+   * + branch
+   * + prepared diff.
+   *
+   * The database row itself does not authorize
+   * the commit.
+   */
+  const capability =
+    issueGitCommitCapability(
+      artifact.sha256,
+      delivery.originalHead,
+      delivery.branchName,
+      delivery.preparedDiffSha256
+    );
+
+  const signedCapability =
+    signGitCommitCapability(
+      capability,
+      commitSigningSecret
+    );
+
+  /*
+   * The executor independently re-observes Git
+   * state before performing the mutation.
+   */
+  const gitCommit =
+    await executeVerifiedGitCommit(
+      repositoryPath,
+      signedCapability,
+      commitSigningSecret
+    );
+
+  if (
+    gitCommit.status !==
+    "committed"
+  ) {
+    return {
+      status:
+        gitCommit.status ===
+        "denied"
+          ? "commit_denied"
+          : "commit_failed",
+
+      deliveryId,
+
+      artifactId:
+        delivery.artifactId,
+
+      artifactSha256:
+        artifact.sha256,
+
+      delivery,
+
+      gitCommit,
+
+      summary:
+        gitCommit.summary,
+    };
+  }
+
+  /*
+   * A successful commit must return the immutable
+   * commit identity before durable state may move
+   * from PREPARED to COMMITTED.
+   */
+  if (!gitCommit.commitSha) {
+    return {
+      status:
+        "commit_failed",
+
+      deliveryId,
+
+      artifactId:
+        delivery.artifactId,
+
+      artifactSha256:
+        artifact.sha256,
+
+      delivery,
+
+      gitCommit,
+
+      summary:
+        "Verified Git commit succeeded without returning an immutable commit SHA.",
+    };
+  }
+
+  /*
+   * Persist the transition only after the real
+   * Git commit boundary succeeds.
+   *
+   * markDeliveryCommitted() independently
+   * enforces PREPARED -> COMMITTED atomically.
+   */
+  const committedDelivery =
+    await markDeliveryCommitted(
+      deliveryId,
+      gitCommit.commitSha
+    );
+
+  if (!committedDelivery) {
+    return {
+      status:
+        "persistence_failed",
+
+      deliveryId,
+
+      artifactId:
+        delivery.artifactId,
+
+      artifactSha256:
+        artifact.sha256,
+
+      commitSha:
+        gitCommit.commitSha,
+
+      delivery,
+
+      gitCommit,
+
+      summary:
+        "Git commit succeeded, but the durable PREPARED to COMMITTED transition was rejected.",
+    };
+  }
+
+  return {
+    status:
+      "committed",
+
+    deliveryId,
+
+    artifactId:
+      delivery.artifactId,
+
+    artifactSha256:
+      artifact.sha256,
+
+    commitSha:
+      gitCommit.commitSha,
+
+    delivery:
+      committedDelivery,
+
+    gitCommit,
+
+    summary:
+      "Prepared remediation was safely committed and durably recorded as COMMITTED.",
   };
 }

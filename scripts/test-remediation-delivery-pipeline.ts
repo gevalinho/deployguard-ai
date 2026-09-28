@@ -27,6 +27,7 @@ import {
 } from "@/lib/database/prisma";
 
 import {
+  commitPersistedRemediationDelivery,
   preparePersistedRemediationDelivery,
 } from "@/lib/remediation/remediation-delivery-pipeline";
 
@@ -488,6 +489,211 @@ runGit(
     console.log(
       "✓ Database PREPARED record independently verified."
     );
+
+    /*
+ * The durable PREPARED record now describes the
+ * exact Git state authorized to cross the commit
+ * boundary.
+ *
+ * Commit authority must still be freshly issued
+ * and independently verified by the executor.
+ */
+const commitResult =
+  await commitPersistedRemediationDelivery(
+    repositoryPath,
+    repositoryIdentity,
+    result.delivery.id,
+    signingSecret
+  );
+
+if (
+  commitResult.status !==
+    "committed" ||
+  !commitResult.commitSha ||
+  !commitResult.delivery ||
+  !commitResult.gitCommit
+) {
+  throw new Error(
+    `Persisted remediation commit failed: ${commitResult.summary}`
+  );
+}
+
+console.log(
+  "✓ PREPARED remediation crossed authorized Git commit boundary."
+);
+
+if (
+  commitResult.delivery.status !==
+    "COMMITTED"
+) {
+  throw new Error(
+    "Successful Git commit was not durably recorded as COMMITTED."
+  );
+}
+
+console.log(
+  "✓ PREPARED → COMMITTED transition persisted."
+);
+
+/*
+ * Independently inspect Git rather than trusting
+ * the commit executor result.
+ */
+const committedHead =
+  runGit(
+    repositoryPath,
+    [
+      "rev-parse",
+      "HEAD",
+    ]
+  );
+
+if (
+  committedHead !==
+    commitResult.commitSha
+) {
+  throw new Error(
+    "Current Git HEAD differs from the committed remediation SHA."
+  );
+}
+
+if (
+  committedHead ===
+    originalHead
+) {
+  throw new Error(
+    "Remediation commit did not advance Git HEAD."
+  );
+}
+
+console.log(
+  "✓ Immutable remediation commit independently observed."
+);
+
+/*
+ * The remediation commit must descend directly
+ * from the original immutable repository HEAD.
+ */
+const commitParent =
+  runGit(
+    repositoryPath,
+    [
+      "rev-parse",
+      `${committedHead}^`,
+    ]
+  );
+
+if (
+  commitParent !==
+    originalHead
+) {
+  throw new Error(
+    "Remediation commit parent differs from the authorized original HEAD."
+  );
+}
+
+console.log(
+  "✓ Remediation commit preserves authorized parent HEAD."
+);
+
+/*
+ * The commit executor should leave no residual
+ * uncommitted mutation behind.
+ */
+const statusAfterCommit =
+  runGit(
+    repositoryPath,
+    [
+      "status",
+      "--porcelain",
+    ]
+  );
+
+if (
+  statusAfterCommit !==
+    ""
+) {
+  throw new Error(
+    "Working tree is not clean after verified remediation commit."
+  );
+}
+
+console.log(
+  "✓ Working tree clean after verified commit."
+);
+
+/*
+ * Reload durable state independently.
+ */
+const committedDatabaseRecord =
+  await prisma
+    .remediationDelivery
+    .findUnique({
+      where: {
+        id:
+          result.delivery.id,
+      },
+    });
+
+if (
+  !committedDatabaseRecord ||
+  committedDatabaseRecord.status !==
+    "COMMITTED" ||
+  committedDatabaseRecord.commitSha !==
+    committedHead ||
+  !committedDatabaseRecord.committedAt
+) {
+  throw new Error(
+    "Durable COMMITTED evidence differs from independently observed Git commit."
+  );
+}
+
+console.log(
+  "✓ Database COMMITTED evidence independently verified."
+);
+
+/*
+ * COMMITTED is not replayable through the
+ * PREPARED → COMMITTED orchestration boundary.
+ */
+const replayResult =
+  await commitPersistedRemediationDelivery(
+    repositoryPath,
+    repositoryIdentity,
+    result.delivery.id,
+    signingSecret
+  );
+
+if (
+  replayResult.status !==
+    "invalid_delivery_state"
+) {
+  throw new Error(
+    `Expected committed delivery replay rejection, received ${replayResult.status}.`
+  );
+}
+
+const headAfterReplay =
+  runGit(
+    repositoryPath,
+    [
+      "rev-parse",
+      "HEAD",
+    ]
+  );
+
+if (
+  headAfterReplay !==
+    committedHead
+) {
+  throw new Error(
+    "Rejected commit replay mutated Git history."
+  );
+}
+
+console.log(
+  "✓ COMMITTED delivery replay rejected without Git mutation."
+);
 
     console.log(
       "\n✓ Persisted remediation delivery pipeline passed."
