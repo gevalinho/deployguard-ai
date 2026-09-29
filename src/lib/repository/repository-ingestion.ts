@@ -30,6 +30,7 @@ export interface RepositoryIngestionProvenance {
 }
 
 interface RepositoryCacheMetadata {
+  contentIdentityVerified?: boolean;
   cachedAt: string;
   repository: string;
   commitSha?: string;
@@ -252,16 +253,15 @@ function removeRepositoryCache(repository: GitHubRepository): void {
 async function saveRepositoryToCache(
   repository: GitHubRepository,
   sourcePath: string,
+  provenance: RepositoryIngestionProvenance,
 ): Promise<void> {
   const cacheDirectory = getCacheDirectory(repository);
 
   const cachePath = getCachedRepositoryPath(repository);
 
-  const remoteHead = await getRemoteHeadIdentity(repository);
-
-  const commitSha = remoteHead?.commitSha;
-
-  const sourceBranch = remoteHead?.sourceBranch;
+  // Cache the identity of the fetched content, not a later observation of HEAD.
+  const commitSha = provenance.commitSha;
+  const sourceBranch = provenance.sourceBranch;
 
   removeRepositoryCache(repository);
 
@@ -275,6 +275,7 @@ async function saveRepositoryToCache(
   });
 
   const metadata: RepositoryCacheMetadata = {
+    contentIdentityVerified: provenance.remoteVerified,
     cachedAt: new Date().toISOString(),
 
     repository: repository.fullName,
@@ -329,7 +330,7 @@ async function copyCachedRepository(
 
   let provenance: RepositoryIngestionProvenance | null = null;
 
-  if (remoteCommitSha && metadata.commitSha) {
+  if (remoteCommitSha && metadata.commitSha && metadata.contentIdentityVerified === true) {
     if (remoteCommitSha !== metadata.commitSha) {
       console.log(
         `[Repository Ingestion] Cache stale for ${repository.fullName}: remote HEAD changed.`,
@@ -485,11 +486,11 @@ async function copyCachedRepository(
   };
 }
 
-function createArchiveUrl(repository: GitHubRepository): string {
+function createArchiveUrl(repository: GitHubRepository, commitSha?: string): string {
   return (
     "https://api.github.com/repos/" +
     `${encodeURIComponent(repository.owner)}/` +
-    `${encodeURIComponent(repository.name)}/tarball`
+    `${encodeURIComponent(repository.name)}/tarball${commitSha ? `/${commitSha}` : ""}`
   );
 }
 
@@ -498,10 +499,11 @@ async function tryArchiveDownload(
   temporaryRoot: string,
   repositoryPath: string,
   onProgress?: RepositoryIngestionProgress,
+  commitSha?: string,
 ): Promise<boolean> {
   const archivePath = join(temporaryRoot, "repository.tar.gz");
 
-  const archiveUrl = createArchiveUrl(repository);
+  const archiveUrl = createArchiveUrl(repository, commitSha);
 
   console.log("[Repository Ingestion] Trying GitHub archive...");
 
@@ -812,11 +814,15 @@ export async function ingestGitHubRepository(
 
       await onProgress?.("Repository cache miss. Fetching from GitHub...");
 
+      // Observe first, then fetch the immutable commit. A moving default branch
+      // must not label content from one commit with another commit's identity.
+      const remoteHead = await getRemoteHeadIdentity(repository);
       const archiveSucceeded = await tryArchiveDownload(
         repository,
         temporaryRoot,
         repositoryPath,
         onProgress,
+        remoteHead?.commitSha,
       );
 
       if (!archiveSucceeded) {
@@ -834,38 +840,24 @@ export async function ingestGitHubRepository(
         );
       }
 
-      /*
-       * The repository contents were obtained directly
-       * from GitHub during this ingestion.
-       *
-       * This is different from commit verification:
-       * fresh-remote describes the source of the
-       * repository contents.
-       */
-      const remoteHead =
-  await getRemoteHeadIdentity(
-    repository,
-  );
-
-provenance = {
-  source: "fresh-remote",
-
-  ...(remoteHead
-    ? {
-        commitSha:
-          remoteHead.commitSha,
-
-        sourceBranch:
-          remoteHead.sourceBranch,
+      let contentIdentityVerified = Boolean(remoteHead && archiveSucceeded);
+      if (!archiveSucceeded && remoteHead) {
+        const head = await runCommand("git", ["rev-parse", "HEAD"], repositoryPath);
+        const branch = await runCommand("git", ["branch", "--show-current"], repositoryPath);
+        contentIdentityVerified = head.status === "passed" && branch.status === "passed" &&
+          head.stdout.trim() === remoteHead.commitSha && branch.stdout.trim() === remoteHead.sourceBranch;
       }
-    : {}),
-
-  remoteVerified:
-    remoteHead !== null,
-};
+      provenance = {
+        source: "fresh-remote",
+        ...(contentIdentityVerified && remoteHead ? {
+          commitSha: remoteHead.commitSha,
+          sourceBranch: remoteHead.sourceBranch,
+        } : {}),
+        remoteVerified: contentIdentityVerified,
+      };
 
       try {
-        await saveRepositoryToCache(repository, repositoryPath);
+        await saveRepositoryToCache(repository, repositoryPath, provenance);
       } catch (cacheError) {
         console.warn(
           "[Repository Ingestion] Repository was ingested successfully, but caching failed.",

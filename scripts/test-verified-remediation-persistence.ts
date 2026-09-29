@@ -125,7 +125,8 @@ async function main() {
       await persistProvenRemediationArtifact(
         repositoryIdentity,
         "proven",
-        artifact
+        artifact,
+        { source: "fresh-remote", remoteVerified: true, commitSha: "a".repeat(40), sourceBranch: "main" }
       );
 
     if (!persisted) {
@@ -171,7 +172,11 @@ async function main() {
       stored.content !==
         artifact.content ||
       stored.sha256 !==
-        artifact.sha256
+        artifact.sha256 ||
+      stored.sourceCommitSha !== "a".repeat(40) ||
+      stored.sourceBranch !== "main" ||
+      stored.ingestionSource !== "fresh-remote" ||
+      stored.ingestionRemoteVerified !== true
     ) {
       throw new Error(
         "Durable artifact differs from verified evidence."

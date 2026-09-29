@@ -100,6 +100,8 @@ export interface ReadinessImpact {
 }
 
 export interface RemediationRun {
+  /** Opaque persisted evidence reference; never a delivery capability. */
+  verifiedArtifactReference?: { artifactId: string };
   proposal: FixProposal;
 
   execution:

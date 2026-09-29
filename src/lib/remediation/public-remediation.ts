@@ -57,6 +57,7 @@ export interface PublicFixProof {
 }
 
 export interface PublicRemediationRun {
+  verifiedArtifactReference?: { artifactId: string };
   proposal: FixProposal;
 
   execution:
@@ -195,8 +196,23 @@ export function sanitizeRemediationForPublic(
     : undefined;
 
  return {
-  proposal:
-    remediation.proposal,
+  // Project proposal fields too: never reflect arbitrary nested request data.
+  proposal: {
+    id: remediation.proposal.id,
+    title: remediation.proposal.title,
+    description: remediation.proposal.description,
+    strategy: remediation.proposal.strategy,
+    risk: remediation.proposal.risk,
+    target: {
+      checkId: remediation.proposal.target.checkId,
+      category: remediation.proposal.target.category,
+      evidenceIndexes: [...remediation.proposal.target.evidenceIndexes],
+    },
+    ...(remediation.proposal.packageName ? { packageName: remediation.proposal.packageName } : {}),
+  },
+  ...(remediation.proof?.status === "proven" && remediation.verifiedArtifactReference
+    ? { verifiedArtifactReference: { artifactId: remediation.verifiedArtifactReference.artifactId } }
+    : {}),
 
   execution,
 

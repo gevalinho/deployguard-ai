@@ -490,7 +490,8 @@ const persistedArtifact =
   await persistProvenRemediationArtifact(
     repository.fullName,
     proof.status,
-    verifiedPatchArtifact
+    verifiedPatchArtifact,
+    ingested.provenance
   );
 
 if (!persistedArtifact) {
@@ -498,6 +499,9 @@ if (!persistedArtifact) {
     "Proven remediation artifact was not persisted."
   );
 }
+
+// Only durable evidence leaves remediation. Delivery is a separate request.
+remediation.verifiedArtifactReference = { artifactId: persistedArtifact.id };
 
 console.log(
   `[DeployGuard Remediation] Verified artifact persisted: ${persistedArtifact.id}, SHA-256 ${persistedArtifact.sha256}.`

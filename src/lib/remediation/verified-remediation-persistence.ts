@@ -1,3 +1,4 @@
+import type { RepositoryIngestionProvenance } from "@/lib/repository/repository-ingestion";
 import {
   persistVerifiedArtifact,
   type TrustedArtifactMetadata,
@@ -12,7 +13,8 @@ export async function persistProvenRemediationArtifact(
   proofStatus: string,
   artifact:
     | VerifiedPatchArtifact
-    | undefined
+    | undefined,
+  provenance?: RepositoryIngestionProvenance
 ): Promise<
   TrustedArtifactMetadata | null
 > {
@@ -30,6 +32,7 @@ export async function persistProvenRemediationArtifact(
 
   return persistVerifiedArtifact(
     repositoryIdentity,
-    artifact
+    artifact,
+    provenance
   );
 }

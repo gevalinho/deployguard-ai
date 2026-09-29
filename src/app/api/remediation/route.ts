@@ -171,6 +171,13 @@ export async function POST(
     );
   }
 
+  // This API accepts assessment/remediation inputs only. Delivery authority and
+  // repository provenance cannot be supplied by a client.
+  if (!body || typeof body !== "object" || Array.isArray(body) ||
+      Object.keys(body).some((key) => !["repositoryUrl", "proposal"].includes(key))) {
+    return Response.json({ ok: false, error: "Only repositoryUrl and proposal are accepted." }, { status: 400 });
+  }
+
   const repositoryUrl =
     typeof body.repositoryUrl ===
     "string"
@@ -211,28 +218,33 @@ export async function POST(
     const result =
       await runRemoteRemediation(
         repositoryUrl,
-        body.proposal
+        {
+          id: body.proposal.id,
+          title: body.proposal.title,
+          description: body.proposal.description,
+          strategy: body.proposal.strategy,
+          risk: body.proposal.risk,
+          target: {
+            checkId: body.proposal.target.checkId,
+            category: body.proposal.target.category,
+            evidenceIndexes: [...body.proposal.target.evidenceIndexes],
+          },
+          ...(body.proposal.packageName ? { packageName: body.proposal.packageName } : {}),
+        }
       );
 
     return Response.json({
       ok: true,
       remediation: result,
     });
-  } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Unknown remediation error.";
-
-    console.error(
-      "[DeployGuard Remediation API]",
-      error
-    );
+  } catch {
+    // Internal errors may contain source, credentials, or workspace paths.
+    console.error("[DeployGuard Remediation API] Remediation failed.");
 
     return Response.json(
       {
         ok: false,
-        error: message,
+        error: "Remediation could not be completed.",
       },
       {
         status: 422,

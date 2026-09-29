@@ -1,3 +1,4 @@
+import { createRemediationBranchName } from "@/lib/remediation/git-delivery";
 import {
   runCommand,
 } from "@/lib/execution/command-runner";
@@ -7,6 +8,19 @@ import {
   verifySignedGitPushCapability,
   type SignedGitPushCapability,
 } from "@/lib/remediation/git-push-capability";
+
+/** Trusted process-local transport; opened only after capability and Git checks. */
+export interface GitPushTransport {
+  remote: string;
+  run(args: string[]): Promise<{ status: "passed" | "failed"; stdout: string }>;
+  dispose(): Promise<void>;
+}
+
+export type GitPushTransportFactory = (scope: {
+  repositoryPath: string;
+  repositoryIdentity: string;
+  remoteUrl: string;
+}) => Promise<GitPushTransport>;
 
 export interface GitPushExecutionResult {
   status:
@@ -87,7 +101,8 @@ export async function executeVerifiedGitPush(
   artifactSha256: string,
   signedCapability:
     SignedGitPushCapability,
-  signingSecret: string
+  signingSecret: string,
+  openTransport?: GitPushTransportFactory
 ): Promise<GitPushExecutionResult> {
   const capability =
     signedCapability.capability;
@@ -193,6 +208,8 @@ export async function executeVerifiedGitPush(
    * This also enforces capability expiry.
    */
   if (
+    (openTransport && capability.branchName !== createRemediationBranchName(artifactSha256)) ||
+    !/^[a-f0-9]{40}$/.test(capability.commitSha) ||
     !validateGitPushCapability(
       capability,
       repositoryIdentity,
@@ -237,78 +254,47 @@ export async function executeVerifiedGitPush(
     );
   }
 
-  /*
-   * Push the exact immutable commit SHA to the
-   * exact authorized branch on the exact
-   * authorized remote.
-   *
-   * Do not rely on implicit upstream state.
-   */
-  const pushResult =
-    await runGit(
+  let transport: GitPushTransport | undefined;
+  let pushed = false;
+  try {
+    transport = await openTransport?.({
       repositoryPath,
-      [
-        "push",
-
-        capability.remoteName,
-
-        `${capability.commitSha}:refs/heads/${capability.branchName}`,
-      ]
-    );
-
-  if (
-    pushResult.status !== "passed"
-  ) {
-    return createResult(
-      signedCapability,
-      "push_failed",
-      "Authorized verified Git push failed."
-    );
+      repositoryIdentity,
+      remoteUrl: remoteResult.stdout.trim(),
+    });
+    // Token issuance may take time. Expired authority must never execute a push.
+    if (!verifySignedGitPushCapability(signedCapability, signingSecret) ||
+        !validateGitPushCapability(capability, repositoryIdentity,
+          capability.remoteName, observedBranch, observedHead, artifactSha256)) {
+      return createResult(signedCapability, "denied", "Git push authority expired before execution.");
+    }
+    const remote = transport?.remote ?? capability.remoteName;
+    const execute = (args: string[]) => transport
+      ? transport.run(args)
+      : runGit(repositoryPath, args);
+    const pushResult = await execute([
+      "push", "--", remote,
+      `${capability.commitSha}:refs/heads/${capability.branchName}`,
+    ]);
+    if (pushResult.status !== "passed") {
+      return createResult(signedCapability, "push_failed", "Authorized verified Git push failed.");
+    }
+    pushed = true;
+    const remoteHeadResult = await execute([
+      "ls-remote", "--refs", "--", remote, `refs/heads/${capability.branchName}`,
+    ]);
+    const expected = `${capability.commitSha}\trefs/heads/${capability.branchName}`;
+    if (remoteHeadResult.status !== "passed" || remoteHeadResult.stdout.trim() !== expected) {
+      return createResult(signedCapability, "verification_failed",
+        "Remote Git branch does not match the authorized commit after push.");
+    }
+    return createResult(signedCapability, "pushed",
+      "Authorized verified remediation commit was pushed and independently verified.");
+  } catch {
+    // Neither transport exceptions nor Git output may escape this boundary.
+    return createResult(signedCapability, pushed ? "verification_failed" : "push_failed",
+      "Authenticated Git delivery failed.");
+  } finally {
+    await transport?.dispose().catch(() => undefined);
   }
-
-  /*
-   * Independently verify that the remote branch
-   * now resolves to the exact authorized commit.
-   */
-  const remoteHeadResult =
-    await runGit(
-      repositoryPath,
-      [
-        "ls-remote",
-        capability.remoteName,
-        `refs/heads/${capability.branchName}`,
-      ]
-    );
-
-  if (
-    remoteHeadResult.status !== "passed"
-  ) {
-    return createResult(
-      signedCapability,
-      "verification_failed",
-      "Unable to verify the remote Git branch after push."
-    );
-  }
-
-  const remoteHead =
-    remoteHeadResult.stdout
-      .trim()
-      .split(/\s+/)[0];
-
-  if (
-    remoteHead !==
-    capability.commitSha
-  ) {
-    return createResult(
-      signedCapability,
-      "verification_failed",
-      "Remote Git branch does not match the authorized commit after push."
-    );
-  }
-
-  return createResult(
-    signedCapability,
-    "pushed",
-    "Authorized verified remediation commit was pushed and independently verified."
-  );
 }

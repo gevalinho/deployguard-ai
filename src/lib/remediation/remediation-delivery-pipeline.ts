@@ -1,3 +1,8 @@
+import { runCommand } from "@/lib/execution/command-runner";
+import type { RepositoryIngestionProvenance } from "@/lib/repository/repository-ingestion";
+import { matchesVerifiedArtifactProvenance } from "@/lib/remediation/artifact-delivery-reference";
+import { openGitHubAppPushTransport } from "@/lib/remediation/github-app-git-transport";
+import type { GitPushTransportFactory } from "@/lib/remediation/git-push-executor";
 import {
   issueArtifactAccessCapability,
 } from "@/lib/remediation/artifact-access-capability";
@@ -130,7 +135,8 @@ export async function pushPersistedRemediationDelivery(
   repositoryIdentity: string,
   deliveryId: string,
   remoteName: string,
-  signingSecret: string
+  signingSecret: string,
+  transport: GitPushTransportFactory | null = openGitHubAppPushTransport
 ): Promise<PersistedRemediationPushResult> {
   const delivery =
     await getRemediationDelivery(
@@ -193,7 +199,7 @@ export async function pushPersistedRemediationDelivery(
       delivery.artifactId
     );
 
-  if (!artifact) {
+  if (!artifact || artifact.repositoryIdentity !== repositoryIdentity) {
     return {
       status:
         "invalid_delivery_state",
@@ -246,7 +252,8 @@ export async function pushPersistedRemediationDelivery(
       repositoryIdentity,
       artifact.sha256,
       signedCapability,
-      signingSecret
+      signingSecret,
+      transport ?? undefined
     );
 
   if (
@@ -333,10 +340,8 @@ function reconstructVerifiedPatchArtifact(
   };
 }
 
-export interface VerifiedRepositoryDeliveryProvenance {
-  commitSha: string;
-  sourceBranch: string;
-}
+// Server-observed ingestion evidence; never deserialize this from a request.
+export type VerifiedRepositoryDeliveryProvenance = RepositoryIngestionProvenance;
 
 export async function preparePersistedRemediationDelivery(
   repositoryPath: string,
@@ -386,6 +391,22 @@ export async function preparePersistedRemediationDelivery(
       summary:
         "Persisted artifact repository identity does not match the delivery repository.",
     };
+  }
+
+  // Fail before branch creation or patch application. Stored provenance is
+  // evidence only; a later explicit request must independently re-ingest and
+  // remotely verify the same source branch and immutable base commit.
+  if (!matchesVerifiedArtifactProvenance(stored, provenance)) {
+    return { status: "delivery_denied", artifactId,
+      summary: "Delivery requires matching remotely verified artifact and workspace provenance." };
+  }
+  const observedHead = await runCommand("git", ["rev-parse", "HEAD"], repositoryPath);
+  const observedBranch = await runCommand("git", ["branch", "--show-current"], repositoryPath);
+  if (observedHead.status !== "passed" || observedBranch.status !== "passed" ||
+      observedHead.stdout.trim() !== provenance.commitSha ||
+      observedBranch.stdout.trim() !== provenance.sourceBranch) {
+    return { status: "delivery_denied", artifactId,
+      summary: "Delivery workspace does not match verified source provenance." };
   }
 
   const artifact =

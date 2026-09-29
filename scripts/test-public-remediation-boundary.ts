@@ -240,10 +240,23 @@ verifiedPatchArtifact: {
 
 };
 
+remediation.verifiedArtifactReference = Object.assign(
+  { artifactId: "opaque-persisted-artifact-id" },
+  { content: sourceSecret, signingSecret: secret, repositoryPath: "/private/workspace" },
+);
+
 const publicResult =
   sanitizeRemediationForPublic(
     remediation
   );
+
+if (JSON.stringify(publicResult.verifiedArtifactReference) !==
+    JSON.stringify({ artifactId: "opaque-persisted-artifact-id" })) {
+  throw new Error("Artifact reference must contain only the durable opaque ID.");
+}
+if (sanitizeRemediationForPublic({ ...remediation, proof: undefined }).verifiedArtifactReference) {
+  throw new Error("Unproven remediation exposed a delivery reference.");
+}
 
 const serialized =
   JSON.stringify(publicResult);

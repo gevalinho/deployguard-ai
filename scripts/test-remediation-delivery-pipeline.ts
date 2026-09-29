@@ -259,7 +259,8 @@ runGit(
     const persisted =
       await persistVerifiedArtifact(
         repositoryIdentity,
-        artifact
+        artifact,
+        { source: "fresh-remote", remoteVerified: true, commitSha: originalHead, sourceBranch: "main" }
       );
 
     artifactIds.push(
@@ -281,6 +282,8 @@ runGit(
     persisted.id,
     signingSecret,
     {
+      source: "fresh-remote",
+      remoteVerified: true,
       commitSha:
         originalHead,
 
@@ -345,6 +348,43 @@ runGit(
     /*
      * Execute the authorized preparation path.
      */
+    const trustedProvenance = {
+      source: "fresh-remote" as const, remoteVerified: true,
+      commitSha: originalHead, sourceBranch: "main",
+    };
+    for (const provenance of [
+      { ...trustedProvenance, remoteVerified: false },
+      { ...trustedProvenance, source: "fresh-ttl-cache" as const },
+      { ...trustedProvenance, source: "stale-fallback-cache" as const },
+      { ...trustedProvenance, commitSha: "b".repeat(40) },
+      { ...trustedProvenance, sourceBranch: "forged-branch" },
+      { ...trustedProvenance, commitSha: undefined },
+    ]) {
+      const denied = await preparePersistedRemediationDelivery(
+        repositoryPath, repositoryIdentity, persisted.id, signingSecret, provenance,
+      );
+      if (denied.status !== "delivery_denied") throw new Error("Unverified provenance authorized preparation.");
+    }
+    for (const provenance of [undefined,
+      { ...trustedProvenance, remoteVerified: false },
+      { ...trustedProvenance, source: "fresh-ttl-cache" as const },
+      { ...trustedProvenance, commitSha: "b".repeat(40) },
+    ]) {
+      const unsafeArtifact = await persistVerifiedArtifact(repositoryIdentity, artifact, provenance);
+      artifactIds.push(unsafeArtifact.id);
+      const denied = await preparePersistedRemediationDelivery(
+        repositoryPath, repositoryIdentity, unsafeArtifact.id, signingSecret,
+        provenance ?? trustedProvenance,
+      );
+      if (denied.status !== "delivery_denied") throw new Error("Unverified artifact or wrong workspace authorized preparation.");
+    }
+    if (runGit(repositoryPath, ["rev-parse", "HEAD"]) !== originalHead ||
+        runGit(repositoryPath, ["branch", "--show-current"]) !== "main" ||
+        runGit(repositoryPath, ["status", "--porcelain"]) !== "") {
+      throw new Error("Rejected provenance changed the workspace.");
+    }
+    console.log("✓ Provenance rejection precedes all Git preparation mutation.");
+
     const result =
   await preparePersistedRemediationDelivery(
     repositoryPath,
@@ -352,6 +392,8 @@ runGit(
     persisted.id,
     signingSecret,
     {
+      source: "fresh-remote",
+      remoteVerified: true,
       commitSha:
         originalHead,
 
@@ -765,13 +807,53 @@ console.log(
  * A COMMITTED remediation may now cross the
  * separately authorized remote delivery boundary.
  */
+// A successful send with a mismatched remote SHA must never persist PUSHED.
+let remoteCommands = 0;
+const unverifiedPush = await pushPersistedRemediationDelivery(
+  repositoryPath, repositoryIdentity, result.delivery.id, "origin", signingSecret,
+  async () => ({
+    remote: "test-remote",
+    async run(args) {
+      remoteCommands++;
+      return { status: "passed", stdout: args[0] === "ls-remote"
+        ? `${"0".repeat(40)}\trefs/heads/${currentBranch}\n` : "" };
+    },
+    async dispose() {},
+  }),
+);
+if (unverifiedPush.status !== "push_failed" ||
+    unverifiedPush.gitPush?.status !== "verification_failed" || remoteCommands !== 2) {
+  throw new Error("Failed remote verification was not rejected.");
+}
+const afterFailedVerification = await prisma.remediationDelivery.findUnique({
+  where: { id: result.delivery.id },
+});
+if (afterFailedVerification?.status !== "COMMITTED" || afterFailedVerification.pushedAt) {
+  throw new Error("Unverified push incorrectly persisted PUSHED.");
+}
+const authFailure = await pushPersistedRemediationDelivery(
+  repositoryPath, repositoryIdentity, result.delivery.id, "origin", signingSecret,
+  async () => { throw new Error("TEST_SECRET_TOKEN"); },
+);
+if (authFailure.status !== "push_failed" || JSON.stringify(authFailure).includes("TEST_SECRET_TOKEN")) {
+  throw new Error("Authentication failure was not safely contained.");
+}
+const afterAuthFailure = await prisma.remediationDelivery.findUnique({
+  where: { id: result.delivery.id },
+});
+if (afterAuthFailure?.status !== "COMMITTED" || afterAuthFailure.pushedAt) {
+  throw new Error("Authentication failure incorrectly persisted PUSHED.");
+}
+console.log("✓ Failed authentication and remote verification leave delivery COMMITTED.");
+
 const pushResult =
   await pushPersistedRemediationDelivery(
     repositoryPath,
     repositoryIdentity,
     result.delivery.id,
     "origin",
-    signingSecret
+    signingSecret,
+    null // Explicit generic transport for the isolated local bare remote.
   );
 
 if (
@@ -893,7 +975,8 @@ const pushReplay =
     repositoryIdentity,
     result.delivery.id,
     "origin",
-    signingSecret
+    signingSecret,
+    null // Explicit generic transport for the isolated local bare remote.
   );
 
 if (

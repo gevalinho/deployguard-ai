@@ -1,3 +1,4 @@
+import type { RepositoryIngestionProvenance } from "@/lib/repository/repository-ingestion";
 import {
   prisma,
 } from "@/lib/database/prisma";
@@ -18,6 +19,10 @@ export interface TrustedArtifactMetadata {
   byteSize: number;
 
   createdAt: Date;
+  sourceCommitSha?: string | null;
+  sourceBranch?: string | null;
+  ingestionSource?: string | null;
+  ingestionRemoteVerified?: boolean;
 }
 
 export interface TrustedStoredArtifact
@@ -27,7 +32,8 @@ export interface TrustedStoredArtifact
 
 export async function persistVerifiedArtifact(
   repositoryIdentity: string,
-  artifact: VerifiedPatchArtifact
+  artifact: VerifiedPatchArtifact,
+  provenance?: RepositoryIngestionProvenance
 ): Promise<TrustedArtifactMetadata> {
   const stored =
     await prisma
@@ -35,6 +41,10 @@ export async function persistVerifiedArtifact(
       .create({
         data: {
           repositoryIdentity,
+          sourceCommitSha: provenance?.commitSha ?? null,
+          sourceBranch: provenance?.sourceBranch ?? null,
+          ingestionSource: provenance?.source ?? null,
+          ingestionRemoteVerified: provenance?.remoteVerified === true,
 
           format:
             artifact.format,
@@ -62,6 +72,10 @@ export async function persistVerifiedArtifact(
           byteSize: true,
 
           createdAt: true,
+          sourceCommitSha: true,
+          sourceBranch: true,
+          ingestionSource: true,
+          ingestionRemoteVerified: true,
         },
       });
 
@@ -95,6 +109,10 @@ export async function getTrustedVerifiedArtifact(
         content: true,
 
         createdAt: true,
+          sourceCommitSha: true,
+          sourceBranch: true,
+          ingestionSource: true,
+          ingestionRemoteVerified: true,
       },
     });
 }
@@ -124,6 +142,10 @@ export async function getVerifiedArtifactMetadata(
         byteSize: true,
 
         createdAt: true,
+          sourceCommitSha: true,
+          sourceBranch: true,
+          ingestionSource: true,
+          ingestionRemoteVerified: true,
       },
     });
 }
