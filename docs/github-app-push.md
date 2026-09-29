@@ -32,6 +32,7 @@ Transport factories are server-side dependencies, not request parameters.
 ```sh
 npx tsx scripts/test-github-app-git-push.ts
 npx tsx scripts/test-github-app-token-scope.ts
+npx tsx scripts/test-real-github-app-push-harness.ts
 npx tsx scripts/test-remediation-delivery-pipeline.ts
 npx tsc --noEmit
 npm run lint
@@ -39,7 +40,11 @@ npm run lint
 
 ## Real repository test
 
-The target is fixed to `gevalinho/deployguard-ai`. Default execution is a no-op:
+The target requires `DEPLOYGUARD_PUSH_REPOSITORY_IDENTITY=owner/repository`.
+Missing or malformed identities fail closed when opted in. URLs, whitespace,
+credentials, and extra path components are rejected. The checkout origin,
+persisted artifact/delivery, and App token identity must match exactly.
+Default execution is a no-op:
 
 ```sh
 npx tsx scripts/test-real-github-app-push.ts
@@ -47,11 +52,15 @@ npx tsx scripts/test-real-github-app-push.ts
 
 Configure DATABASE_URL, GITHUB_APP_ID, and GITHUB_APP_PRIVATE_KEY_PATH as usual.
 Use an isolated clean checkout with an origin for the exact target repository.
+Use an isolated lint fixture such as `gevalinho/deployguard-lint-fixture` as the
+integration-test target. The App must be installed on that fixture and you must
+be authorized to push its deterministic remediation branch.
 To use a COMMITTED delivery created through the existing lifecycle:
 
 ```sh
 DEPLOYGUARD_REAL_GITHUB_PUSH_TEST=1 \
-DEPLOYGUARD_PUSH_REPOSITORY_PATH=/absolute/path/to/isolated-checkout \
+DEPLOYGUARD_PUSH_REPOSITORY_IDENTITY=gevalinho/deployguard-lint-fixture \
+DEPLOYGUARD_PUSH_REPOSITORY_PATH=/absolute/path/to/isolated-lint-fixture-checkout \
 DEPLOYGUARD_PUSH_DELIVERY_ID=existing-committed-delivery-id \
 npx tsx scripts/test-real-github-app-push.ts
 ```
@@ -61,7 +70,15 @@ The artifact must already have been verified and persisted by DeployGuard. The
 checkout must be on its source branch, whose HEAD is checked against GitHub's
 public branch API. The script calls the existing PREPARED and COMMITTED lifecycle
 boundaries to construct the delivery. It does not fabricate PUSHED evidence.
-Configure local commit author identity in that isolated checkout beforehand.
+Before preparation, the artifact's exact repository identity and verified
+provenance must match the independently observed GitHub source branch and checkout
+HEAD. Configure local commit author identity in that isolated checkout beforehand.
+For artifact mode, use the same fixture command above, leave
+DEPLOYGUARD_PUSH_DELIVERY_ID unset, and set
+`DEPLOYGUARD_PUSH_ARTIFACT_ID=existing-verified-lint-artifact-id` instead.
+
+These opt-in examples mutate the fixture's remediation branch. Do not run them
+as part of non-mutating validation.
 
 Before acquiring credentials or mutating the remote, the script prints
 repositoryIdentity, sourceBranch, remediationBranch, and commitSha. It reports

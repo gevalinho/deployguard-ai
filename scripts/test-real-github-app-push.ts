@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import { matchesVerifiedArtifactProvenance } from "@/lib/remediation/artifact-delivery-reference";
 import { prisma } from "@/lib/database/prisma";
 import { createRemediationBranchName } from "@/lib/remediation/git-delivery";
 import { githubRemoteMatches, createGitHubAppPushTransport } from "@/lib/remediation/github-app-git-transport";
@@ -16,7 +17,12 @@ async function main() {
     console.log("Skipped: set DEPLOYGUARD_REAL_GITHUB_PUSH_TEST=1 to opt in. No network or database changes made.");
     return;
   }
-  const repositoryIdentity = "gevalinho/deployguard-ai";
+  const repositoryIdentity = process.env.DEPLOYGUARD_PUSH_REPOSITORY_IDENTITY;
+  // Require an exact identity, never a URL, credential, or inferred default.
+  assert(repositoryIdentity && repositoryIdentity === repositoryIdentity.trim() &&
+    /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9_.-]+$/.test(repositoryIdentity) &&
+    ![".", ".."].includes(repositoryIdentity.split("/")[1]),
+  "DEPLOYGUARD_PUSH_REPOSITORY_IDENTITY must be exactly owner/repository.");
   const repositoryPath = process.env.DEPLOYGUARD_PUSH_REPOSITORY_PATH;
   assert(repositoryPath, "DEPLOYGUARD_PUSH_REPOSITORY_PATH must identify an isolated clean checkout.");
   const path = resolve(repositoryPath);
@@ -29,6 +35,8 @@ async function main() {
     // Reuse an existing verified artifact; never fabricate terminal database state.
     const artifactId = process.env.DEPLOYGUARD_PUSH_ARTIFACT_ID;
     assert(artifactId, "Provide DEPLOYGUARD_PUSH_DELIVERY_ID (COMMITTED) or DEPLOYGUARD_PUSH_ARTIFACT_ID (verified).");
+    const persistedArtifact = await getVerifiedArtifactMetadata(artifactId);
+    assert(persistedArtifact && persistedArtifact.repositoryIdentity === repositoryIdentity);
     const sourceBranch = git("branch", "--show-current");
     const originalHead = git("rev-parse", "HEAD");
     assert(sourceBranch && !sourceBranch.startsWith("deployguard/"));
@@ -36,9 +44,12 @@ async function main() {
       redirect: "error", signal: AbortSignal.timeout(30_000),
     });
     assert(response.ok, "Unable to independently observe the source branch.");
-    const source = await response.json() as { commit?: { sha?: string } };
+    const source = await response.json() as { name?: string; commit?: { sha?: string } };
+    assert.equal(source.name, sourceBranch);
     assert.equal(source.commit?.sha, originalHead);
-    const prepared = await preparePersistedRemediationDelivery(path, repositoryIdentity, artifactId, signingSecret, { source: "fresh-remote", remoteVerified: true, sourceBranch, commitSha: originalHead });
+    const provenance = { source: "fresh-remote" as const, remoteVerified: true, sourceBranch, commitSha: originalHead };
+    assert(matchesVerifiedArtifactProvenance(persistedArtifact, provenance));
+    const prepared = await preparePersistedRemediationDelivery(path, repositoryIdentity, artifactId, signingSecret, provenance);
     assert.equal(prepared.status, "prepared");
     assert(prepared.delivery);
     deliveryId = prepared.delivery.id;
@@ -53,6 +64,7 @@ async function main() {
   assert(artifact && artifact.repositoryIdentity === repositoryIdentity);
   assert.equal(delivery.branchName, createRemediationBranchName(artifact.sha256));
   assert.notEqual(delivery.branchName, delivery.sourceBranch);
+  assert.notEqual(delivery.branchName, "main");
   assert.equal(git("branch", "--show-current"), delivery.branchName);
   assert.equal(git("rev-parse", "HEAD"), delivery.commitSha);
   // Print the complete mutation scope BEFORE token acquisition or remote push.
@@ -77,8 +89,22 @@ async function main() {
   assert.equal(stored?.commitSha, delivery.commitSha);
   console.log("✓ Exact authorized commit pushed with App authority; GitHub branch independently verified; durable state is PUSHED. No PR created.");
 }
-main().catch(() => {
-  // Never print raw errors from Git, fetch, assertions, or credential providers.
-  console.error("Real GitHub App push test failed. Check configuration, fixture, and durable delivery state before retrying.");
-  process.exitCode = 1;
-}).finally(() => prisma.$disconnect());
+/** Importing for stubbed harness tests never starts the real integration. */
+export async function runRealGitHubAppPushTest(): Promise<boolean> {
+  try {
+    await main();
+    return true;
+  } catch {
+    // Never print raw errors from Git, fetch, assertions, or credential providers.
+    console.error("Real GitHub App push test failed. Check configuration, fixture, and durable delivery state before retrying.");
+    return false;
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+if (require.main === module) {
+  void runRealGitHubAppPushTest().then((passed) => {
+    if (!passed) process.exitCode = 1;
+  });
+}
