@@ -1,3 +1,4 @@
+import { isVerifiedPullRequestIdentity } from "@/lib/remediation/github-pull-request-identity";
 import { isRemotelyVerifiedIngestionSource } from "@/lib/remediation/artifact-delivery-reference";
 import { claimPullRequestDelivery, getDurablePullRequestDelivery,
   markPullRequestPostAttempted, persistVerifiedPullRequest } from "@/lib/remediation/github-pull-request-repository";
@@ -170,12 +171,10 @@ function matchesAuthorizedPullRequest(
   delivery: { branchName: string; commitSha: string | null; sourceBranch: string },
   baseHeadSha: string,
 ): value is GitHubPullRequestResponse & { number: number; html_url: string } {
-  return typeof value.number === "number" && Number.isSafeInteger(value.number) && value.number > 0 &&
-    value.html_url === `https://github.com/${repositoryIdentity}/pull/${value.number}` &&
-    value.head?.ref === delivery.branchName && value.head.sha === delivery.commitSha &&
-    value.base?.ref === delivery.sourceBranch && value.base.sha === baseHeadSha &&
-    value.head.repo?.full_name === repositoryIdentity &&
-    value.base.repo?.full_name === repositoryIdentity;
+  return typeof delivery.commitSha === "string" && isVerifiedPullRequestIdentity(value, {
+    repositoryIdentity, baseBranch: delivery.sourceBranch, baseSha: baseHeadSha,
+    headBranch: delivery.branchName, headSha: delivery.commitSha,
+  });
 }
 
 export async function createVerifiedGitHubPullRequest(

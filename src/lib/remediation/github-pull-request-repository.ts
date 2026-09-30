@@ -68,5 +68,5 @@ export async function persistVerifiedPullRequest(
   });
   if (result.count === 1) return true;
   const winner = await getDurablePullRequestDelivery(deliveryId);
-  return winner?.status === "VERIFIED" && winner.prNumber === number && winner.prUrl === url;
+  return winner?.status === "VERIFIED" && winner.prNumber === number && winner.prUrl === url && winner.prState === state;
 }

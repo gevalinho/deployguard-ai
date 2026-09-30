@@ -266,7 +266,7 @@ export async function createInstallationAccessToken(
   owner: string,
   repository: string,
   permissions: { contents: "read" | "write"; pull_requests: "write" } |
-    { pull_requests: "read" } = {
+    { contents: "read"; pull_requests: "read" } | { pull_requests: "read" } = {
     contents: "write", pull_requests: "write",
   },
 ): Promise<GitHubInstallationAccessToken> {
