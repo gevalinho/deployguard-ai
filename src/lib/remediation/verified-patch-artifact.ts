@@ -14,63 +14,49 @@ export interface VerifiedPatchArtifact {
   byteSize: number;
 }
 
-function normalizeLines(
-  content: string
-): string[] {
-  return content
-    .replace(/\r\n/g, "\n")
-    .split("\n");
+function splitFileLines(content: string): string[] {
+  if (content === "") return [];
+  // Remove only the split sentinel. Blank file lines and CR bytes are content.
+  const lines = content.split("\n");
+  if (content.endsWith("\n")) lines.pop();
+  return lines;
 }
 
-function createFilePatch(
-  file: VerifiedPatchFile
-): string {
-  const oldPath =
-    file.changeType === "added"
-      ? "/dev/null"
-      : `a/${file.path}`;
+function createFilePatch(file: VerifiedPatchFile): string {
+  if (file.changeType === "modified" && file.before === file.after) return "";
+  const before = file.before ?? "";
+  const after = file.after ?? "";
+  const beforeLines = splitFileLines(before);
+  const afterLines = splitFileLines(after);
+  const lines = [`diff --git a/${file.path} b/${file.path}`];
 
-  const newPath =
-    file.changeType === "deleted"
-      ? "/dev/null"
-      : `b/${file.path}`;
+  // Mode headers also represent creation/deletion of an empty file, which has
+  // no text hunk. The snapshot contract describes regular text file contents.
+  if (file.changeType === "added") lines.push("new file mode 100644");
+  if (file.changeType === "deleted") lines.push("deleted file mode 100644");
 
-  const beforeLines =
-    file.before !== undefined
-      ? normalizeLines(file.before)
-      : [];
-
-  const afterLines =
-    file.after !== undefined
-      ? normalizeLines(file.after)
-      : [];
-
-  const lines: string[] = [
-    `diff --git a/${file.path} b/${file.path}`,
-    `--- ${oldPath}`,
-    `+++ ${newPath}`,
-    `@@ -1,${beforeLines.length} +1,${afterLines.length} @@`,
-  ];
-
-  /*
-   * v1 intentionally emits the complete bounded
-   * before/after representation rather than
-   * attempting a minimal line-level diff.
-   *
-   * The workspace snapshot already limits file
-   * size, and this artifact remains inside the
-   * trusted remediation boundary.
-   */
-
-  for (const line of beforeLines) {
-    lines.push(`-${line}`);
+  if (beforeLines.length || afterLines.length) {
+    lines.push(
+      `--- ${file.changeType === "added" ? "/dev/null" : `a/${file.path}`}`,
+      `+++ ${file.changeType === "deleted" ? "/dev/null" : `b/${file.path}`}`,
+      `@@ -${beforeLines.length ? 1 : 0},${beforeLines.length} +${afterLines.length ? 1 : 0},${afterLines.length} @@`,
+    );
+    // Emit the complete bounded before/after representation, retaining exact
+    // content bytes. EOF markers describe either side independently and are
+    // not counted as hunk lines.
+    const append = (content: string, fileLines: string[], prefix: string) => {
+      fileLines.forEach((line, index) => {
+        lines.push(`${prefix}${line}`);
+        if (index === fileLines.length - 1 && !content.endsWith("\n")) {
+          lines.push("\\ No newline at end of file");
+        }
+      });
+    };
+    append(before, beforeLines, "-");
+    append(after, afterLines, "+");
   }
-
-  for (const line of afterLines) {
-    lines.push(`+${line}`);
-  }
-
-  return lines.join("\n");
+  // Patch syntax itself must be LF-terminated, even when source content is not.
+  return lines.join("\n") + "\n";
 }
 
 export function createVerifiedPatchArtifact(
@@ -79,7 +65,7 @@ export function createVerifiedPatchArtifact(
   const content =
     patch.files
       .map(createFilePatch)
-      .join("\n\n");
+      .join("");
 
   const byteSize =
     Buffer.byteLength(
