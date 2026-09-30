@@ -28,7 +28,9 @@ async function main() {
       const body = JSON.parse(String(init?.body));
       assert.deepEqual(body.repositories, ["deployguard-ai"]);
       assert.equal(body.permissions.contents, "write");
-      return Response.json({ token: "TEST_TOKEN", expires_at: new Date(Date.now() + 60_000).toISOString() });
+      return Response.json({ token: "TEST_TOKEN", expires_at: new Date(Date.now() + 60_000).toISOString(),
+        permissions: { contents: "write", pull_requests: "write" },
+        repositories: [{ full_name: "gevalinho/deployguard-ai" }] });
     };
     const access = await createInstallationAccessToken("gevalinho", "deployguard-ai");
     assert.equal(access.repositoryIdentity, "gevalinho/deployguard-ai");

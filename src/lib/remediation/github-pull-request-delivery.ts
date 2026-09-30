@@ -84,7 +84,9 @@ export interface CreateVerifiedGitHubPullRequestResult {
     | "capability_denied"
     | "github_auth_failed"
     | "pull_request_failed"
-    | "pull_request_verification_failed";
+    | "pull_request_preflight_failed"
+    | "pull_request_verification_failed"
+    | "already_exists";
 
   pullRequest?: VerifiedGitHubPullRequest;
 
@@ -113,8 +115,11 @@ async function githubRequest(
   token: string,
   init: RequestInit = {},
 ): Promise<Response> {
-  return fetch(`${GITHUB_API_BASE_URL}${path}`, {
+  try {
+    return await fetch(`${GITHUB_API_BASE_URL}${path}`, {
     ...init,
+    redirect: "error",
+    signal: AbortSignal.timeout(30_000),
 
     headers: {
       Accept: "application/vnd.github+json",
@@ -125,7 +130,11 @@ async function githubRequest(
 
       ...init.headers,
     },
-  });
+    });
+  } catch {
+    // Never expose authenticated request or transport error details.
+    throw new Error("GitHub pull request request failed.");
+  }
 }
 
 async function getGitHubBranchHead(
@@ -147,11 +156,25 @@ async function getGitHubBranchHead(
 
   const data = (await response.json()) as GitHubBranchResponse;
 
-  if (typeof data.commit?.sha !== "string" || !data.commit.sha) {
+  if (data.name !== branch || typeof data.commit?.sha !== "string" || !data.commit.sha) {
     return null;
   }
 
   return data.commit.sha;
+}
+
+function matchesAuthorizedPullRequest(
+  value: GitHubPullRequestResponse,
+  repositoryIdentity: string,
+  delivery: { branchName: string; commitSha: string | null; sourceBranch: string },
+  baseHeadSha: string,
+): value is GitHubPullRequestResponse & { number: number; html_url: string } {
+  return typeof value.number === "number" && Number.isSafeInteger(value.number) && value.number > 0 &&
+    value.html_url === `https://github.com/${repositoryIdentity}/pull/${value.number}` &&
+    value.head?.ref === delivery.branchName && value.head.sha === delivery.commitSha &&
+    value.base?.ref === delivery.sourceBranch && value.base.sha === baseHeadSha &&
+    value.head.repo?.full_name === repositoryIdentity &&
+    value.base.repo?.full_name === repositoryIdentity;
 }
 
 export async function createVerifiedGitHubPullRequest(
@@ -219,7 +242,11 @@ export async function createVerifiedGitHubPullRequest(
     };
   }
 
-  if (artifact.repositoryIdentity !== repositoryIdentity) {
+  if (artifact.repositoryIdentity !== repositoryIdentity ||
+      artifact.sourceBranch !== delivery.sourceBranch ||
+      artifact.sourceCommitSha !== delivery.originalHead ||
+      artifact.ingestionSource !== "fresh-remote" ||
+      artifact.ingestionRemoteVerified !== true) {
     return {
       status: "artifact_mismatch",
 
@@ -248,12 +275,12 @@ export async function createVerifiedGitHubPullRequest(
    */
   const baseBranch = delivery.sourceBranch;
 
-  if (!baseBranch) {
+  if (baseBranch !== "main") {
     return {
       status: "invalid_delivery_state",
 
       summary:
-        "Persisted delivery does not contain verified source-branch provenance.",
+        "Pull request base must be the verified main source branch.",
     };
   }
 
@@ -280,9 +307,12 @@ export async function createVerifiedGitHubPullRequest(
     const access = await createInstallationAccessToken(
       repository.owner,
       repository.repository,
+      { contents: "read", pull_requests: "write" },
     );
 
-    if (access.repositoryIdentity !== repositoryIdentity) {
+    if (access.repositoryIdentity !== repositoryIdentity ||
+        !Number.isFinite(Date.parse(access.expiresAt)) ||
+        Date.parse(access.expiresAt) <= Date.now()) {
       return {
         status: "github_auth_failed",
 
@@ -317,6 +347,11 @@ export async function createVerifiedGitHubPullRequest(
 
       summary: "GitHub base branch HEAD could not be independently observed.",
     };
+  }
+
+  if (baseHeadSha !== delivery.originalHead) {
+    return { status: "base_head_mismatch",
+      summary: "GitHub main moved from the authorized original HEAD." };
   }
 
   const headCommitSha = await getGitHubBranchHead(
@@ -390,89 +425,97 @@ export async function createVerifiedGitHubPullRequest(
   }
 
   /*
-   * Only now may DeployGuard cross the external
-   * GitHub pull-request mutation boundary.
+   * A previous POST may have succeeded while its response or verification
+   * failed. Search open and closed PRs before another mutation. A full page
+   * is ambiguous, so fail closed instead of risking a duplicate.
    */
-  const response = await githubRequest(
-    `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(
-      repository.repository,
-    )}/pulls`,
+  const list = await githubRequest(
+    `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repository)}/pulls?` +
+      new URLSearchParams({ state: "all", head: `${repository.owner}:${delivery.branchName}`,
+        base: baseBranch, per_page: "100" }).toString(),
     token,
-    {
-      method: "POST",
-
-      headers: {
-        "Content-Type": "application/json",
-      },
-
-      body: JSON.stringify({
-        title,
-        body,
-
-        head: delivery.branchName,
-
-        base: baseBranch,
-      }),
-    },
   );
-
-  if (!response.ok) {
-    return {
-      status: "pull_request_failed",
-
-      summary: `GitHub pull request creation failed with status ${response.status}.`,
-    };
+  if (!list.ok) return { status: "pull_request_preflight_failed",
+    summary: "Existing pull requests could not be checked." };
+  let listed: GitHubPullRequestResponse[];
+  try { listed = await list.json() as GitHubPullRequestResponse[]; }
+  catch { return { status: "pull_request_preflight_failed", summary: "Existing pull requests could not be checked." }; }
+  if (!Array.isArray(listed) || listed.length >= 100) return {
+    status: "pull_request_preflight_failed", summary: "Existing pull request listing is ambiguous." };
+  let number: number;
+  let status: "created" | "already_exists";
+  if (listed.length > 0) {
+    if (listed.length !== 1 || !matchesAuthorizedPullRequest(listed[0], repositoryIdentity, delivery, baseHeadSha)) {
+      return { status: "pull_request_verification_failed",
+        summary: "Existing pull request identity is ambiguous." };
+    }
+    number = listed[0].number;
+    status = "already_exists";
+  } else {
+    // Authorization may expire or the branches may move during the read-only
+    // retry check. Refresh both observations immediately before POST.
+    const currentBase = await getGitHubBranchHead(repository.owner, repository.repository, baseBranch, token);
+    const currentHead = await getGitHubBranchHead(repository.owner, repository.repository, delivery.branchName, token);
+    if (currentBase !== delivery.originalHead || currentHead !== delivery.commitSha ||
+        !verifySignedGitHubPullRequestCapability(signedCapability, capabilitySigningSecret) ||
+        !validateGitHubPullRequestCapability(signedCapability.capability,
+          repositoryIdentity, delivery.id, artifact.sha256, delivery.branchName,
+          delivery.commitSha, baseBranch, currentBase)) {
+      return { status: "capability_denied",
+        summary: "Pull request authority or remote branch identity changed before creation." };
+    }
+    const response = await githubRequest(
+      `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repository)}/pulls`,
+      token,
+      { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, body, head: delivery.branchName, base: baseBranch }) },
+    );
+    if (!response.ok) return { status: "pull_request_failed",
+      summary: `GitHub pull request creation failed with status ${response.status}.` };
+    let created: GitHubPullRequestResponse;
+    try { created = await response.json() as GitHubPullRequestResponse; }
+    catch { return { status: "pull_request_verification_failed",
+      summary: "GitHub pull request creation response could not be verified." }; }
+    if (!matchesAuthorizedPullRequest(created, repositoryIdentity, delivery, baseHeadSha)) {
+      return { status: "pull_request_verification_failed",
+        summary: "GitHub pull request creation response did not match authorized identities." };
+    }
+    number = created.number;
+    status = "created";
   }
 
-  const created = (await response.json()) as GitHubPullRequestResponse;
-
-  /*
-   * GitHub returning success is not sufficient.
-   * Independently verify the mutation GitHub says
-   * it created.
-   */
-  if (
-    typeof created.number !== "number" ||
-    typeof created.html_url !== "string" ||
-    created.head?.ref !== delivery.branchName ||
-    created.head?.sha !== delivery.commitSha ||
-    created.base?.ref !== baseBranch ||
-    created.base?.sha !== baseHeadSha ||
-    created.head?.repo?.full_name !== repositoryIdentity ||
-    created.base?.repo?.full_name !== repositoryIdentity
-  ) {
-    return {
-      status: "pull_request_verification_failed",
-
-      summary:
-        "GitHub created a pull request whose returned identities do not exactly match the authorized remediation delivery.",
-    };
+  // Independent GET is required even when POST or listing returned matching
+  // data. Returning success never relies solely on a mutation response.
+  const observed = await githubRequest(
+    `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repository)}/pulls/${number}`,
+    token,
+  );
+  if (!observed.ok) return { status: "pull_request_verification_failed",
+    summary: "GitHub pull request could not be independently retrieved." };
+  let verified: GitHubPullRequestResponse;
+  try { verified = await observed.json() as GitHubPullRequestResponse; }
+  catch { return { status: "pull_request_verification_failed",
+    summary: "GitHub pull request could not be independently verified." }; }
+  if (!matchesAuthorizedPullRequest(verified, repositoryIdentity, delivery, baseHeadSha) ||
+      verified.number !== number) {
+    return { status: "pull_request_verification_failed",
+      summary: "GitHub pull request identities do not match the authorized delivery." };
   }
-
   return {
-    status: "created",
-
+    status,
     pullRequest: {
-      number: created.number,
-
-      url: created.html_url,
-
+      number,
+      url: verified.html_url,
       repositoryIdentity,
-
       deliveryId: delivery.id,
-
       artifactSha256: artifact.sha256,
-
       headBranch: delivery.branchName,
-
       headCommitSha: delivery.commitSha,
-
       baseBranch,
-
       baseHeadSha,
     },
-
-    summary:
-      "Verified remediation pull request was created through repository-scoped GitHub App authority.",
+    summary: status === "created" ?
+      "Verified remediation pull request was created and independently retrieved." :
+      "Existing verified remediation pull request was independently retrieved.",
   };
 }

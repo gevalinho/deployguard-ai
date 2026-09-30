@@ -43,6 +43,8 @@ interface GitHubInstallationResponse {
 interface GitHubInstallationTokenResponse {
   token?: unknown;
   expires_at?: unknown;
+  permissions?: { contents?: unknown; pull_requests?: unknown };
+  repositories?: Array<{ full_name?: unknown }>;
 }
 
 const GITHUB_API_BASE_URL =
@@ -262,7 +264,10 @@ export async function getRepositoryInstallation(
 
 export async function createInstallationAccessToken(
   owner: string,
-  repository: string
+  repository: string,
+  permissions: { contents: "read" | "write"; pull_requests: "write" } = {
+    contents: "write", pull_requests: "write",
+  },
 ): Promise<GitHubInstallationAccessToken> {
   /*
    * Generate App authority first.
@@ -306,13 +311,7 @@ export async function createInstallationAccessToken(
               repository,
             ],
 
-            permissions: {
-              contents:
-                "write",
-
-              pull_requests:
-                "write",
-            },
+            permissions,
           }),
       }
     );
@@ -332,7 +331,11 @@ export async function createInstallationAccessToken(
       "string" ||
     !data.token ||
     typeof data.expires_at !==
-      "string"
+      "string" ||
+    data.permissions?.contents !== permissions.contents ||
+    data.permissions?.pull_requests !== permissions.pull_requests ||
+    data.repositories?.length !== 1 ||
+    data.repositories[0].full_name !== `${owner}/${repository}`
   ) {
     throw new Error(
       "GitHub installation token response was incomplete."
