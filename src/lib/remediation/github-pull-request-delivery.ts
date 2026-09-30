@@ -1,4 +1,6 @@
 import { isRemotelyVerifiedIngestionSource } from "@/lib/remediation/artifact-delivery-reference";
+import { claimPullRequestDelivery, getDurablePullRequestDelivery,
+  markPullRequestPostAttempted, persistVerifiedPullRequest } from "@/lib/remediation/github-pull-request-repository";
 import { createInstallationAccessToken } from "@/lib/remediation/github-app-auth";
 
 import { getRemediationDelivery } from "@/lib/remediation/remediation-delivery-repository";
@@ -28,6 +30,7 @@ interface GitHubBranchResponse {
 interface GitHubPullRequestResponse {
   number?: unknown;
   html_url?: unknown;
+  state?: unknown;
 
   head?: {
     ref?: unknown;
@@ -87,7 +90,10 @@ export interface CreateVerifiedGitHubPullRequestResult {
     | "pull_request_failed"
     | "pull_request_preflight_failed"
     | "pull_request_verification_failed"
-    | "already_exists";
+    | "already_exists"
+    | "in_progress"
+    | "recovery_required"
+    | "persistence_failed";
 
   pullRequest?: VerifiedGitHubPullRequest;
 
@@ -144,24 +150,18 @@ async function getGitHubBranchHead(
   branch: string,
   token: string,
 ): Promise<string | null> {
-  const response = await githubRequest(
-    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(
-      repository,
-    )}/branches/${encodeURIComponent(branch)}`,
-    token,
-  );
-
-  if (!response.ok) {
+  try {
+    const response = await githubRequest(
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/branches/${encodeURIComponent(branch)}`,
+      token,
+    );
+    if (!response.ok) return null;
+    const data = await response.json() as GitHubBranchResponse;
+    return data.name === branch && typeof data.commit?.sha === "string" && data.commit.sha ?
+      data.commit.sha : null;
+  } catch {
     return null;
   }
-
-  const data = (await response.json()) as GitHubBranchResponse;
-
-  if (data.name !== branch || typeof data.commit?.sha !== "string" || !data.commit.sha) {
-    return null;
-  }
-
-  return data.commit.sha;
 }
 
 function matchesAuthorizedPullRequest(
@@ -425,98 +425,117 @@ export async function createVerifiedGitHubPullRequest(
     };
   }
 
-  /*
-   * A previous POST may have succeeded while its response or verification
-   * failed. Search open and closed PRs before another mutation. A full page
-   * is ambiguous, so fail closed instead of risking a duplicate.
-   */
-  const list = await githubRequest(
-    `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repository)}/pulls?` +
-      new URLSearchParams({ state: "all", head: `${repository.owner}:${delivery.branchName}`,
-        base: baseBranch, per_page: "100" }).toString(),
-    token,
-  );
-  if (!list.ok) return { status: "pull_request_preflight_failed",
-    summary: "Existing pull requests could not be checked." };
-  let listed: GitHubPullRequestResponse[];
-  try { listed = await list.json() as GitHubPullRequestResponse[]; }
-  catch { return { status: "pull_request_preflight_failed", summary: "Existing pull requests could not be checked." }; }
-  if (!Array.isArray(listed) || listed.length >= 100) return {
-    status: "pull_request_preflight_failed", summary: "Existing pull request listing is ambiguous." };
-  let number: number;
-  let status: "created" | "already_exists";
-  if (listed.length > 0) {
-    if (listed.length !== 1 || !matchesAuthorizedPullRequest(listed[0], repositoryIdentity, delivery, baseHeadSha)) {
-      return { status: "pull_request_verification_failed",
-        summary: "Existing pull request identity is ambiguous." };
+  // A database primary key serializes creation across workers. A previous
+  // POST_ATTEMPTED record never grants permission to POST again.
+  let claimed: boolean;
+  let durable: Awaited<ReturnType<typeof getDurablePullRequestDelivery>>;
+  try {
+    durable = await getDurablePullRequestDelivery(delivery.id);
+    if (durable && (durable.provider !== "github" || durable.repositoryIdentity !== repositoryIdentity)) {
+      return { status: "persistence_failed", summary: "Durable PR identity conflicts with delivery." };
     }
-    number = listed[0].number;
-    status = "already_exists";
-  } else {
-    // Authorization may expire or the branches may move during the read-only
-    // retry check. Refresh both observations immediately before POST.
+    claimed = durable ? false : await claimPullRequestDelivery(delivery.id, repositoryIdentity);
+    if (!claimed && !durable) durable = await getDurablePullRequestDelivery(delivery.id);
+    if (!claimed && !durable) return { status: "persistence_failed", summary: "PR claim could not be recovered." };
+  } catch {
+    return { status: "persistence_failed", summary: "PR claim could not be persisted." };
+  }
+
+  const resultFor = (value: GitHubPullRequestResponse & { number: number; html_url: string },
+    status: "created" | "already_exists"): CreateVerifiedGitHubPullRequestResult => ({
+    status,
+    pullRequest: { number: value.number, url: value.html_url, repositoryIdentity,
+      deliveryId: delivery.id, artifactSha256: artifact.sha256,
+      headBranch: delivery.branchName, headCommitSha: delivery.commitSha!,
+      baseBranch, baseHeadSha },
+    summary: status === "created" ? "Verified PR created and persisted." :
+      "Existing verified PR recovered and persisted.",
+  });
+  const path = `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repository)}/pulls`;
+  const getVerified = async (number: number) => {
+    try {
+      const response = await githubRequest(`${path}/${number}`, token);
+      if (!response.ok) return null;
+      const value = await response.json() as GitHubPullRequestResponse;
+      return matchesAuthorizedPullRequest(value, repositoryIdentity, delivery, baseHeadSha) &&
+        value.number === number && (value.state === "open" || value.state === "closed") ? value : null;
+    } catch { return null; }
+  };
+  const findRemote = async (): Promise<{ kind: "none" | "one" | "ambiguous" | "failed";
+    value?: GitHubPullRequestResponse & { number: number; html_url: string } }> => {
+    try {
+      const query = new URLSearchParams({ state: "all", head: `${repository.owner}:${delivery.branchName}`,
+        base: baseBranch, per_page: "2" });
+      const response = await githubRequest(`${path}?${query}`, token);
+      if (!response.ok) return { kind: "failed" };
+      const listed = await response.json() as unknown;
+      if (!Array.isArray(listed) || listed.length > 1) return { kind: "ambiguous" };
+      if (listed.length === 0) return { kind: "none" };
+      const number = (listed[0] as GitHubPullRequestResponse)?.number;
+      if (typeof number !== "number" || !Number.isSafeInteger(number) || number <= 0) return { kind: "ambiguous" };
+      const value = await getVerified(number);
+      return value ? { kind: "one", value } : { kind: "ambiguous" };
+    } catch { return { kind: "failed" }; }
+  };
+  const persistAndReturn = async (value: GitHubPullRequestResponse & { number: number; html_url: string },
+    status: "created" | "already_exists", reconciled: boolean): Promise<CreateVerifiedGitHubPullRequestResult> => {
+    try {
+      const persisted = await persistVerifiedPullRequest(delivery.id, repositoryIdentity,
+        value.number, value.html_url, value.state as "open" | "closed", reconciled);
+      if (persisted) return resultFor(value, status);
+    } catch { /* Database errors must never authorize another POST. */ }
+    return { status: "persistence_failed", summary: "Verified PR identity could not be persisted." };
+  };
+
+  if (durable?.status === "VERIFIED") {
+    if (!durable.prNumber || !durable.prUrl) return {
+      status: "persistence_failed", summary: "Durable PR identity is incomplete." };
+    const value = await getVerified(durable.prNumber);
+    if (!value || value.html_url !== durable.prUrl) return {
+      status: "pull_request_verification_failed", summary: "Durable PR no longer matches remote identity." };
+    return persistAndReturn(value, "already_exists", true);
+  }
+
+  const remote = await findRemote();
+  if (remote.kind === "one") return persistAndReturn(remote.value!, "already_exists", true);
+  if (remote.kind === "ambiguous") return {
+    status: "pull_request_verification_failed", summary: "Remote PR identity is ambiguous." };
+  if (remote.kind === "failed") return {
+    status: "pull_request_preflight_failed", summary: "Existing PRs could not be checked." };
+  if (!claimed) return { status: durable?.status === "POST_ATTEMPTED" ? "recovery_required" : "in_progress",
+    summary: "A prior PR claim exists; no new POST is authorized." };
+
+  // Refresh remote identities and capability after the listing, immediately
+  // before committing the irrevocable attempt state.
+  try {
     const currentBase = await getGitHubBranchHead(repository.owner, repository.repository, baseBranch, token);
     const currentHead = await getGitHubBranchHead(repository.owner, repository.repository, delivery.branchName, token);
     if (currentBase !== delivery.originalHead || currentHead !== delivery.commitSha ||
         !verifySignedGitHubPullRequestCapability(signedCapability, capabilitySigningSecret) ||
-        !validateGitHubPullRequestCapability(signedCapability.capability,
-          repositoryIdentity, delivery.id, artifact.sha256, delivery.branchName,
-          delivery.commitSha, baseBranch, currentBase)) {
-      return { status: "capability_denied",
-        summary: "Pull request authority or remote branch identity changed before creation." };
+        !validateGitHubPullRequestCapability(signedCapability.capability, repositoryIdentity,
+          delivery.id, artifact.sha256, delivery.branchName, delivery.commitSha, baseBranch, currentBase)) {
+      return { status: "capability_denied", summary: "PR authority or branch identity changed." };
     }
-    const response = await githubRequest(
-      `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repository)}/pulls`,
-      token,
-      { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, body, head: delivery.branchName, base: baseBranch }) },
-    );
-    if (!response.ok) return { status: "pull_request_failed",
-      summary: `GitHub pull request creation failed with status ${response.status}.` };
-    let created: GitHubPullRequestResponse;
-    try { created = await response.json() as GitHubPullRequestResponse; }
-    catch { return { status: "pull_request_verification_failed",
-      summary: "GitHub pull request creation response could not be verified." }; }
-    if (!matchesAuthorizedPullRequest(created, repositoryIdentity, delivery, baseHeadSha)) {
-      return { status: "pull_request_verification_failed",
-        summary: "GitHub pull request creation response did not match authorized identities." };
-    }
-    number = created.number;
-    status = "created";
+    if (!await markPullRequestPostAttempted(delivery.id)) return {
+      status: "persistence_failed", summary: "PR attempt could not be durably claimed." };
+  } catch {
+    return { status: "persistence_failed", summary: "PR attempt could not be durably claimed." };
   }
 
-  // Independent GET is required even when POST or listing returned matching
-  // data. Returning success never relies solely on a mutation response.
-  const observed = await githubRequest(
-    `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repository)}/pulls/${number}`,
-    token,
-  );
-  if (!observed.ok) return { status: "pull_request_verification_failed",
-    summary: "GitHub pull request could not be independently retrieved." };
-  let verified: GitHubPullRequestResponse;
-  try { verified = await observed.json() as GitHubPullRequestResponse; }
-  catch { return { status: "pull_request_verification_failed",
-    summary: "GitHub pull request could not be independently verified." }; }
-  if (!matchesAuthorizedPullRequest(verified, repositoryIdentity, delivery, baseHeadSha) ||
-      verified.number !== number) {
-    return { status: "pull_request_verification_failed",
-      summary: "GitHub pull request identities do not match the authorized delivery." };
+  let created: GitHubPullRequestResponse | null = null;
+  try {
+    const response = await githubRequest(path, token, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, body, head: delivery.branchName, base: baseBranch }),
+    });
+    if (response.ok) created = await response.json() as GitHubPullRequestResponse;
+  } catch { /* A successful POST can lose its response. Reconcile below. */ }
+  if (created && matchesAuthorizedPullRequest(created, repositoryIdentity, delivery, baseHeadSha)) {
+    const verified = await getVerified(created.number);
+    if (verified) return persistAndReturn(verified, "created", false);
   }
-  return {
-    status,
-    pullRequest: {
-      number,
-      url: verified.html_url,
-      repositoryIdentity,
-      deliveryId: delivery.id,
-      artifactSha256: artifact.sha256,
-      headBranch: delivery.branchName,
-      headCommitSha: delivery.commitSha,
-      baseBranch,
-      baseHeadSha,
-    },
-    summary: status === "created" ?
-      "Verified remediation pull request was created and independently retrieved." :
-      "Existing verified remediation pull request was independently retrieved.",
-  };
+  const afterPost = await findRemote();
+  if (afterPost.kind === "one") return persistAndReturn(afterPost.value!, "already_exists", true);
+  return { status: "recovery_required",
+    summary: "PR POST outcome is uncertain; read-only reconciliation is required before any recovery policy." };
 }

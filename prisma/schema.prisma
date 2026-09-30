@@ -46,12 +46,41 @@ model VerifiedRemediationArtifact {
   @@index([createdAt])
 }
 
+enum GitHubPullRequestDeliveryStatus {
+  CLAIMED
+  POST_ATTEMPTED
+  VERIFIED
+}
+
+model GitHubPullRequestDelivery {
+  deliveryId String @id
+  delivery RemediationDelivery @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
+
+  provider String @default("github")
+  repositoryIdentity String
+  status GitHubPullRequestDeliveryStatus @default(CLAIMED)
+
+  prNumber Int?
+  prUrl String?
+  prState String?
+
+  createdAt DateTime @default(now())
+  attemptedAt DateTime?
+  verifiedAt DateTime?
+  reconciledAt DateTime?
+
+  @@unique([provider, repositoryIdentity, prNumber])
+  @@index([status])
+}
+
 model RemediationDelivery {
   id String @id @default(cuid())
 
   artifactId String
 
   artifact VerifiedRemediationArtifact @relation(fields: [artifactId], references: [id], onDelete: Restrict)
+
+  pullRequestDelivery GitHubPullRequestDelivery?
 
   status RemediationDeliveryStatus @default(PREPARED)
 
