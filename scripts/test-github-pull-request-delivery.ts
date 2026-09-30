@@ -15,7 +15,7 @@ const branch = `deployguard/remediation-${sha.slice(0, 12)}`;
 const secret = "test-only-signing-secret";
 let state = "PUSHED", observedBase = baseSha, observedHead = headSha;
 let existing = false, tokenCalls = 0, posts = 0, fetches = 0;
-let throwToken = false;
+let throwToken = false, artifactSource = "fresh-remote", remoteVerified = true;
 const delivery = { id: "delivery", artifactId: "artifact", status: state,
   repositoryIdentity: repo, sourceBranch: "main", originalHead: baseSha,
   branchName: branch, commitSha: headSha };
@@ -24,7 +24,7 @@ stub("@/lib/remediation/remediation-delivery-repository", {
 });
 stub("@/lib/remediation/trusted-artifact-repository", {
   async getVerifiedArtifactMetadata() { return { id: "artifact", repositoryIdentity: repo, sha256: sha, sourceBranch: "main",
-      sourceCommitSha: baseSha, ingestionSource: "fresh-remote", ingestionRemoteVerified: true }; },
+      sourceCommitSha: baseSha, ingestionSource: artifactSource, ingestionRemoteVerified: remoteVerified }; },
 });
 stub("@/lib/remediation/github-app-auth", {
   async createInstallationAccessToken(owner: string, name: string, permissions: unknown) {
@@ -68,10 +68,20 @@ async function main() {
   state = "PUSHED";
   assert.equal((await createVerifiedGitHubPullRequest("other/repo", "delivery", signed(), secret, "Test", "Body")).status, "repository_mismatch");
   assert.equal(tokenCalls, 0);
+  artifactSource = "verified-cache";
   observedBase = "d".repeat(40);
   assert.equal((await run()).status, "base_head_mismatch");
   assert.equal(posts, 0);
   observedBase = baseSha;
+  for (const invalid of ["fresh-ttl-cache", "stale-fallback-cache", "forged-source"]) {
+    artifactSource = invalid;
+    assert.equal((await run()).status, "artifact_mismatch");
+    assert.equal(posts, 0);
+  }
+  artifactSource = "verified-cache";
+  remoteVerified = false;
+  assert.equal((await run()).status, "artifact_mismatch");
+  remoteVerified = true;
   observedHead = "e".repeat(40);
   assert.equal((await run()).status, "head_commit_mismatch");
   assert.equal(posts, 0);

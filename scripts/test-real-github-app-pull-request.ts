@@ -5,6 +5,7 @@ import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { prisma } from "@/lib/database/prisma";
+import { isRemotelyVerifiedIngestionSource } from "@/lib/remediation/artifact-delivery-reference";
 import { createInstallationAccessToken } from "@/lib/remediation/github-app-auth";
 import { issueGitHubPullRequestCapability, signGitHubPullRequestCapability } from "@/lib/remediation/github-pull-request-capability";
 import { createVerifiedGitHubPullRequest } from "@/lib/remediation/github-pull-request-delivery";
@@ -73,7 +74,7 @@ async function main(setStage: SetStage): Promise<void> {
   assert.equal(createRemediationBranchName(artifact.sha256), HEAD_BRANCH);
   assert.equal(artifact.sourceBranch, "main");
   assert.equal(artifact.sourceCommitSha, BASE_SHA);
-  assert.equal(artifact.ingestionSource, "fresh-remote");
+  assert(isRemotelyVerifiedIngestionSource(artifact.ingestionSource));
   assert.equal(artifact.ingestionRemoteVerified, true);
   console.log("✓ artifact and provenance verified");
   setStage("remote_identity");

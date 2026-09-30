@@ -15,7 +15,7 @@ const head = "57b64cc5fd7452ab9daf3b34253a45c9cee4a0e6";
 const sha = "9c9b23d4566b966be68e4be67469c63c8f8aced4c3be61b2bf0778d2541a0150";
 const branch = "deployguard/remediation-9c9b23d4566b";
 const hostile = "SECRET_TOKEN Authorization: Bearer secret PRIVATE KEY https://user:password@github.com";
-let calls = 0, failAt = "";
+let calls = 0, failAt = "", artifactSource = "verified-cache", remoteVerified = true;
 const output: string[] = [];
 const original = { ...process.env }, originalFetch = globalThis.fetch;
 const log = console.log, error = console.error;
@@ -29,7 +29,7 @@ stub("@/lib/remediation/remediation-delivery-repository", {
 stub("@/lib/remediation/trusted-artifact-repository", {
   async getVerifiedArtifactMetadata() { calls++; if (failAt === "artifact_lookup") throw new Error(hostile);
     return { id: "artifact", repositoryIdentity: repo, sha256: sha, sourceBranch: "main",
-      sourceCommitSha: base, ingestionSource: "fresh-remote", ingestionRemoteVerified: true }; },
+      sourceCommitSha: base, ingestionSource: artifactSource, ingestionRemoteVerified: remoteVerified }; },
 });
 stub("@/lib/remediation/github-app-auth", {
   async createInstallationAccessToken() { calls++; throw new Error(hostile); },
@@ -63,6 +63,24 @@ async function main() {
     assert.equal(await runRealGitHubAppPullRequestTest(), false);
     assert(output.includes(`FAILED_STAGE=${stage}`));
   }
+  failAt = "";
+  artifactSource = "verified-cache";
+  remoteVerified = true;
+  output.length = 0;
+  assert.equal(await runRealGitHubAppPullRequestTest(), false);
+  assert(output.includes("✓ artifact and provenance verified"));
+  assert(output.includes("FAILED_STAGE=github_app_authorization"));
+  for (const invalid of ["fresh-ttl-cache", "stale-fallback-cache", "forged-source"]) {
+    artifactSource = invalid;
+    output.length = 0;
+    assert.equal(await runRealGitHubAppPullRequestTest(), false);
+    assert(output.includes("FAILED_STAGE=artifact_lookup"));
+  }
+  artifactSource = "verified-cache";
+  remoteVerified = false;
+  output.length = 0;
+  assert.equal(await runRealGitHubAppPullRequestTest(), false);
+  assert(output.includes("FAILED_STAGE=artifact_lookup"));
   assert(!output.join(" ").includes(hostile));
   assert(!output.join(" ").includes("SECRET_TOKEN"));
   globalThis.fetch = originalFetch;

@@ -1,3 +1,4 @@
+import { isRemotelyVerifiedIngestionSource } from "@/lib/remediation/artifact-delivery-reference";
 import { createInstallationAccessToken } from "@/lib/remediation/github-app-auth";
 
 import { getRemediationDelivery } from "@/lib/remediation/remediation-delivery-repository";
@@ -245,7 +246,7 @@ export async function createVerifiedGitHubPullRequest(
   if (artifact.repositoryIdentity !== repositoryIdentity ||
       artifact.sourceBranch !== delivery.sourceBranch ||
       artifact.sourceCommitSha !== delivery.originalHead ||
-      artifact.ingestionSource !== "fresh-remote" ||
+      !isRemotelyVerifiedIngestionSource(artifact.ingestionSource) ||
       artifact.ingestionRemoteVerified !== true) {
     return {
       status: "artifact_mismatch",
