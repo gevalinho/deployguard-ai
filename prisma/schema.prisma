@@ -40,10 +40,22 @@ model VerifiedRemediationArtifact {
   createdAt DateTime @default(now())
 
   deliveries RemediationDelivery[]
+  deliveryRequest RemediationDeliveryRequest?
 
   @@index([sha256])
   @@index([repositoryIdentity])
   @@index([createdAt])
+}
+
+// One claim per immutable artifact. A lost worker never grants a new mutation attempt.
+model RemediationDeliveryRequest {
+  artifactId String @id
+  artifact VerifiedRemediationArtifact @relation(fields: [artifactId], references: [id], onDelete: Restrict)
+  developerGitHubId String
+  repositoryIdentity String
+  deliveryId String? @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum GitHubPullRequestDeliveryStatus {
