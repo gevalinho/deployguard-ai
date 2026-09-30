@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createGitHubAppPushTransport, githubRemoteMatches } from "@/lib/remediation/github-app-git-transport";
@@ -76,6 +76,7 @@ if (!['push','ls-remote'].includes(args[0])) {
  process.stdout.write(execFileSync(${JSON.stringify(realGit)},args,{env:process.env}));
 } else {
  const env=process.env;
+ fs.writeFileSync(${JSON.stringify(join(root, 'transport-directory'))},process.cwd());
  assert.equal(env.GIT_TRACE,undefined);
  assert.equal(env.GIT_ASKPASS,undefined);
  assert.equal(env.GIT_CONFIG_GLOBAL,'/dev/null');
@@ -83,10 +84,19 @@ if (!['push','ls-remote'].includes(args[0])) {
  assert.equal(fs.readFileSync('shallow','utf8').trim(),${JSON.stringify(sha)});
  assert(!fs.readFileSync('config','utf8').includes(${JSON.stringify(token)}));
  assert(!args.join(' ').includes(${JSON.stringify(token)}));
- assert.equal(env.GIT_CONFIG_VALUE_3,${JSON.stringify(header)});
+ assert.equal(env.GIT_CONFIG_COUNT,undefined);
+ assert.equal(env.GIT_CONFIG_VALUE_3,undefined);
+ // Use the actual installed Git parser, catching the Git 2.25 regression.
+ const effective=execFileSync(${JSON.stringify(realGit)},['config','--get-urlmatch','http.extraheader',${JSON.stringify(`https://github.com/${identity}.git`)}],{env,encoding:'utf8'}).trim();
+ assert.equal(effective,${JSON.stringify(header)});
+ assert(!fs.readFileSync('config','utf8').includes(effective));
+ assert(!args.join(' ').includes(effective));
+ assert.equal(execFileSync(${JSON.stringify(realGit)},['config','--get','http.sslVerify'],{env,encoding:'utf8'}).trim(),'true');
+ assert.equal(execFileSync(${JSON.stringify(realGit)},['config','--get','http.followRedirects'],{env,encoding:'utf8'}).trim(),'false');
  assert(args.includes(${JSON.stringify(`https://github.com/${identity}.git`)}));
  if(args[0]==='push') assert.equal(args.at(-1),${JSON.stringify(`${sha}:refs/heads/${branch}`)});
  const mode=fs.readFileSync(${JSON.stringify(modePath)},'utf8');
+ if(mode==='delay') setTimeout(()=>{},150);
  if(mode==='error') { process.stderr.write(${JSON.stringify(token)}); process.exit(1); }
  if(args[0]==='ls-remote') process.stdout.write(mode==='wrong'?'${"b".repeat(40)}\\trefs/heads/${branch}\\n': '${sha}\\trefs/heads/${branch}\\n');
  else process.stdout.write(${JSON.stringify(token)});
@@ -104,6 +114,24 @@ if (!['push','ls-remote'].includes(args[0])) {
     assert(!JSON.stringify(failedPush).includes(token));
     assert(!JSON.stringify(failedPush).includes(header));
     assert.equal(readFileSync(join(repo, ".git/config"), "utf8"), before);
+    // The transport object never exposes credentials, and cannot execute after
+    // disposal (including repeated disposal). Config lookup output is suppressed.
+    const opened = await provider({ repositoryPath: repo, repositoryIdentity: identity,
+      remoteUrl: `git@github.com:${identity}.git` });
+    assert(!JSON.stringify(opened).includes(token));
+    assert(!JSON.stringify(opened).includes(header));
+    const inspected = await opened.run(["config", "--get-urlmatch", "http.extraheader", opened.remote]);
+    assert.deepEqual(inspected, { status: "passed", stdout: "" });
+    writeFileSync(modePath, "delay");
+    let completed = false;
+    const inFlight = opened.run(["ls-remote", opened.remote]).then((result) => { completed = true; return result; });
+    await opened.dispose();
+    assert(completed, "Disposal must wait for authenticated commands to finish");
+    await inFlight;
+    const removedDirectory = readFileSync(join(root, "transport-directory"), "utf8");
+    assert(!existsSync(removedDirectory), "Temporary Git context must be removed");
+    assert.deepEqual(await opened.run(["ls-remote", opened.remote]), { status: "failed", stdout: "" });
+    await opened.dispose();
     console.log("✓ GitHub App push authorization, scope, credential isolation, error redaction, and remote verification passed.");
   } finally {
     process.env.PATH = originalPath;

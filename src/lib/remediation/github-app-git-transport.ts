@@ -19,6 +19,38 @@ export function githubRemoteMatches(identity: string, remote: string): boolean {
   ].includes(remote);
 }
 
+// Keep token/encoded-header temporaries outside the returned transport closure.
+// Only env retains usable authentication, and disposal clears it.
+async function configureAuthentication(
+  env: NodeJS.ProcessEnv,
+  repositoryIdentity: string,
+  remote: string,
+  issueToken: typeof createInstallationAccessToken,
+): Promise<void> {
+  const [owner, repository] = repositoryIdentity.split("/");
+  const access = await issueToken(owner, repository);
+  if (access.repositoryIdentity !== repositoryIdentity || !access.token ||
+      !Number.isFinite(Date.parse(access.expiresAt)) ||
+      Date.parse(access.expiresAt) <= Date.now()) {
+    throw new Error("Invalid installation token scope or expiry.");
+  }
+  const config = [
+    ["credential.helper", ""],
+    ["http.followRedirects", "false"],
+    ["http.sslVerify", "true"],
+    [`http.${remote}.extraheader`, `Authorization: Basic ${Buffer.from(`x-access-token:${access.token}`).toString("base64")}`],
+  ];
+  // Git 2.25.1 and newer accept this process-local format. Each complete
+  // key=value pair is single-quoted for Git's parser, not a shell. Keys and
+  // values are closed constants, validated identity, or base64; none may
+  // inject a quote. No credential enters argv or persistent config.
+  env.GIT_CONFIG_PARAMETERS = config.map(([key, value]) => {
+    const pair = `${key}=${value}`;
+    if (pair.includes("'")) throw new Error("Invalid ephemeral Git configuration.");
+    return `'${pair}'`;
+  }).join(" ");
+}
+
 /** Dependency injection is for trusted server tests, never request-supplied options. */
 export function createGitHubAppPushTransport(
   issueToken = createInstallationAccessToken,
@@ -65,44 +97,40 @@ export function createGitHubAppPushTransport(
         }
         await writeFile(join(directory, "shallow"), shallow, { mode: 0o600 });
       }
-      const [owner, repository] = repositoryIdentity.split("/");
-      const access = await issueToken(owner, repository);
-      if (access.repositoryIdentity !== repositoryIdentity || !access.token ||
-          !Number.isFinite(Date.parse(access.expiresAt)) ||
-          Date.parse(access.expiresAt) <= Date.now()) {
-        throw new Error("Invalid installation token scope or expiry.");
-      }
       const remote = `https://github.com/${repositoryIdentity}.git`;
-      const config = [
-        ["credential.helper", ""],
-        ["http.followRedirects", "false"],
-        ["http.sslVerify", "true"],
-        [`http.${remote}.extraheader`, `Authorization: Basic ${Buffer.from(`x-access-token:${access.token}`).toString("base64")}`],
-      ];
-      env.GIT_CONFIG_COUNT = String(config.length);
-      config.forEach(([key, value], index) => {
-        env[`GIT_CONFIG_KEY_${index}`] = key;
-        env[`GIT_CONFIG_VALUE_${index}`] = value;
-      });
+      await configureAuthentication(env, repositoryIdentity, remote, issueToken);
+      let disposed = false;
+      type Result = { status: "passed" | "failed"; stdout: string };
+      const pending = new Set<Promise<Result>>();
       return {
         remote,
         async run(args) {
-          try {
-            const result = await exec("git", args, {
-              cwd: directory, env, timeout: 30_000, maxBuffer: 1024 * 1024,
-            });
-            // Push progress is deliberately discarded. Verification exposes
-            // only a strictly parsed SHA/ref record, never arbitrary output.
-            const stdout = args[0] === "ls-remote" &&
-              /^[a-f0-9]{40}\trefs\/heads\/deployguard\/remediation-[a-f0-9]{12}\n?$/.test(result.stdout)
-              ? result.stdout : "";
-            return { status: "passed", stdout };
-          } catch {
-            return { status: "failed", stdout: "" };
-          }
+          if (disposed) return { status: "failed", stdout: "" };
+          const operation = (async (): Promise<Result> => {
+            try {
+              const result = await exec("git", args, {
+                cwd: directory, env, timeout: 30_000, maxBuffer: 1024 * 1024,
+              });
+              // Push progress is deliberately discarded. Verification exposes
+              // only a strictly parsed SHA/ref record, never arbitrary output.
+              const stdout = args[0] === "ls-remote" &&
+                /^[a-f0-9]{40}\trefs\/heads\/deployguard\/remediation-[a-f0-9]{12}\n?$/.test(result.stdout)
+                ? result.stdout : "";
+              return { status: "passed", stdout };
+            } catch {
+              return { status: "failed", stdout: "" };
+            }
+          })();
+          pending.add(operation);
+          try { return await operation; }
+          finally { pending.delete(operation); }
         },
         async dispose() {
+          disposed = true;
           for (const key of Object.keys(env)) delete env[key];
+          // Already-started commands must finish before disposal returns; no
+          // new command may inherit credentials or fall back to ambient auth.
+          await Promise.allSettled([...pending]);
           await rm(directory, { recursive: true, force: true });
         },
       };

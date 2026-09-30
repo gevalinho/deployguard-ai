@@ -14,8 +14,12 @@ repository hooks, URL rewrites, push options, or credential helpers. Shallow-clo
 commit boundaries are copied as metadata. System/global
 config and inherited Git tracing, askpass, proxies, and credential environment
 variables are excluded. TLS verification is enabled and HTTP redirects disabled.
-The Basic authorization header is supplied through command-local GIT_CONFIG_*
-environment variables, never command arguments, URLs, files, or returned errors.
+The Basic authorization header is supplied through command-local
+`GIT_CONFIG_PARAMETERS`, using individually quoted key=value pairs compatible with
+Git 2.25.1 and newer. It does not depend on `GIT_CONFIG_COUNT` or version branching.
+Credentials never enter command arguments, URLs, files, or returned errors.
+Disposal clears the credential environment, waits for active commands to finish,
+and permanently rejects subsequent commands.
 Temporary Git metadata contains no credentials and is removed after use.
 
 The executor pushes `<commitSha>:refs/heads/<branch>` without force, then runs a
@@ -89,6 +93,6 @@ succeeds but later verification/persistence fails, inspect the remote and durabl
 state before retrying. The script does not delete the remediation branch.
 
 Git's process-local configuration mechanism is documented in
-[git-config](https://git-scm.com/docs/git-config#Documentation/git-config.txt-GIT_CONFIG_COUNT).
+[git-config](https://git-scm.com/docs/git-config).
 GitHub documents installation-token HTTP Git authentication in
 [Authenticating as an installation](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation).
