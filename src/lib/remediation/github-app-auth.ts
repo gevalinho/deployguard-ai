@@ -265,7 +265,8 @@ export async function getRepositoryInstallation(
 export async function createInstallationAccessToken(
   owner: string,
   repository: string,
-  permissions: { contents: "read" | "write"; pull_requests: "write" } = {
+  permissions: { contents: "read" | "write"; pull_requests: "write" } |
+    { pull_requests: "read" } = {
     contents: "write", pull_requests: "write",
   },
 ): Promise<GitHubInstallationAccessToken> {
@@ -332,7 +333,7 @@ export async function createInstallationAccessToken(
     !data.token ||
     typeof data.expires_at !==
       "string" ||
-    data.permissions?.contents !== permissions.contents ||
+    data.permissions?.contents !== ("contents" in permissions ? permissions.contents : undefined) ||
     data.permissions?.pull_requests !== permissions.pull_requests ||
     data.repositories?.length !== 1 ||
     data.repositories[0].full_name !== `${owner}/${repository}`
