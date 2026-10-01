@@ -24,23 +24,75 @@ export function beginGitHubLogin(): { url: string; state: OAuthState } {
   url.searchParams.set("code_challenge_method", "S256");
   return { url: url.toString(), state };
 }
+export type GitHubOAuthFailureStage =
+  | "token_endpoint_http"
+  | "token_endpoint_network"
+  | "token_response_invalid"
+  | "token_missing"
+  | "user_lookup_http"
+  | "user_lookup_network"
+  | "user_response_invalid"
+  | "user_identity_invalid";
+
+const SAFE_OAUTH_ERROR_CODES = new Set([
+  "incorrect_client_credentials", "redirect_uri_mismatch", "bad_verification_code",
+  "bad_refresh_token", "unverified_user_email", "access_denied", "invalid_request",
+]);
+
+export class GitHubOAuthFailure extends Error {
+  constructor(
+    readonly stage: GitHubOAuthFailureStage,
+    readonly httpStatus?: number,
+    readonly providerCode?: string,
+  ) {
+    super("GitHub developer OAuth failed.");
+    this.name = "GitHubOAuthFailure";
+  }
+}
+
+function safeProviderCode(value: unknown): string | undefined {
+  return typeof value === "string" && SAFE_OAUTH_ERROR_CODES.has(value) ? value : undefined;
+}
+
 export async function finishGitHubLogin(code: string, state: OAuthState): Promise<{ githubId: string; login: string }> {
   const { clientId, clientSecret, redirectUri } = config();
-  const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
-    method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code,
-      redirect_uri: redirectUri, code_verifier: state.verifier }), cache: "no-store",
-  });
-  if (!tokenResponse.ok) throw new Error("Developer sign-in failed.");
-  const tokenBody = await tokenResponse.json() as { access_token?: unknown };
-  if (typeof tokenBody.access_token !== "string" || !tokenBody.access_token) throw new Error("Developer sign-in failed.");
-  const userResponse = await fetch("https://api.github.com/user", {
-    headers: { Authorization: `Bearer ${tokenBody.access_token}`, Accept: "application/vnd.github+json" }, cache: "no-store",
-  });
-  if (!userResponse.ok) throw new Error("Developer identity lookup failed.");
-  const user = await userResponse.json() as { id?: unknown; login?: unknown };
-  if (!Number.isSafeInteger(user.id) || typeof user.login !== "string" || !/^[A-Za-z0-9-]+$/.test(user.login))
-    throw new Error("Developer identity is invalid.");
+  let tokenResponse: Response;
+  try {
+    tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
+      method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code,
+        redirect_uri: redirectUri, code_verifier: state.verifier }), cache: "no-store",
+    });
+  } catch {
+    throw new GitHubOAuthFailure("token_endpoint_network");
+  }
+  let tokenBody: { access_token?: unknown; error?: unknown };
+  try {
+    tokenBody = await tokenResponse.json() as { access_token?: unknown; error?: unknown };
+  } catch {
+    throw new GitHubOAuthFailure(tokenResponse.ok ? "token_response_invalid" : "token_endpoint_http", tokenResponse.status);
+  }
+  const providerCode = safeProviderCode(tokenBody?.error);
+  if (!tokenResponse.ok) throw new GitHubOAuthFailure("token_endpoint_http", tokenResponse.status, providerCode);
+  if (typeof tokenBody?.access_token !== "string" || !tokenBody.access_token)
+    throw new GitHubOAuthFailure("token_missing", tokenResponse.status, providerCode);
+  let userResponse: Response;
+  try {
+    userResponse = await fetch("https://api.github.com/user", {
+      headers: { Authorization: `Bearer ${tokenBody.access_token}`, Accept: "application/vnd.github+json" }, cache: "no-store",
+    });
+  } catch {
+    throw new GitHubOAuthFailure("user_lookup_network");
+  }
+  if (!userResponse.ok) throw new GitHubOAuthFailure("user_lookup_http", userResponse.status);
+  let user: { id?: unknown; login?: unknown };
+  try {
+    user = await userResponse.json() as { id?: unknown; login?: unknown };
+  } catch {
+    throw new GitHubOAuthFailure("user_response_invalid", userResponse.status);
+  }
+  if (!Number.isSafeInteger(user?.id) || typeof user?.login !== "string" || !/^[A-Za-z0-9-]+$/.test(user.login))
+    throw new GitHubOAuthFailure("user_identity_invalid");
   return { githubId: String(user.id), login: user.login };
 }
 export async function authorizeDeveloperRepository(
