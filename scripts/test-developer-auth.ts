@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { authorizeDeveloperRepository, beginGitHubLogin } from "@/lib/auth/github-developer-auth";
+import { GET as startGitHubLogin } from "@/app/api/auth/github/start/route";
 import { readDeveloperSession, sameOrigin, seal, unseal, SESSION_COOKIE } from "@/lib/auth/developer-session";
 
 async function check() {
@@ -7,6 +8,10 @@ async function check() {
   process.env.GITHUB_APP_CLIENT_ID = "test-client";
   process.env.GITHUB_APP_CLIENT_SECRET = "test-secret";
   process.env.GITHUB_APP_OAUTH_REDIRECT_URI = "https://deployguard.test/api/auth/github/callback";
+  const start = await startGitHubLogin();
+  assert.equal(start.status, 302);
+  assert.equal(new URL(start.headers.get("location")!).origin, "https://github.com");
+  assert(start.headers.get("set-cookie")?.startsWith("deployguard_oauth="));
   const login = beginGitHubLogin();
   assert(new URL(login.url).searchParams.get("code_challenge"));
   assert(!login.url.includes("test-secret"));
