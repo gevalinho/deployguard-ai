@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  allowedDevOrigins: [
+  "outer-frames-sea-wave.trycloudflare.com",
+],
 };
 
 export default nextConfig;

@@ -14,7 +14,19 @@ export async function GET(request: Request) {
   try {
     const developer = await finishGitHubLogin(code, state);
     stage = "redirect";
-    const response = new Response(null, { status: 302, headers: { Location: new URL("/", request.url).toString() } });
+
+const redirectUri = process.env.GITHUB_APP_OAUTH_REDIRECT_URI;
+
+if (!redirectUri) {
+  throw new Error("GitHub OAuth redirect URI is not configured.");
+}
+
+const response = new Response(null, {
+  status: 302,
+  headers: {
+    Location: new URL("/", redirectUri).toString(),
+  },
+});
     stage = "session_cookie";
     const sessionCookie = `${SESSION_COOKIE}=${seal({ ...developer, expiresAt: Date.now() + 8 * 60 * 60_000 })}; ${cookieOptions(8 * 60 * 60)}`;
     stage = "cookie_header";

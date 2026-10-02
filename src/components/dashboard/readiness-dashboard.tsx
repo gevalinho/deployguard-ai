@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { RemediationDelivery } from "./remediation-delivery";
 import type {
   PublicCheckResult,
   PublicProductionReadinessReport,
@@ -98,6 +99,7 @@ type RemediationResult = {
   };
 
   remediation: {
+    verifiedArtifactReference?: { artifactId: string };
     proposal: {
       id: string;
       title: string;
@@ -1877,7 +1879,7 @@ const stages = [
   );
 }
 
-export function ReadinessDashboard() {
+export function ReadinessDashboard({ developer }: { developer: { login: string } | null }) {
   const [repositoryUrl, setRepositoryUrl] = useState("");
 
   const [remoteScan, setRemoteScan] =
@@ -2223,6 +2225,12 @@ const [remediationResult, setRemediationResult] =
           </p>
 
           <ProcessOverview />
+          <RemediationDelivery
+            key={remediationResult?.remediation.verifiedArtifactReference?.artifactId ?? (remediationResult ? "unverified" : "saved")}
+            developer={developer}
+            generated={!!remediationResult}
+            artifactId={remediationResult?.remediation.verifiedArtifactReference?.artifactId}
+          />
 
           <div className="mt-8 max-w-3xl rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
             <label

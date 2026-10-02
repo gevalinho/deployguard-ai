@@ -48,6 +48,13 @@ async function check() {
   assert.equal((await handleDeveloperDeliveryPost(post(input), dependencies({ claim: async () => ({ kind: "existing", delivery: { ...delivery, repositoryIdentity: "other/repo" } }) }))).status, 409);
   assert.equal((await handleDeveloperDeliveryPost(post(input), dependencies({ claim: async () => ({ kind: "pending" }) }))).status, 409);
   assert.equal((await handleDeveloperDeliveryPost(post(input), dependencies({ artifact: async () => ({ ...artifact, repositoryIdentity: "other/repo" }), authorize: async (_developer, identity) => identity === "owner/repository" }))).status, 403);
+  for (const origin of [null, "https://evil.test"]) {
+    const request = post(input);
+    if (origin) request.headers.set("origin", origin); else request.headers.delete("origin");
+    assert.equal((await handleDeveloperDeliveryPost(request, dependencies())).status, 403);
+  }
+  assert.equal((await handleDeveloperDeliveryGet(new Request("https://deployguard.test"), delivery.id,
+    dependencies({ authorize: async () => false }))).status, 403);
   const existing = await handleDeveloperDeliveryPost(post(input), dependencies());
   assert.equal(existing.status, 200);
   assert.deepEqual(Object.keys((await existing.json()).delivery).sort(),
@@ -79,6 +86,15 @@ async function check() {
   }));
   assert.equal(status.status, 200);
   assert.equal((await status.json()).delivery.pullRequest.number, 1);
+  for (const phase of ["CLAIMED", "POST_ATTEMPTED"] as const) {
+    const response = await handleDeveloperDeliveryGet(new Request("https://deployguard.test"), delivery.id, dependencies({
+      pr: async () => ({ deliveryId: delivery.id, provider: "github", repositoryIdentity: artifact.repositoryIdentity,
+        status: phase, prNumber: null, prUrl: null, prState: null, createdAt: new Date(), attemptedAt: null,
+        verifiedAt: null, reconciledAt: null }),
+    }));
+    const body = await response.json();
+    assert.equal(body.delivery.pullRequestStatus, phase); assert.equal(body.delivery.pullRequest, undefined);
+  }
   console.log("Developer delivery API boundary tests passed.");
 }
 check().catch(() => { console.error("Developer delivery API boundary tests failed."); process.exitCode = 1; });

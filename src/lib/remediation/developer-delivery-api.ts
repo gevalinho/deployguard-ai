@@ -36,14 +36,18 @@ export const deliveryApiDependencies: DeliveryApiDependencies = {
 function error(status: number, code: string): Response {
   return Response.json({ ok: false, error: code }, { status, headers: { "Cache-Control": "no-store" } });
 }
-function publicDelivery(delivery: RemediationDeliveryMetadata, pr?: DurablePullRequestDelivery | null) {
+export function publicDelivery(delivery: RemediationDeliveryMetadata, pr?: DurablePullRequestDelivery | null) {
   const result: Record<string, unknown> = {
     artifactId: delivery.artifactId, deliveryId: delivery.id,
     repositoryIdentity: delivery.repositoryIdentity, status: delivery.status,
     branchName: delivery.branchName, commitSha: delivery.commitSha,
     pushedAt: delivery.pushedAt?.toISOString() ?? null,
   };
-  if (pr?.status === "VERIFIED" && pr.repositoryIdentity === delivery.repositoryIdentity &&
+  if (pr?.deliveryId === delivery.id && pr.repositoryIdentity === delivery.repositoryIdentity &&
+      pr.provider === "github" && ["CLAIMED", "POST_ATTEMPTED", "VERIFIED"].includes(pr.status)) {
+    result.pullRequestStatus = pr.status;
+  }
+  if (pr?.deliveryId === delivery.id && pr?.status === "VERIFIED" && pr.repositoryIdentity === delivery.repositoryIdentity &&
       pr.provider === "github" && Number.isInteger(pr.prNumber) &&
       pr.prUrl === `https://github.com/${delivery.repositoryIdentity}/pull/${pr.prNumber}` &&
       ["open", "closed"].includes(pr.prState ?? "")) {
@@ -51,14 +55,14 @@ function publicDelivery(delivery: RemediationDeliveryMetadata, pr?: DurablePullR
   }
   return result;
 }
-function validArtifact(artifact: TrustedArtifactMetadata): boolean {
+export function validArtifact(artifact: TrustedArtifactMetadata): boolean {
   return githubRemoteMatches(artifact.repositoryIdentity, `https://github.com/${artifact.repositoryIdentity}.git`) &&
     artifact.ingestionRemoteVerified === true && isRemotelyVerifiedIngestionSource(artifact.ingestionSource) &&
     /^[a-f0-9]{40}$/.test(artifact.sourceCommitSha ?? "") &&
     typeof artifact.sourceBranch === "string" && validDeliverySourceBranch(artifact.sourceBranch) &&
     /^[a-f0-9]{64}$/.test(artifact.sha256) && artifact.format === "unified_diff";
 }
-function matchesDelivery(delivery: RemediationDeliveryMetadata, artifact: TrustedArtifactMetadata): boolean {
+export function matchesDelivery(delivery: RemediationDeliveryMetadata, artifact: TrustedArtifactMetadata): boolean {
   return delivery.artifactId === artifact.id && delivery.repositoryIdentity === artifact.repositoryIdentity &&
     delivery.originalHead === artifact.sourceCommitSha && delivery.sourceBranch === artifact.sourceBranch &&
     delivery.branchName === createRemediationBranchName(artifact.sha256) &&

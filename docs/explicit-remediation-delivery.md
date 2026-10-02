@@ -57,29 +57,66 @@ permission to mutate Git. Existing artifacts are not retroactively promoted by
 the migration's default false value; repeat remediation with verified ingestion
 when a deliverable artifact is required.
 
-## Future explicit delivery API
+## Authenticated explicit delivery API
 
-That endpoint is intentionally not implemented here. Its request should contain
-only the opaque artifact ID (and any separately designed explicit user intent).
-The server must authenticate the requester and authorize access and delivery to
-the artifact's stored repository; possession of an ID is insufficient.
+`POST /api/remediation/delivery` accepts exactly `{ "artifactId": "...",
+"confirmDelivery": true }`. It requires a signed developer session, same-origin
+request, eligible persisted artifact, and fresh GitHub repository authorization.
+The server owns repository identity, provenance, artifact hashes, branch names,
+commit SHAs, installation tokens, and capabilities. Browser-supplied authority
+is rejected. The artifact ID identifies evidence; it is not authorization.
 
-After authorization, load trusted artifact metadata and independently re-ingest a
-clean disposable Git checkout for the stored repository. The assessment archive
-path alone is insufficient: delivery needs real Git objects and a verified base
-commit. Obtain fresh remote commit/branch evidence server-side, reject fallback
-provenance, and require agreement with the artifact's recorded base. If the branch
-has advanced, require a new verified remediation; do not silently rebase a patch.
-Never accept a repository path, commit, source branch, target branch, or provenance
-flag from client JSON, and never reuse old assessment provenance as the new
-remote observation.
+A durable artifact claim serializes delivery attempts. The server independently
+re-ingests and clones a clean Git checkout, checks exact source provenance,
+prepares the deterministic remediation branch, commits, rechecks remote source
+provenance, and pushes the exact commit without force. Independent remote ref
+verification precedes persistence of PUSHED. Temporary workspaces are cleaned up.
+Duplicate requests return existing state or require recovery; they never silently
+restart an uncertain mutation. A moved source requires new verified remediation.
 
-Only then invoke the existing prepare → commit → App-authenticated push pipeline
-with server-owned signing material. Keep its signed capability checks, exact
-commit/branch push, independent remote verification, and durable transition
-ordering. The endpoint still needs request authentication/authorization,
-concurrent-request and retry handling, workspace cleanup, and endpoint-level
-adversarial tests before release. PR creation remains a separate downstream step.
+`GET /api/remediation/delivery/[deliveryId]` authenticates and freshly authorizes
+repository access. It exposes safe delivery state and, when present, the durable
+PR phase (CLAIMED / POST_ATTEMPTED / VERIFIED). Only VERIFIED PR records expose a
+canonical GitHub link. This is recorded status, not a fresh GitHub PR lookup.
+
+## Explicit pull request API
+
+`POST /api/remediation/delivery/[deliveryId]/pull-request` accepts ONLY
+`{ "confirmPullRequest": true }`. Every extra field is rejected, including
+repository, artifact hash, branches, commits, base SHA, token, capability,
+provenance, and title/body. The handler authenticates the developer, checks same
+origin, loads the trusted artifact/delivery relationship, freshly authorizes the
+repository, and requires a PUSHED delivery on its deterministic remediation branch.
+The existing base policy requires `main`.
+
+Only after those checks does the server issue and HMAC-sign a five-minute PR
+capability entirely from persisted state. It follows the delivery handler's
+secret lifecycle: a fresh random 32-byte secret shared only by issuance and
+verification within the server operation. No secret is persisted or returned.
+Title and body are server-generated.
+
+The existing PR engine independently verifies both GitHub branch HEADs against
+the persisted original base and remediation commit, checks the capability, and
+owns durable claims and POST attempts. It verifies existing open/closed PRs,
+GET-verifies created PRs, and persists identity before reporting success. A lost
+POST response can be reconciled, but POST_ATTEMPTED never authorizes another
+POST. Uncertain outcomes remain fail-closed and require recovery review.
+
+## Dashboard workflow
+
+Sign in with GitHub, generate controlled remediation, then explicitly confirm
+branch delivery. Once PUSHED is recorded, explicitly confirm PR creation.
+Delivery never automatically creates a PR. Status refresh is read-only and manual.
+Prepared, committed, pushed, pending PR, verified PR, authorization failures,
+conflicts, and uncertain outcomes are displayed separately.
+
+OAuth navigation preserves only opaque artifact/delivery IDs in tab-local session
+storage. Returning from sign-in performs no request or mutation automatically.
+Restored IDs are untrusted references and every server action revalidates them.
+No tokens, capabilities, artifact content, or authority fields are stored there.
+
+Private-repository ingestion, automatic retries, rebasing, background workers,
+and direct source/default-branch pushes are outside this workflow.
 
 ## Schema and tests
 
@@ -100,3 +137,21 @@ npx tsx scripts/test-remediation-delivery-pipeline.ts
 The first two use deterministic external-operation stubs. The persistence and
 lifecycle tests exercise the configured database and isolated local Git repos.
 None performs a real GitHub push.
+
+Additional focused tests (no real GitHub mutations):
+
+```sh
+npx tsx scripts/test-developer-pull-request-api.ts
+npx tsx scripts/test-remediation-delivery-workflow.ts
+npx tsx scripts/test-remediation-delivery-ui.ts
+npx tsx scripts/test-delivery-claims-database.ts
+npx tsx scripts/test-developer-delivery-api.ts
+npx tsx scripts/test-github-pull-request-delivery.ts
+npx tsx scripts/test-github-pull-request-recovery.ts
+```
+
+The composed workflow stubs sandbox, Git, persistence, and GitHub operations while
+running real remediation orchestration, API handlers, capability code, and the PR
+engine. The database claim test uses an isolated local test database. UI interaction
+tests use a deterministic hook harness; real browser/OAuth and GitHub end-to-end
+validation remain separate integration checks.
