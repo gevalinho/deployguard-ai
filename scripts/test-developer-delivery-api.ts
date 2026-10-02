@@ -27,6 +27,7 @@ function dependencies(overrides: Partial<DeliveryApiDependencies> = {}): Deliver
     claim: async () => ({ kind: "existing", delivery }), attach: async () => true,
     workspace: async () => ({ path: "/tmp/stub-only", provenance: { source: "fresh-remote", remoteVerified: true,
       commitSha: artifact.sourceCommitSha!, sourceBranch: "main" }, cleanup: async () => {} }),
+    refreshPr: async (_delivery, recorded) => recorded,
     reverify: async () => true, delivery: async () => delivery, pr: async () => null,
     prepare: async () => ({ status: "prepared", artifactId: artifact.id, delivery, summary: "safe" }),
     commit: async () => ({ status: "committed", deliveryId: delivery.id, delivery, summary: "safe" }),

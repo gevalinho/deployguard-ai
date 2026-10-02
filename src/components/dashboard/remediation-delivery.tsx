@@ -32,6 +32,7 @@ export function RemediationDelivery({ developer, artifactId, generated }: {
   const [delivery, setDelivery] = useState<Delivery | null>(null);
   const [busy, setBusy] = useState<"delivery" | "pr" | "status" | "logout" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [statusStale, setStatusStale] = useState(false);
   const lock = useRef(false);
   useEffect(() => {
     // Restore identifiers only. OAuth return never starts a request or mutation.
@@ -68,9 +69,11 @@ export function RemediationDelivery({ developer, artifactId, generated }: {
       }
       const next = result.delivery as Delivery;
       setDelivery(next);
+      setStatusStale(false);
       const reference = { artifactId: next.artifactId, deliveryId: next.deliveryId };
       setWorkflow(reference); save(reference);
     } catch (failure) {
+      if (action === "status") setStatusStale(true);
       setError(failure instanceof Error ? failure.message : "Request failed; review delivery status before continuing.");
     } finally { lock.current = false; setBusy(null); }
   }
@@ -86,7 +89,7 @@ export function RemediationDelivery({ developer, artifactId, generated }: {
       <li>Remediation: {generated ? "generated" : workflow.artifactId ? "saved workflow; refresh delivery status when available" : "not generated"}</li>
       <li>Artifact: {artifactId ? "verified and persisted" : workflow.artifactId ? "saved reference; server verification required" : "no verified artifact available"}</li>
       <li>Delivery: {busy === "delivery" ? "preparing, committing, and pushing; awaiting verified result" : delivery ? delivery.status.toLowerCase() : workflow.deliveryId ? "saved delivery; refresh status" : "not requested"}</li>
-      <li>Pull request: {busy === "pr" ? "creation pending verification" : delivery?.pullRequest ? `verified (${delivery.pullRequest.state}, last recorded)` : delivery?.pullRequestStatus === "POST_ATTEMPTED" ? "outcome uncertain; recovery review required" : delivery?.pullRequestStatus === "CLAIMED" ? "creation pending; recovery review may be required" : "not verified"}</li>
+      <li>Pull request: {busy === "pr" ? "creation pending verification" : delivery?.pullRequest ? `verified (${delivery.pullRequest.state}${statusStale ? ", last known; refresh failed" : ""})` : delivery?.pullRequestStatus === "POST_ATTEMPTED" ? "outcome uncertain; recovery review required" : delivery?.pullRequestStatus === "CLAIMED" ? "creation pending; recovery review may be required" : "not verified"}</li>
     </ol>
     {delivery && <p className="text-sm text-zinc-400">{delivery.repositoryIdentity} · {delivery.branchName}</p>}
     <div className="flex flex-wrap gap-3">
@@ -96,7 +99,7 @@ export function RemediationDelivery({ developer, artifactId, generated }: {
         onClick={() => void act("status")}>Refresh delivery status</button>
       <button className={button} disabled={!developer || delivery?.status !== "PUSHED" || !!delivery?.pullRequest || !!busy}
         onClick={() => void act("pr")}>Confirm pull request creation</button>
-      {delivery?.pullRequest && <a className={button} href={delivery.pullRequest.url} target="_blank" rel="noreferrer">View verified PR #{delivery.pullRequest.number}</a>}
+      {delivery?.pullRequest && <a className={button} href={delivery.pullRequest.url} target="_blank" rel="noopener noreferrer">View verified PR #{delivery.pullRequest.number}</a>}
     </div>
     <p className="text-sm text-zinc-400">Delivery pushes a remediation branch. Pull request creation requires a separate confirmation. After sign-in, continue manually. Conflicts and uncertain attempts require review; requests are never automatically retried.</p>
     {error && <p role="alert" className="text-sm text-red-300">{error}</p>}

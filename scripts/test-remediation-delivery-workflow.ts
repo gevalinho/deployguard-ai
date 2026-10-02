@@ -122,6 +122,7 @@ const { handleDeveloperPullRequestPost } = require("@/lib/remediation/developer-
 const { createVerifiedGitHubPullRequest } = require("@/lib/remediation/github-pull-request-delivery") as typeof import("@/lib/remediation/github-pull-request-delivery");
 const dependencies: import("@/lib/remediation/developer-delivery-api").DeliveryApiDependencies = {
   ...deliveryApiDependencies,
+  refreshPr: async (_delivery, recorded) => recorded,
   session: () => ({ githubId: "123", login: "developer", expiresAt: Date.now() + 60000 }), authorize: async () => true,
   claim: async () => {
     if (claim) return delivery ? { kind: "existing", delivery } : { kind: "pending" };

@@ -40,12 +40,68 @@ export function newNonce(): string { return randomBytes(32).toString("base64url"
 export function cookieOptions(maxAge: number): string {
   return `Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=${maxAge}`;
 }
+
+
 export function sameOrigin(request: Request): boolean {
   const origin = request.headers.get("origin");
-  if (!origin) return false;
+
+  if (!origin) {
+    return false;
+  }
+
   try {
+    const suppliedOrigin = new URL(origin);
     const target = new URL(request.url);
-    return new URL(origin).origin === target.origin &&
-      (target.protocol === "https:" || (target.protocol === "http:" && ["localhost", "127.0.0.1"].includes(target.hostname)));
-  } catch { return false; }
+
+    /*
+     * Direct requests can be validated against request.url.
+     */
+    if (suppliedOrigin.origin === target.origin) {
+      return (
+        target.protocol === "https:" ||
+        (target.protocol === "http:" &&
+          ["localhost", "127.0.0.1"].includes(target.hostname))
+      );
+    }
+
+    /*
+ * Behind an HTTPS reverse proxy, the application server may
+ * construct request.url using its internal host while preserving
+ * the externally visible host in the forwarded headers.
+ *
+ * Require the browser Origin to exactly match the externally
+ * visible HTTPS host.
+ */
+    const forwardedHost =
+      request.headers.get("x-forwarded-host");
+
+    const forwardedProto =
+      request.headers.get("x-forwarded-proto");
+
+    if (
+      !forwardedHost ||
+      forwardedProto !== "https"
+    ) {
+      return false;
+    }
+
+    /*
+     * Reject malformed/multi-valued forwarded hosts.
+     */
+    if (
+      forwardedHost.includes(",") ||
+      forwardedHost.includes("/") ||
+      forwardedHost.includes("\\") ||
+      forwardedHost.includes("@")
+    ) {
+      return false;
+    }
+
+    return (
+      suppliedOrigin.protocol === "https:" &&
+      suppliedOrigin.host === forwardedHost
+    );
+  } catch {
+    return false;
+  }
 }

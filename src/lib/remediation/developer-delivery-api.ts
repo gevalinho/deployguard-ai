@@ -1,3 +1,4 @@
+import { refreshVerifiedGitHubPullRequest } from "@/lib/remediation/github-pull-request-status";
 import { randomBytes } from "node:crypto";
 import { readDeveloperSession, sameOrigin, type DeveloperSession } from "@/lib/auth/developer-session";
 import { authorizeDeveloperRepository } from "@/lib/auth/github-developer-auth";
@@ -21,6 +22,7 @@ export interface DeliveryApiDependencies {
   reverify: typeof verifyCurrentRepositoryProvenance;
   delivery: typeof getRemediationDelivery;
   pr: typeof getDurablePullRequestDelivery;
+  refreshPr: typeof refreshVerifiedGitHubPullRequest;
   prepare: typeof preparePersistedRemediationDelivery;
   commit: typeof commitPersistedRemediationDelivery;
   push: typeof pushPersistedRemediationDelivery;
@@ -30,6 +32,7 @@ export const deliveryApiDependencies: DeliveryApiDependencies = {
   artifact: getVerifiedArtifactMetadata, claim: claimDeveloperDelivery,
   attach: attachClaimedDelivery, workspace: createDeveloperDeliveryWorkspace,
   reverify: verifyCurrentRepositoryProvenance, delivery: getRemediationDelivery,
+  refreshPr: refreshVerifiedGitHubPullRequest,
   pr: getDurablePullRequestDelivery, prepare: preparePersistedRemediationDelivery,
   commit: commitPersistedRemediationDelivery, push: pushPersistedRemediationDelivery,
 };
@@ -50,7 +53,7 @@ export function publicDelivery(delivery: RemediationDeliveryMetadata, pr?: Durab
   if (pr?.deliveryId === delivery.id && pr?.status === "VERIFIED" && pr.repositoryIdentity === delivery.repositoryIdentity &&
       pr.provider === "github" && Number.isInteger(pr.prNumber) &&
       pr.prUrl === `https://github.com/${delivery.repositoryIdentity}/pull/${pr.prNumber}` &&
-      ["open", "closed"].includes(pr.prState ?? "")) {
+      ["open", "closed", "merged"].includes(pr.prState ?? "")) {
     result.pullRequest = { number: pr.prNumber, url: pr.prUrl, state: pr.prState };
   }
   return result;
@@ -111,7 +114,17 @@ export async function handleDeveloperDeliveryPost(request: Request, deps: Delive
         return error(409, "Delivery push is uncertain; recovery review is required.");
       return Response.json({ ok: true, delivery: publicDelivery(pushed.delivery) }, { status: 201, headers: { "Cache-Control": "no-store" } });
     } finally { await workspace?.cleanup(); }
-  } catch { return error(503, "Delivery could not be completed safely."); }
+  } catch (failure) {
+  console.error(
+    "[DeployGuard Delivery] Unhandled delivery failure:",
+    failure
+  );
+
+  return error(
+    503,
+    "Delivery could not be completed safely."
+  );
+}
 }
 export async function handleDeveloperDeliveryGet(request: Request, deliveryId: string,
   deps: DeliveryApiDependencies = deliveryApiDependencies): Promise<Response> {
@@ -124,7 +137,11 @@ export async function handleDeveloperDeliveryGet(request: Request, deliveryId: s
     const artifact = await deps.artifact(delivery.artifactId);
     if (!artifact || !validArtifact(artifact) || !matchesDelivery(delivery, artifact)) return error(409, "Delivery identity conflict.");
     if (!await deps.authorize(developer, delivery.repositoryIdentity)) return error(403, "Repository delivery is not authorized.");
-    const pr = await deps.pr(delivery.id);
+    let pr = await deps.pr(delivery.id);
+    if (pr?.status === "VERIFIED") {
+      pr = await deps.refreshPr(delivery, pr);
+      if (!pr) return error(503, "GitHub pull request status could not be reconciled. Last known state is unchanged; refresh again manually.");
+    }
     return Response.json({ ok: true, delivery: publicDelivery(delivery, pr) }, { headers: { "Cache-Control": "no-store" } });
   } catch { return error(503, "Delivery status is unavailable."); }
 }

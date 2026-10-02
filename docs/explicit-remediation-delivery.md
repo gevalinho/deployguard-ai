@@ -77,7 +77,20 @@ restart an uncertain mutation. A moved source requires new verified remediation.
 `GET /api/remediation/delivery/[deliveryId]` authenticates and freshly authorizes
 repository access. It exposes safe delivery state and, when present, the durable
 PR phase (CLAIMED / POST_ATTEMPTED / VERIFIED). Only VERIFIED PR records expose a
-canonical GitHub link. This is recorded status, not a fresh GitHub PR lookup.
+canonical GitHub link. For an already VERIFIED PR, status refresh performs a
+GitHub GET for the recorded repository and PR number using a read-scoped
+installation token. Repository, URL, branch names, and exact remediation commit
+must still match. Current base HEAD equality is not required for this status-only
+path because a merge advances the base and may delete the remediation branch;
+creation-time HEAD checks remain unchanged.
+
+GitHub's state and merged flag determine open, closed without merge, or merged.
+Only successful identity verification and persistence return a refreshed state.
+A conditional update prevents stale concurrent refreshes overwriting a newer
+observation. Failed reads or writes return an error; the dashboard retains and
+labels the last known state as stale. CLAIMED and POST_ATTEMPTED records keep their
+existing recovery behavior. Refresh never creates, pushes, merges, or retries a
+mutation.
 
 ## Explicit pull request API
 

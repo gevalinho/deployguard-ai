@@ -80,6 +80,16 @@ async function main() {
   button("Refresh delivery status").props.onClick!(); await tick();
   assert(nodes(render()).some(n => n.props.href === "https://github.com/owner/repo/pull/1"));
   assert(button("Confirm pull request creation").props.disabled);
+  for (const state of ["open", "merged", "closed"]) {
+    response = async () => Response.json({ ok: true, delivery: { ...delivery, pullRequestStatus: "VERIFIED",
+      pullRequest: { number: 1, url: "https://github.com/owner/repo/pull/1", state } } });
+    button("Refresh delivery status").props.onClick!(); await tick();
+    assert(text(render()).includes(`verified (${state})`));
+  }
+  response = async () => Response.json({ ok: false, error: "GitHub unavailable" }, { status: 503 });
+  button("Refresh delivery status").props.onClick!(); await tick();
+  assert(text(render()).includes("verified (closed, last known; refresh failed)"));
+  assert(nodes(render()).some(n => n.props.href === "https://github.com/owner/repo/pull/1"));
   response = async () => Response.json({ ok: false, error: "Sign-in required" }, { status: 401 });
   button("Refresh delivery status").props.onClick!(); await tick(); assert(text(render()).includes("Authorization"));
   assert.deepEqual(JSON.parse(storage.get("deployguard-delivery-workflow")!), { artifactId: "artifact123", deliveryId: "delivery123" });

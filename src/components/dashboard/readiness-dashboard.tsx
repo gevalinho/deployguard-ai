@@ -2225,12 +2225,6 @@ const [remediationResult, setRemediationResult] =
           </p>
 
           <ProcessOverview />
-          <RemediationDelivery
-            key={remediationResult?.remediation.verifiedArtifactReference?.artifactId ?? (remediationResult ? "unverified" : "saved")}
-            developer={developer}
-            generated={!!remediationResult}
-            artifactId={remediationResult?.remediation.verifiedArtifactReference?.artifactId}
-          />
 
           <div className="mt-8 max-w-3xl rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
             <label
@@ -2470,6 +2464,15 @@ const [remediationResult, setRemediationResult] =
 {remediationResult && (
   <RemediationProof
     result={remediationResult}
+  />
+)}
+
+{remediationResult?.remediation.verifiedArtifactReference?.artifactId && (
+  <RemediationDelivery
+    key={remediationResult.remediation.verifiedArtifactReference.artifactId}
+    developer={developer}
+    generated={true}
+    artifactId={remediationResult.remediation.verifiedArtifactReference.artifactId}
   />
 )}
           </div>

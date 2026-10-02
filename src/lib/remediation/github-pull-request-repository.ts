@@ -70,3 +70,20 @@ export async function persistVerifiedPullRequest(
   const winner = await getDurablePullRequestDelivery(deliveryId);
   return winner?.status === "VERIFIED" && winner.prNumber === number && winner.prUrl === url && winner.prState === state;
 }
+
+/** Update state only, preserving the already verified PR identity. Compare the
+ * observation version so overlapping refreshes cannot overwrite a newer result. */
+export async function updateVerifiedPullRequestState(
+  recorded: DurablePullRequestDelivery, state: "open" | "closed" | "merged",
+): Promise<DurablePullRequestDelivery | null> {
+  if (recorded.status !== "VERIFIED" || !recorded.verifiedAt ||
+      (recorded.prState === "merged" && state !== "merged")) return null;
+  const reconciledAt = new Date(Math.max(Date.now(), (recorded.reconciledAt?.getTime() ?? 0) + 1));
+  const updated = await prisma.gitHubPullRequestDelivery.updateMany({
+    where: { deliveryId: recorded.deliveryId, provider: "github", repositoryIdentity: recorded.repositoryIdentity,
+      status: "VERIFIED", prNumber: recorded.prNumber, prUrl: recorded.prUrl,
+      prState: recorded.prState, reconciledAt: recorded.reconciledAt },
+    data: { prState: state, reconciledAt },
+  });
+  return updated.count === 1 ? { ...recorded, prState: state, reconciledAt } : null;
+}
