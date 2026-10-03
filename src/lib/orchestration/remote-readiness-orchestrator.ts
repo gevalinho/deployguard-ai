@@ -581,6 +581,10 @@ export async function runRemoteReadinessAssessment(
                 projectPreparation.durationMs,
               summary:
                 projectPreparation.summary,
+              stdout:
+                projectPreparation.stdout,
+              stderr:
+                projectPreparation.stderr,
             },
             null,
             2
