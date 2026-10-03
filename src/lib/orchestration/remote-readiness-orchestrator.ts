@@ -767,8 +767,29 @@ export async function runRemoteReadinessAssessment(
        * participates in this calculation.
        */
 
+      console.log(
+        "[DeployGuard Check Results]",
+        JSON.stringify(
+          checks.map((check) => ({
+            id: check.id,
+            category: check.category,
+            name: check.name,
+            status: check.status,
+            skipReason: check.skipReason ?? null,
+            summary: check.summary,
+          })),
+          null,
+          2
+        )
+      );
+
       const readiness =
         calculateReadinessScore(checks);
+
+      console.log(
+        "[DeployGuard Readiness Score]",
+        JSON.stringify(readiness, null, 2)
+      );
 
       /*
        * AI remediation starts only after deterministic
