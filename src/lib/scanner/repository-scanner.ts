@@ -198,37 +198,186 @@ function detectPackageManager(
   }
 }
 
-function detectOrm(
+function detectInfrastructure(
   repositoryPath: string,
   packageJson: PackageJson | null,
   facts: RepositoryFact[]
 ): void {
-  if (fileExists(repositoryPath, "prisma/schema.prisma")) {
+  /*
+   * Infrastructure discovery is evidence-driven.
+   *
+   * Detecting a dependency proves that the repository
+   * contains an integration for that technology. It does
+   * not prove that an external service is reachable or
+   * correctly configured.
+   */
+
+  const prismaSchemaRelativePath =
+    "prisma/schema.prisma";
+
+  const prismaSchemaPath =
+    path.join(
+      repositoryPath,
+      prismaSchemaRelativePath
+    );
+
+  if (fileExists(repositoryPath, prismaSchemaRelativePath)) {
     addFactIfMissing(
       facts,
       createFact(
         "orm",
         "Prisma",
         "config",
-        "prisma/schema.prisma",
+        prismaSchemaRelativePath,
         "Prisma schema detected"
       )
     );
+
+    /*
+     * Prisma declares its actual datasource provider in
+     * schema.prisma. This is stronger evidence than merely
+     * inferring a database from installed driver packages.
+     */
+    try {
+      const prismaSchema =
+        fs.readFileSync(
+          prismaSchemaPath,
+          "utf-8"
+        );
+
+      const datasourceMatch =
+        prismaSchema.match(
+          /datasource\s+\w+\s*\{[\s\S]*?provider\s*=\s*["']([^"']+)["'][\s\S]*?\}/
+        );
+
+      const provider =
+        datasourceMatch?.[1]
+          ?.trim()
+          .toLowerCase();
+
+      const prismaProviders:
+        Record<string, string> = {
+          postgresql: "PostgreSQL",
+          mysql: "MySQL",
+          sqlite: "SQLite",
+          sqlserver: "SQL Server",
+          mongodb: "MongoDB",
+          cockroachdb: "CockroachDB",
+        };
+
+      const database =
+        provider
+          ? prismaProviders[provider]
+          : undefined;
+
+      if (database) {
+        addFactIfMissing(
+          facts,
+          createFact(
+            "database",
+            database,
+            "config",
+            prismaSchemaRelativePath,
+            `Prisma datasource provider detected: ${provider}`
+          )
+        );
+      }
+    } catch {
+      /*
+       * Infrastructure discovery must remain resilient.
+       * An unreadable Prisma schema should not prevent
+       * the rest of the repository from being scanned.
+       */
+    }
   }
 
-  if (
-    packageJson &&
-    (hasDependency(packageJson, "prisma") ||
-      hasDependency(packageJson, "@prisma/client"))
-  ) {
+  if (!packageJson) {
+    return;
+  }
+
+  const packageDetections = [
+    {
+      dependencies: ["prisma", "@prisma/client"],
+      key: "orm",
+      value: "Prisma",
+    },
+    {
+      dependencies: ["drizzle-orm"],
+      key: "orm",
+      value: "Drizzle",
+    },
+    {
+      dependencies: ["sequelize"],
+      key: "orm",
+      value: "Sequelize",
+    },
+    {
+      dependencies: ["typeorm"],
+      key: "orm",
+      value: "TypeORM",
+    },
+    {
+      dependencies: ["mongoose"],
+      key: "orm",
+      value: "Mongoose",
+    },
+    {
+      dependencies: ["mongodb"],
+      key: "databaseDriver",
+      value: "MongoDB",
+    },
+    {
+      dependencies: ["pg"],
+      key: "databaseDriver",
+      value: "PostgreSQL",
+    },
+    {
+      dependencies: ["mysql2"],
+      key: "databaseDriver",
+      value: "MySQL",
+    },
+    {
+      dependencies: ["better-sqlite3", "sqlite3"],
+      key: "databaseDriver",
+      value: "SQLite",
+    },
+    {
+      dependencies: ["@supabase/supabase-js"],
+      key: "backendService",
+      value: "Supabase",
+    },
+    {
+      dependencies: ["firebase", "firebase-admin"],
+      key: "backendService",
+      value: "Firebase",
+    },
+    {
+      dependencies: ["redis", "ioredis"],
+      key: "cache",
+      value: "Redis",
+    },
+  ];
+
+  for (const detection of packageDetections) {
+    const detectedDependencies =
+      detection.dependencies.filter((dependency) =>
+        hasDependency(packageJson, dependency)
+      );
+
+    if (detectedDependencies.length === 0) {
+      continue;
+    }
+
     addFactIfMissing(
       facts,
       createFact(
-        "orm",
-        "Prisma",
+        detection.key,
+        detection.value,
         "package",
         "package.json",
-        "Prisma dependency detected"
+        `${detection.value} dependency detected: ${detectedDependencies.join(
+          ", "
+        )}`
       )
     );
   }
@@ -436,7 +585,7 @@ export function scanRepository(
 
   detectPackageFacts(packageJson, facts);
 
-  detectOrm(repositoryPath, packageJson, facts);
+  detectInfrastructure(repositoryPath, packageJson, facts);
 
   detectTestConfiguration(
     repositoryPath,
