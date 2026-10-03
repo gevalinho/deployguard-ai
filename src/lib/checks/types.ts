@@ -36,6 +36,18 @@ export interface CheckEvidence {
   code?: string;
 } 
 
+export interface CheckConfigurationRequirement {
+  variable: string;
+
+  phase:
+    | "build"
+    | "runtime"
+    | "test"
+    | "unknown";
+
+  reason: string;
+}
+
 export interface CheckResult {
   id: string;
   category: CheckCategory;
@@ -53,4 +65,7 @@ export interface CheckResult {
   stderr?: string;
 
   evidence?: CheckEvidence[];
+
+  configurationRequirements?:
+    CheckConfigurationRequirement[];
 }

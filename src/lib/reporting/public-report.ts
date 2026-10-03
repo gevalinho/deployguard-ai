@@ -61,6 +61,23 @@ export function sanitizeCheckForPublic(
             check.evidence,
         }
       : {}),
+
+    ...(check.configurationRequirements &&
+    check.configurationRequirements.length > 0
+      ? {
+          configurationRequirements:
+            check.configurationRequirements.map(
+              (requirement) => ({
+                variable:
+                  requirement.variable,
+                phase:
+                  requirement.phase,
+                reason:
+                  requirement.reason,
+              })
+            ),
+        }
+      : {}),
   };
 }
 

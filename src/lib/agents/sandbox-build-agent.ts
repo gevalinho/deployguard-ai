@@ -381,6 +381,26 @@ export async function runSandboxBuildAgent(
               "but no explicit repository environment value was supplied."
             ),
         })),
+
+      configurationRequirements:
+        unavailableRequirements
+          .slice()
+          .sort((left, right) =>
+            left.variable.localeCompare(
+              right.variable
+            )
+          )
+          .map((requirement) => ({
+            variable:
+              requirement.variable,
+            phase: "build" as const,
+            reason:
+              requirement.provisioningReason ??
+              (
+                `${requirement.variable} requires an explicit ` +
+                "repository-scoped value for build verification."
+              ),
+          })),
     };
   }
 
