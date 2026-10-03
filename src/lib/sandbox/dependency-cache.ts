@@ -21,7 +21,7 @@ import {
 } from "node:child_process";
 
 export const DEPENDENCY_CACHE_VERSION =
-  "v3";
+  "v4";
 
 export const SANDBOX_RUNTIME_IMAGE =
   "node:22-bookworm-slim";
@@ -202,6 +202,27 @@ export function restoreDependencyCache(
     }
   );
 
+  /*
+   * Repository-local generated dependency artifacts
+   * must also be restored atomically with the cached
+   * dependency workspace.
+   */
+  const generatedPrismaDestination =
+    join(
+      repositoryPath,
+      "src",
+      "generated",
+      "prisma"
+    );
+
+  rmSync(
+    generatedPrismaDestination,
+    {
+      recursive: true,
+      force: true,
+    }
+  );
+
   const result =
     spawnSync(
       "tar",
@@ -288,6 +309,33 @@ export function saveDependencyCache(
       `node_modules-${process.pid}-${Date.now()}.tar`
     );
 
+  /*
+   * Cache the complete deterministic dependency
+   * workspace rather than node_modules alone.
+   *
+   * Some package ecosystems generate repository-local
+   * artifacts required by later validation. Prisma,
+   * for example, may generate its client outside
+   * node_modules.
+   */
+  const archiveEntries = [
+    "node_modules",
+  ];
+
+  const generatedPrismaPath =
+    join(
+      repositoryPath,
+      "src",
+      "generated",
+      "prisma"
+    );
+
+  if (existsSync(generatedPrismaPath)) {
+    archiveEntries.push(
+      "src/generated/prisma"
+    );
+  }
+
   const result =
     spawnSync(
       "tar",
@@ -296,7 +344,7 @@ export function saveDependencyCache(
         temporaryArchive,
         "-C",
         repositoryPath,
-        "node_modules",
+        ...archiveEntries,
       ],
       {
         encoding:
