@@ -108,7 +108,7 @@ export async function applyDependencySecurityFix(
 
     limits: {
       memoryMb: 2048,
-      cpus: 2,
+      cpus: 1,
       timeoutMs:
         FIX_TIMEOUT_MS,
     },
