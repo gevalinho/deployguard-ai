@@ -29,6 +29,10 @@ import {
   getCorepackSandboxConfig,
 } from "@/lib/sandbox/corepack-cache";
 
+import type {
+  PreparationPlan,
+} from "@/lib/sandbox/preparation-planner";
+
 export interface SandboxPreparationResult {
   status:
     | "passed"
@@ -162,7 +166,8 @@ function extractPreparationFailureSummary(
 }
 
 export async function prepareSandboxWorkspace(
-  repositoryPath: string
+  repositoryPath: string,
+  preparationPlan?: PreparationPlan
 ): Promise<SandboxPreparationResult> {
   const preparationStartedAt =
     Date.now();
@@ -352,12 +357,32 @@ if (
       packageManager
     );
 
-  const prismaSchemaPath =
-    join(
-      repositoryPath,
-      "prisma",
-      "schema.prisma"
-    );
+  /*
+   * Artifact generation decisions belong to the
+   * preparation planner. Keep the executor focused
+   * on controlled execution.
+   *
+   * The filesystem fallback preserves compatibility
+   * for callers that have not yet been migrated to
+   * provide a preparation plan.
+   */
+  const requiresPrismaGeneration =
+    preparationPlan
+      ? preparationPlan.requirements.some(
+          (requirement) =>
+            requirement.kind ===
+              "artifact_generation" &&
+            requirement.technology ===
+              "Prisma" &&
+            requirement.required
+        )
+      : existsSync(
+          join(
+            repositoryPath,
+            "prisma",
+            "schema.prisma"
+          )
+        );
 
   /*
    * Dependency installation intentionally disables
@@ -370,7 +395,7 @@ if (
    * obtained before later validation becomes offline.
    */
   const command =
-    existsSync(prismaSchemaPath)
+    requiresPrismaGeneration
       ? [
           "sh",
           "-c",

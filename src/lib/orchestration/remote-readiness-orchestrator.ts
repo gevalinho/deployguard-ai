@@ -39,6 +39,10 @@ import { calculateReadinessScore } from "@/lib/scoring/readiness-score";
 
 import { prepareSandboxWorkspace } from "@/lib/sandbox/workspace-preparation";
 
+import {
+  createPreparationPlan,
+} from "@/lib/sandbox/preparation-planner";
+
 export interface RemoteReadinessAssessment {
   repository: {
     owner: string;
@@ -303,6 +307,28 @@ export async function runRemoteReadinessAssessment(
       );
 
       /*
+       * Convert repository evidence into deterministic
+       * sandbox preparation requirements.
+       *
+       * The scanner discovers infrastructure.
+       * The planner decides what preparation is required.
+       * The workspace executor performs those requirements.
+       */
+      const preparationPlan =
+        createPreparationPlan(
+          scan.facts
+        );
+
+      console.log(
+        "[DeployGuard Preparation Plan]",
+        JSON.stringify(
+          preparationPlan,
+          null,
+          2
+        )
+      );
+
+      /*
        * Research and sandbox preparation can begin
        * concurrently after repository facts exist.
        */
@@ -397,7 +423,8 @@ export async function runRemoteReadinessAssessment(
           "Sandbox Preparation",
           () =>
             prepareSandboxWorkspace(
-              ingested.repositoryPath
+              ingested.repositoryPath,
+              preparationPlan
             )
         )
           .then(
