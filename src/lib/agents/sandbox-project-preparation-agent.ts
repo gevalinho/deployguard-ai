@@ -200,6 +200,17 @@ export async function prepareSandboxProject(
 
         HOME:
           "/tmp/deployguard-home",
+
+        /*
+         * Prisma configuration may require DATABASE_URL
+         * while loading prisma.config.ts even though
+         * `prisma generate` does not need a live database.
+         *
+         * Never expose the assessed repository's real
+         * database credentials to the sandbox.
+         */
+        DATABASE_URL:
+          "postgresql://deployguard:deployguard@localhost:5432/deployguard",
       },
 
       mounts: [
