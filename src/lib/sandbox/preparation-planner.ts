@@ -10,6 +10,14 @@ import type {
   EnvironmentUsagePhase,
 } from "@/lib/scanner/environment-usage-classifier";
 
+import {
+  classifyEnvironmentSensitivity,
+} from "@/lib/scanner/environment-sensitivity-classifier";
+
+import type {
+  EnvironmentSensitivity,
+} from "@/lib/scanner/environment-sensitivity-classifier";
+
 export type PreparationRequirementKind =
   | "dependency_install"
   | "artifact_generation"
@@ -28,6 +36,8 @@ export interface PreparationRequirement {
   evidence: RepositoryFact[];
 
   phase?: EnvironmentUsagePhase;
+
+  sensitivity?: EnvironmentSensitivity;
 
   confidence?: number;
 }
@@ -114,6 +124,11 @@ export function createPreparationPlan(
       "environmentVariable"
     );
 
+  const environmentSensitivityClassifications =
+    classifyEnvironmentSensitivity(
+      facts
+    );
+
   for (
     const classification of
     environmentClassifications
@@ -141,6 +156,13 @@ export function createPreparationPlan(
       classification.phase ===
       "build";
 
+    const sensitivity =
+      environmentSensitivityClassifications.find(
+        (candidate) =>
+          candidate.variable ===
+          classification.variable
+      );
+
     requirements.push({
       kind: "environment",
       technology:
@@ -148,8 +170,14 @@ export function createPreparationPlan(
       required,
       phase:
         classification.phase,
+      sensitivity:
+        sensitivity?.sensitivity ??
+        "unknown",
       confidence:
-        classification.confidence,
+        Math.min(
+          classification.confidence,
+          sensitivity?.confidence ?? 0.5
+        ),
       reason:
         required
           ? `${classification.variable} is classified as a build-phase environment requirement. DeployGuard requires an explicit value before build verification can rely on it.`

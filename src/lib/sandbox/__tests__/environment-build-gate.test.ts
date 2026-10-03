@@ -69,6 +69,54 @@ describe(
         ).toBe(true);
 
         expect(
+          requirement?.sensitivity
+        ).toBe("secret");
+
+        expect(
+          requirement?.confidence
+        ).toBe(0.9);
+      }
+    );
+
+    it(
+      "preserves public sensitivity for build environment variables",
+      () => {
+        const facts: RepositoryFact[] = [
+          environmentFact(
+            "NEXT_PUBLIC_API_URL",
+            "next.config.ts"
+          ),
+        ];
+
+        const plan =
+          createPreparationPlan(
+            facts
+          );
+
+        const requirement =
+          plan.requirements.find(
+            (item) =>
+              item.kind ===
+                "environment" &&
+              item.technology ===
+                "NEXT_PUBLIC_API_URL"
+          );
+
+        expect(requirement).toBeDefined();
+
+        expect(
+          requirement?.phase
+        ).toBe("build");
+
+        expect(
+          requirement?.required
+        ).toBe(true);
+
+        expect(
+          requirement?.sensitivity
+        ).toBe("public");
+
+        expect(
           requirement?.confidence
         ).toBe(0.9);
       }
@@ -107,6 +155,10 @@ describe(
         expect(
           requirement?.required
         ).toBe(false);
+
+        expect(
+          requirement?.sensitivity
+        ).toBe("secret");
       }
     );
 
