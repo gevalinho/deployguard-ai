@@ -52,6 +52,10 @@ export function createBuildEnvironmentRequirements(
         variable: decision.variable,
         required: requirement.required,
         available,
+        provisioningAction:
+          decision.action,
+        provisioningReason:
+          decision.reason,
       };
     });
 }

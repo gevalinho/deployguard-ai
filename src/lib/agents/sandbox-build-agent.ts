@@ -21,6 +21,22 @@ export interface BuildEnvironmentRequirement {
   required: boolean;
 
   available: boolean;
+
+  /*
+   * Optional policy metadata explains why DeployGuard
+   * could or could not provision this requirement.
+   *
+   * The build agent deliberately does not depend on the
+   * provisioning-policy module directly.
+   */
+  provisioningAction?:
+    | "provide"
+    | "require_explicit_value"
+    | "defer_to_runtime"
+    | "defer_to_test"
+    | "unresolved";
+
+  provisioningReason?: string;
 }
 
 const MAX_BUILD_EVIDENCE = 10;
@@ -342,14 +358,21 @@ export async function runSandboxBuildAgent(
         "Production build could not be verified because " +
         "required build-phase environment configuration " +
         `is unavailable: ${variables.join(", ")}.`,
-      evidence: variables.map(
-        (variable) => ({
+      evidence: [...unavailableRequirements]
+        .sort((left, right) =>
+          left.variable.localeCompare(
+            right.variable
+          )
+        )
+        .map((requirement) => ({
           kind: "diagnostic",
           message:
-            `${variable} is required during the build phase, ` +
-            "but no explicit repository environment value was supplied.",
-        })
-      ),
+            requirement.provisioningReason ??
+            (
+              `${requirement.variable} is required during the build phase, ` +
+              "but no explicit repository environment value was supplied."
+            ),
+        })),
     };
   }
 

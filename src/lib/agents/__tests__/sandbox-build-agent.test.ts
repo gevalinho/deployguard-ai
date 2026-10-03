@@ -157,6 +157,44 @@ throw new Error(
 
         expect(result.stdout).toBeUndefined();
         expect(result.stderr).toBeUndefined();
+
+        /*
+         * Policy metadata should replace the generic
+         * fallback diagnostic with the evidence-derived
+         * provisioning explanation.
+         */
+        const policyAwareResult =
+          await runSandboxBuildAgent(
+            repositoryPath,
+            [
+              {
+                variable:
+                  "BUILD_SECRET",
+                required: true,
+                available: false,
+                provisioningAction:
+                  "require_explicit_value",
+                provisioningReason:
+                  "BUILD_SECRET is required during build and classified as sensitive. " +
+                  "An explicit repository-scoped value is required.",
+              },
+            ]
+          );
+
+        expect(
+          policyAwareResult.status
+        ).toBe("blocked");
+
+        expect(
+          policyAwareResult.evidence
+        ).toEqual([
+          {
+            kind: "diagnostic",
+            message:
+              "BUILD_SECRET is required during build and classified as sensitive. " +
+              "An explicit repository-scoped value is required.",
+          },
+        ]);
       }
     );
   }

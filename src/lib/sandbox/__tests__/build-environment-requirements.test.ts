@@ -60,6 +60,11 @@ describe(
             variable: "BUILD_SECRET",
             required: true,
             available: false,
+            provisioningAction:
+              "require_explicit_value",
+            provisioningReason:
+              "BUILD_SECRET is required during build and classified as sensitive. " +
+              "An explicit repository-scoped value is required.",
           },
         ]);
       }
@@ -83,6 +88,12 @@ describe(
               "NEXT_PUBLIC_API_URL",
             required: true,
             available: false,
+            provisioningAction:
+              "require_explicit_value",
+            provisioningReason:
+              "NEXT_PUBLIC_API_URL is required during build. " +
+              "Its value must be supplied explicitly because DeployGuard " +
+              "cannot infer repository configuration safely.",
           },
         ]);
       }
@@ -115,6 +126,11 @@ describe(
             variable: "BUILD_SECRET",
             required: true,
             available: false,
+            provisioningAction:
+              "require_explicit_value",
+            provisioningReason:
+              "BUILD_SECRET is required during build and classified as sensitive. " +
+              "An explicit repository-scoped value is required.",
           },
         ]);
       }
