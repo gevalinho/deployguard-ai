@@ -184,7 +184,7 @@ function extractNetworkEvidence(
     .split("\n")
     .map((line) => line.trim())
     .find((line) =>
-      /Failed to fetch|fonts\.googleapis\.com|ENOTFOUND|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|fetch failed|network/i.test(
+      /Failed to fetch|fonts\.googleapis\.com|ENOTFOUND|ENETUNREACH|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|fetch failed|network is unreachable|network unreachable|getaddrinfo/i.test(
         line
       )
     );
@@ -342,8 +342,16 @@ export async function runSandboxBuildAgent(
   const combinedOutput =
     `${result.stdout}\n${result.stderr}`;
 
+  /*
+   * A failed build is classified as blocked only when
+   * the output contains concrete evidence that an
+   * external network dependency could not be reached.
+   *
+   * Do not classify generic build failures as blocked
+   * merely because their output mentions "network".
+   */
   const networkDependencyFailure =
-    /Failed to fetch|fonts\.googleapis\.com|ENOTFOUND|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|fetch failed/i.test(
+    /Failed to fetch|fonts\.googleapis\.com|ENOTFOUND|ENETUNREACH|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|fetch failed|network is unreachable|network unreachable|getaddrinfo/i.test(
       combinedOutput
     );
 
