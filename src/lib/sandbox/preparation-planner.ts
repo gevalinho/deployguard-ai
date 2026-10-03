@@ -81,6 +81,34 @@ export function createPreparationPlan(
   }
 
   /*
+   * Environment-variable references are configuration
+   * requirements discovered from source code.
+   *
+   * DeployGuard records the requirement but never
+   * invents, reads, or injects secret values merely
+   * because a variable is referenced.
+   *
+   * Whether a variable is required specifically during
+   * build, test, or runtime can be classified separately.
+   */
+  const environmentFacts =
+    findFacts(
+      facts,
+      "environmentVariable"
+    );
+
+  for (const fact of environmentFacts) {
+    requirements.push({
+      kind: "environment",
+      technology: fact.value,
+      required: false,
+      reason:
+        `${fact.value} is referenced by repository source code. DeployGuard will not automatically supply a value during sandbox preparation.`,
+      evidence: [fact],
+    });
+  }
+
+  /*
    * Databases, caches, and hosted backend integrations
    * are discovered here but are not automatically
    * provisioned.

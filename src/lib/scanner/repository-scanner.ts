@@ -383,6 +383,203 @@ function detectInfrastructure(
   }
 }
 
+function detectEnvironmentVariables(
+  repositoryPath: string,
+  facts: RepositoryFact[]
+): void {
+  /*
+   * Discover environment requirements from source code
+   * without reading or exposing secret values.
+   *
+   * Only variable names are recorded as repository facts.
+   */
+  const sourceExtensions =
+    new Set([
+      ".ts",
+      ".tsx",
+      ".js",
+      ".jsx",
+      ".mjs",
+      ".cjs",
+    ]);
+
+  const ignoredDirectories =
+    new Set([
+      "node_modules",
+      ".next",
+      ".git",
+      "dist",
+      "build",
+      "coverage",
+      "generated",
+    ]);
+
+  /*
+   * Runtime-provided variables are not application
+   * configuration requirements.
+   */
+  const ignoredVariables =
+    new Set([
+      "NODE_ENV",
+      "PATH",
+      "PWD",
+      "HOME",
+      "CI",
+    ]);
+
+  const discovered =
+    new Map<string, string[]>();
+
+  function visit(
+    directoryPath: string
+  ): void {
+    let entries: fs.Dirent[];
+
+    try {
+      entries =
+        fs.readdirSync(
+          directoryPath,
+          {
+            withFileTypes: true,
+          }
+        );
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (
+        ignoredDirectories.has(
+          entry.name
+        )
+      ) {
+        continue;
+      }
+
+      const absolutePath =
+        path.join(
+          directoryPath,
+          entry.name
+        );
+
+      if (entry.isDirectory()) {
+        visit(absolutePath);
+        continue;
+      }
+
+      if (
+        !entry.isFile() ||
+        !sourceExtensions.has(
+          path.extname(entry.name)
+        )
+      ) {
+        continue;
+      }
+
+      let content: string;
+
+      try {
+        content =
+          fs.readFileSync(
+            absolutePath,
+            "utf-8"
+          );
+      } catch {
+        continue;
+      }
+
+      const patterns = [
+        /process\.env\.([A-Za-z_][A-Za-z0-9_]*)/g,
+        /process\.env\[['"]([A-Za-z_][A-Za-z0-9_]*)['"]\]/g,
+      ];
+
+      for (const pattern of patterns) {
+        for (
+          const match of
+          content.matchAll(pattern)
+        ) {
+          const variable =
+            match[1];
+
+          if (
+            !variable ||
+            ignoredVariables.has(
+              variable
+            )
+          ) {
+            continue;
+          }
+
+          const relativePath =
+            path.relative(
+              repositoryPath,
+              absolutePath
+            );
+
+          const evidence =
+            discovered.get(
+              variable
+            ) ?? [];
+
+          if (
+            !evidence.includes(
+              relativePath
+            )
+          ) {
+            evidence.push(
+              relativePath
+            );
+          }
+
+          discovered.set(
+            variable,
+            evidence
+          );
+        }
+      }
+    }
+  }
+
+  const sourcePath =
+    path.join(
+      repositoryPath,
+      "src"
+    );
+
+  if (
+    fs.existsSync(sourcePath)
+  ) {
+    visit(sourcePath);
+  } else {
+    visit(repositoryPath);
+  }
+
+  for (
+    const [
+      variable,
+      evidencePaths,
+    ] of discovered
+  ) {
+    addFactIfMissing(
+      facts,
+      {
+        key: "environmentVariable",
+        value: variable,
+        confidence: 1,
+        evidence:
+          evidencePaths.map(
+            (evidencePath) => ({
+              source: "file" as const,
+              path: evidencePath,
+              description:
+                `Environment variable referenced in source: ${variable}`,
+            })
+          ),
+      }
+    );
+  }
+}
+
 function detectTestConfiguration(
   repositoryPath: string,
   packageJson: PackageJson | null,
@@ -586,6 +783,11 @@ export function scanRepository(
   detectPackageFacts(packageJson, facts);
 
   detectInfrastructure(repositoryPath, packageJson, facts);
+
+  detectEnvironmentVariables(
+    repositoryPath,
+    facts
+  );
 
   detectTestConfiguration(
     repositoryPath,
