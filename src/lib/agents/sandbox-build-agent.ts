@@ -15,6 +15,14 @@ interface PackageJson {
   scripts?: Record<string, string>;
 }
 
+export interface BuildEnvironmentRequirement {
+  variable: string;
+
+  required: boolean;
+
+  available: boolean;
+}
+
 const MAX_BUILD_EVIDENCE = 10;
 
 function stripAnsi(value: string): string {
@@ -232,7 +240,8 @@ function createBuildFailureSummary(
 }
 
 export async function runSandboxBuildAgent(
-  repositoryPath: string
+  repositoryPath: string,
+  environmentRequirements: BuildEnvironmentRequirement[] = []
 ): Promise<CheckResult> {
   const packageJsonPath = join(
     repositoryPath,
@@ -292,6 +301,57 @@ export async function runSandboxBuildAgent(
       packageManager,
       "build"
     );
+
+  /*
+   * Build-phase configuration is a verification
+   * precondition.
+   *
+   * DeployGuard must not invent, infer, or copy secret
+   * values from its own host environment into an
+   * untrusted repository sandbox.
+   *
+   * Until an explicit repository-secret injection
+   * mechanism exists, a proven required build variable
+   * without an explicitly available value blocks build
+   * verification rather than causing a false build
+   * failure.
+   */
+  const unavailableRequirements =
+    environmentRequirements.filter(
+      (requirement) =>
+        requirement.required &&
+        !requirement.available
+    );
+
+  if (unavailableRequirements.length > 0) {
+    const variables =
+      unavailableRequirements
+        .map(
+          (requirement) =>
+            requirement.variable
+        )
+        .sort();
+
+    return {
+      id: "build",
+      category: "build",
+      name: "Production Build",
+      status: "blocked",
+      command: buildCommand.display,
+      summary:
+        "Production build could not be verified because " +
+        "required build-phase environment configuration " +
+        `is unavailable: ${variables.join(", ")}.`,
+      evidence: variables.map(
+        (variable) => ({
+          kind: "diagnostic",
+          message:
+            `${variable} is required during the build phase, ` +
+            "but no explicit repository environment value was supplied.",
+        })
+      ),
+    };
+  }
 
   const result =
     await runDockerSandboxCommand({

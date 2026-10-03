@@ -681,7 +681,33 @@ export async function runRemoteReadinessAssessment(
             "Production Build",
             () =>
               runSandboxBuildAgent(
-                ingested.repositoryPath
+                ingested.repositoryPath,
+                preparationPlan.requirements
+                  .filter(
+                    (requirement) =>
+                      requirement.kind ===
+                        "environment" &&
+                      requirement.phase ===
+                        "build"
+                  )
+                  .map(
+                    (requirement) => ({
+                      variable:
+                        requirement.technology,
+                      required:
+                        requirement.required,
+                      /*
+                       * DeployGuard currently has no
+                       * repository-scoped secret injection
+                       * mechanism.
+                       *
+                       * Never treat the host process
+                       * environment as repository
+                       * configuration.
+                       */
+                      available: false,
+                    })
+                  )
               )
           );
 
