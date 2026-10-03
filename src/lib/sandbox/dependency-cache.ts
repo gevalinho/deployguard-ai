@@ -21,7 +21,7 @@ import {
 } from "node:child_process";
 
 export const DEPENDENCY_CACHE_VERSION =
-  "v2";
+  "v3";
 
 export const SANDBOX_RUNTIME_IMAGE =
   "node:22-bookworm-slim";
@@ -101,6 +101,29 @@ export function createDependencyCacheIdentity(
       lockfilePath
     )
   );
+
+  /*
+   * Generated Prisma artifacts are part of the
+   * prepared dependency workspace. A schema change
+   * must therefore invalidate the dependency cache.
+   */
+  const prismaSchemaPath =
+    join(
+      repositoryPath,
+      "prisma",
+      "schema.prisma"
+    );
+
+  if (existsSync(prismaSchemaPath)) {
+    hash.update("\0");
+    hash.update("prisma/schema.prisma");
+    hash.update("\0");
+    hash.update(
+      readFileSync(
+        prismaSchemaPath
+      )
+    );
+  }
 
   return {
     key:

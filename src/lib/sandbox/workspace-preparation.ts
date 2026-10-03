@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdirSync,
 } from "node:fs";
 
@@ -346,10 +347,49 @@ if (
       ? process.getgid()
       : 1000;
 
+  const baseCommand =
+    createPreparationCommand(
+      packageManager
+    );
+
+  const prismaSchemaPath =
+    join(
+      repositoryPath,
+      "prisma",
+      "schema.prisma"
+    );
+
+  /*
+   * Dependency installation intentionally disables
+   * arbitrary lifecycle scripts.
+   *
+   * Prisma generation is a recognized deterministic
+   * preparation step. Run it explicitly while the
+   * controlled preparation sandbox still has network
+   * access so platform-specific Prisma binaries can be
+   * obtained before later validation becomes offline.
+   */
   const command =
-  createPreparationCommand(
-    packageManager
-  );
+    existsSync(prismaSchemaPath)
+      ? [
+          "sh",
+          "-c",
+          [
+            baseCommand
+              .map((part) =>
+                `'${part.replace(/'/g, `'\\''`)}'`
+              )
+              .join(" "),
+            "&&",
+            "DATABASE_URL='postgresql://deployguard:deployguard@localhost:5432/deployguard'",
+            packageManager.name === "npm"
+              ? "npm exec -- prisma generate"
+              : packageManager.name === "pnpm"
+                ? "corepack pnpm exec prisma generate"
+                : "corepack yarn run prisma generate",
+          ].join(" "),
+        ]
+      : baseCommand;
 
 const mounts = [
   // ...(packageManager.name === "npm"
