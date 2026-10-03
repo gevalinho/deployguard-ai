@@ -447,7 +447,7 @@ const result =
         2048,
 
       cpus:
-        2,
+        1,
 
       timeoutMs:
         2 *
