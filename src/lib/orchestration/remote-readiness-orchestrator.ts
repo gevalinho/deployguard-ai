@@ -777,6 +777,15 @@ export async function runRemoteReadinessAssessment(
             status: check.status,
             skipReason: check.skipReason ?? null,
             summary: check.summary,
+
+            /*
+             * Structured evidence is safe and useful for
+             * production diagnostics. Raw stdout/stderr
+             * intentionally remain server-side and are
+             * not included in this summary.
+             */
+            evidence:
+              check.evidence ?? [],
           })),
           null,
           2
