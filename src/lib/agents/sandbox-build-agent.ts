@@ -23,6 +23,14 @@ export interface BuildEnvironmentRequirement {
   available: boolean;
 
   /*
+   * An environment value may exist only when it was
+   * supplied explicitly for this repository assessment.
+   *
+   * Never populate this field from process.env.
+   */
+  value?: string;
+
+  /*
    * Optional policy metadata explains why DeployGuard
    * could or could not provision this requirement.
    *
@@ -376,6 +384,31 @@ export async function runSandboxBuildAgent(
     };
   }
 
+  /*
+   * Only explicitly approved repository-scoped values are
+   * injected into the sandbox.
+   *
+   * Never spread process.env here. The sandbox must not
+   * inherit DeployGuard's own credentials or configuration.
+   */
+  const buildEnvironment =
+    environmentRequirements.reduce<
+      Record<string, string>
+    >(
+      (environment, requirement) => {
+        if (
+          requirement.available &&
+          requirement.value !== undefined
+        ) {
+          environment[requirement.variable] =
+            requirement.value;
+        }
+
+        return environment;
+      },
+      {}
+    );
+
   const result =
     await runDockerSandboxCommand({
       repositoryPath,
@@ -387,6 +420,7 @@ export async function runSandboxBuildAgent(
         CI: "true",
         HOME: "/tmp/deployguard-home",
         ...corepackConfig.environment,
+        ...buildEnvironment,
       },
 
       mounts: [

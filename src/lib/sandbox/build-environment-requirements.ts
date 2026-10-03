@@ -19,7 +19,8 @@ import type {
  * DeployGuard may handle each discovered variable.
  */
 export function createBuildEnvironmentRequirements(
-  requirements: PreparationRequirement[]
+  requirements: PreparationRequirement[],
+  explicitValues: Readonly<Record<string, string>> = {}
 ): BuildEnvironmentRequirement[] {
   return requirements
     .filter(
@@ -44,14 +45,38 @@ export function createBuildEnvironmentRequirements(
        * Keeping this decision here prevents the orchestrator
        * from inventing availability independently of policy.
        */
+      const explicitValue =
+        Object.prototype.hasOwnProperty.call(
+          explicitValues,
+          decision.variable
+        )
+          ? explicitValues[decision.variable]
+          : undefined;
+
+      /*
+       * Explicit repository-scoped configuration satisfies
+       * the requirement regardless of whether DeployGuard
+       * can auto-provision it.
+       *
+       * Crucially, this function never reads process.env.
+       */
+      const hasExplicitValue =
+        explicitValue !== undefined;
+
       const available =
-        decision.action === "provide" &&
-        decision.canAutoProvision;
+        hasExplicitValue ||
+        (
+          decision.action === "provide" &&
+          decision.canAutoProvision
+        );
 
       return {
         variable: decision.variable,
         required: requirement.required,
         available,
+        value: hasExplicitValue
+          ? explicitValue
+          : undefined,
         provisioningAction:
           decision.action,
         provisioningReason:

@@ -137,6 +137,85 @@ describe(
     );
 
     it(
+      "marks an explicitly supplied build secret as available",
+      () => {
+        const result =
+          createBuildEnvironmentRequirements(
+            [
+              requirement(
+                "BUILD_SECRET",
+                "build",
+                "secret"
+              ),
+            ],
+            {
+              BUILD_SECRET:
+                "repository-scoped-secret",
+            }
+          );
+
+        expect(result).toEqual([
+          {
+            variable: "BUILD_SECRET",
+            required: true,
+            available: true,
+            value:
+              "repository-scoped-secret",
+            provisioningAction:
+              "require_explicit_value",
+            provisioningReason:
+              "BUILD_SECRET is required during build and classified as sensitive. " +
+              "An explicit repository-scoped value is required.",
+          },
+        ]);
+      }
+    );
+
+    it(
+      "does not use the DeployGuard host environment as repository configuration",
+      () => {
+        const previousValue =
+          process.env.BUILD_SECRET;
+
+        process.env.BUILD_SECRET =
+          "host-secret-must-not-leak";
+
+        try {
+          const result =
+            createBuildEnvironmentRequirements([
+              requirement(
+                "BUILD_SECRET",
+                "build",
+                "secret"
+              ),
+            ]);
+
+          expect(result).toEqual([
+            {
+              variable:
+                "BUILD_SECRET",
+              required: true,
+              available: false,
+              value: undefined,
+              provisioningAction:
+                "require_explicit_value",
+              provisioningReason:
+                "BUILD_SECRET is required during build and classified as sensitive. " +
+                "An explicit repository-scoped value is required.",
+            },
+          ]);
+        } finally {
+          if (previousValue === undefined) {
+            delete process.env.BUILD_SECRET;
+          } else {
+            process.env.BUILD_SECRET =
+              previousValue;
+          }
+        }
+      }
+    );
+
+    it(
       "excludes unresolved environment requirements from build preconditions",
       () => {
         const result =
