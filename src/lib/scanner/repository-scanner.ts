@@ -489,8 +489,17 @@ function detectEnvironmentVariables(
       }
 
       const patterns = [
-        /process\.env\.([A-Za-z_][A-Za-z0-9_]*)/g,
-        /process\.env\[['"]([A-Za-z_][A-Za-z0-9_]*)['"]\]/g,
+        /*
+         * Support compact and whitespace-formatted
+         * property access, including multiline access.
+         */
+        /process\.env\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)/g,
+
+        /*
+         * Support quoted bracket access with optional
+         * whitespace around the property expression.
+         */
+        /process\.env\s*\[\s*["']([A-Za-z_][A-Za-z0-9_]*)["']\s*\]/g,
       ];
 
       for (const pattern of patterns) {
