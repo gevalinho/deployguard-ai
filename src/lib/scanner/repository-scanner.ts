@@ -549,19 +549,18 @@ function detectEnvironmentVariables(
     }
   }
 
-  const sourcePath =
-    path.join(
-      repositoryPath,
-      "src"
-    );
-
-  if (
-    fs.existsSync(sourcePath)
-  ) {
-    visit(sourcePath);
-  } else {
-    visit(repositoryPath);
-  }
+  /*
+   * Environment requirements may live outside src/.
+   *
+   * Tests, scripts, configuration helpers, workers,
+   * migrations, and other executable repository files
+   * can all reference environment variables.
+   *
+   * Traverse from the repository root and rely on the
+   * ignored-directory rules above to avoid generated,
+   * dependency, and VCS content.
+   */
+  visit(repositoryPath);
 
   for (
     const [

@@ -2,6 +2,14 @@ import type {
   RepositoryFact,
 } from "@/lib/evidence/types";
 
+import {
+  classifyEnvironmentUsage,
+} from "@/lib/scanner/environment-usage-classifier";
+
+import type {
+  EnvironmentUsagePhase,
+} from "@/lib/scanner/environment-usage-classifier";
+
 export type PreparationRequirementKind =
   | "dependency_install"
   | "artifact_generation"
@@ -18,6 +26,10 @@ export interface PreparationRequirement {
   reason: string;
 
   evidence: RepositoryFact[];
+
+  phase?: EnvironmentUsagePhase;
+
+  confidence?: number;
 }
 
 export interface PreparationPlan {
@@ -91,19 +103,57 @@ export function createPreparationPlan(
    * Whether a variable is required specifically during
    * build, test, or runtime can be classified separately.
    */
+  const environmentClassifications =
+    classifyEnvironmentUsage(
+      facts
+    );
+
   const environmentFacts =
     findFacts(
       facts,
       "environmentVariable"
     );
 
-  for (const fact of environmentFacts) {
+  for (
+    const classification of
+    environmentClassifications
+  ) {
+    const fact =
+      environmentFacts.find(
+        (candidate) =>
+          candidate.value ===
+          classification.variable
+      );
+
+    if (!fact) {
+      continue;
+    }
+
+    /*
+     * A variable is preparation-blocking only when
+     * repository evidence establishes that it is needed
+     * during the build phase.
+     *
+     * Runtime, test, and unknown requirements are
+     * reported without inventing or injecting values.
+     */
+    const required =
+      classification.phase ===
+      "build";
+
     requirements.push({
       kind: "environment",
-      technology: fact.value,
-      required: false,
+      technology:
+        classification.variable,
+      required,
+      phase:
+        classification.phase,
+      confidence:
+        classification.confidence,
       reason:
-        `${fact.value} is referenced by repository source code. DeployGuard will not automatically supply a value during sandbox preparation.`,
+        required
+          ? `${classification.variable} is classified as a build-phase environment requirement. DeployGuard requires an explicit value before build verification can rely on it.`
+          : `${classification.variable} is classified as ${classification.phase}-phase configuration and will not block sandbox preparation.`,
       evidence: [fact],
     });
   }
