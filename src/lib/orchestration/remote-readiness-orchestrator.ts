@@ -15,6 +15,7 @@ import {
 } from "@/lib/agents/research-agent";
 import { runSandboxBuildAgent } from "@/lib/agents/sandbox-build-agent";
 import { runSandboxLintAgent } from "@/lib/agents/sandbox-lint-agent";
+import { prepareSandboxProject } from "@/lib/agents/sandbox-project-preparation-agent";
 import { runSandboxSecurityAgent } from "@/lib/agents/sandbox-security-agent";
 import { runSandboxTestAgent } from "@/lib/agents/sandbox-test-agent";
 import { runSandboxTypecheckAgent } from "@/lib/agents/sandbox-typecheck-agent";
@@ -550,6 +551,98 @@ export async function runRemoteReadinessAssessment(
         preparation.status === "passed"
       ) {
         /*
+         * Deterministic project preparation.
+         *
+         * Some repositories require generated artifacts
+         * after dependency installation and before their
+         * validation/build contracts can execute.
+         */
+        const projectPreparation =
+          await measureStage(
+            "Project Preparation",
+            () =>
+              prepareSandboxProject(
+                ingested.repositoryPath
+              )
+          );
+
+        console.log(
+          "[Project Preparation]",
+          JSON.stringify(
+            {
+              status: projectPreparation.status,
+              required: projectPreparation.required,
+              strategy: projectPreparation.strategy,
+              command:
+                projectPreparation.command ?? null,
+              exitCode:
+                projectPreparation.exitCode ?? null,
+              durationMs:
+                projectPreparation.durationMs,
+              summary:
+                projectPreparation.summary,
+            },
+            null,
+            2
+          )
+        );
+
+        if (
+          projectPreparation.status !== "passed"
+        ) {
+          const preparationSummary =
+            projectPreparation.summary;
+
+          const unavailableChecks: CheckResult[] =
+            [
+              createUnavailableCheck(
+                "types",
+                "types",
+                "TypeScript",
+                preparationSummary
+              ),
+              createUnavailableCheck(
+                "lint",
+                "lint",
+                "Lint",
+                preparationSummary
+              ),
+              createUnavailableCheck(
+                "test",
+                "test",
+                "Tests",
+                preparationSummary
+              ),
+              createUnavailableCheck(
+                "build",
+                "build",
+                "Production Build",
+                preparationSummary
+              ),
+              createUnavailableCheck(
+                "security",
+                "security",
+                "Dependency Security",
+                preparationSummary
+              ),
+            ];
+
+          checks.push(
+            ...unavailableChecks
+          );
+
+          for (
+            const check of unavailableChecks
+          ) {
+            await emitProgress(
+              check.category,
+              check.name,
+              "error",
+              check.summary
+            );
+          }
+        } else {
+        /*
          * TypeScript
          */
 
@@ -697,6 +790,7 @@ export async function runRemoteReadinessAssessment(
           ),
           security.summary
         );
+        }
       } else {
         /*
          * Dependency preparation failed in a
