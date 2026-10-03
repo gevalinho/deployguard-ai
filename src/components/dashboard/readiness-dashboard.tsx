@@ -760,6 +760,139 @@ function CoverageCard({ coverage }: { coverage: number }) {
 }
 
 /* -------------------------------------------------------------------------- */
+/*                      Repository Build Configuration                        */
+/* -------------------------------------------------------------------------- */
+
+type RepositoryConfigurationRequirement = {
+  variable: string;
+  phase:
+    | "build"
+    | "runtime"
+    | "test"
+    | "unknown";
+  reason: string;
+};
+
+function RepositoryConfiguration({
+  requirements,
+  values,
+  loading,
+  onChange,
+  onRetry,
+}: {
+  requirements:
+    RepositoryConfigurationRequirement[];
+  values: Record<string, string>;
+  loading: boolean;
+  onChange: (
+    variable: string,
+    value: string
+  ) => void;
+  onRetry: () => void;
+}) {
+  if (requirements.length === 0) {
+    return null;
+  }
+
+  const complete =
+    requirements.every(
+      (requirement) =>
+        Boolean(
+          values[
+            requirement.variable
+          ]?.length
+        )
+    );
+
+  return (
+    <section className="mb-10 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-6">
+      <div className="max-w-3xl">
+        <p className="text-sm font-medium text-amber-300">
+          Repository Configuration Required
+        </p>
+
+        <h2 className="mt-2 text-xl font-semibold">
+          Complete build verification
+        </h2>
+
+        <p className="mt-3 text-sm leading-6 text-zinc-400">
+          DeployGuard discovered configuration that the
+          repository requires during isolated verification.
+          Values entered here are sent only as execution
+          inputs for this assessment and are never included
+          in the public readiness report.
+        </p>
+      </div>
+
+      <div className="mt-6 space-y-4">
+        {requirements.map((requirement) => (
+          <div
+            key={`${requirement.phase}-${requirement.variable}`}
+            className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4"
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <label
+                htmlFor={`repository-environment-${requirement.variable}`}
+                className="font-mono text-sm font-medium text-zinc-200"
+              >
+                {requirement.variable}
+              </label>
+
+              <span className="rounded-full border border-zinc-700 px-2 py-0.5 text-[10px] uppercase tracking-wide text-zinc-500">
+                {requirement.phase}
+              </span>
+            </div>
+
+            <p className="mt-2 text-xs leading-5 text-zinc-500">
+              {requirement.reason}
+            </p>
+
+            <input
+              id={`repository-environment-${requirement.variable}`}
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              value={
+                values[
+                  requirement.variable
+                ] ?? ""
+              }
+              onChange={(event) =>
+                onChange(
+                  requirement.variable,
+                  event.target.value
+                )
+              }
+              disabled={loading}
+              placeholder={`Enter ${requirement.variable}`}
+              className="mt-4 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 font-mono text-sm text-zinc-100 outline-none transition placeholder:text-zinc-700 focus:border-amber-500/60 disabled:opacity-60"
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-6 flex flex-wrap items-center gap-4">
+        <button
+          type="button"
+          onClick={onRetry}
+          disabled={loading || !complete}
+          className="rounded-xl bg-amber-300 px-5 py-3 font-medium text-zinc-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {loading
+            ? "Verification running..."
+            : "Retry with Configuration"}
+        </button>
+
+        <p className="text-xs leading-5 text-zinc-500">
+          Values remain masked in the interface and are not
+          displayed in assessment results.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
 /*                         Verification / Check Evidence                      */
 /* -------------------------------------------------------------------------- */
 
@@ -1912,6 +2045,52 @@ const [remediationResult, setRemediationResult] =
   const report = assessment?.report ?? null;
   const research = assessment?.research ?? null;
 
+  /*
+   * Repository-scoped execution values live only in
+   * component memory. Never copy them into assessment
+   * results, progress events, logs, or persistent storage.
+   */
+  const [
+    repositoryEnvironment,
+    setRepositoryEnvironment,
+  ] = useState<Record<string, string>>({});
+
+  const configurationRequirements =
+    useMemo(() => {
+      const requirements =
+        report?.checks.flatMap(
+          (check) =>
+            check.configurationRequirements ??
+            []
+        ) ?? [];
+
+      const unique =
+        new Map<
+          string,
+          RepositoryConfigurationRequirement
+        >();
+
+      for (const requirement of requirements) {
+        const key =
+          `${requirement.phase}:${requirement.variable}`;
+
+        if (!unique.has(key)) {
+          unique.set(
+            key,
+            requirement
+          );
+        }
+      }
+
+      return Array.from(
+        unique.values()
+      ).sort((left, right) =>
+        left.variable.localeCompare(
+          right.variable
+        )
+      );
+    }, [report]);
+
   const progressByStage = useMemo(() => {
     const map = new Map<string, AssessmentProgressEvent>();
 
@@ -1978,6 +2157,15 @@ const [remediationResult, setRemediationResult] =
         },
         body: JSON.stringify({
           repositoryUrl,
+
+          ...(Object.keys(
+            repositoryEnvironment
+          ).length > 0
+            ? {
+                environment:
+                  repositoryEnvironment,
+              }
+            : {}),
         }),
       });
 
@@ -2238,9 +2426,19 @@ const [remediationResult, setRemediationResult] =
               id="repository-url"
               type="url"
               value={repositoryUrl}
-              onChange={(event) =>
-                setRepositoryUrl(event.target.value)
-              }
+              onChange={(event) => {
+                setRepositoryUrl(
+                  event.target.value
+                );
+
+                /*
+                 * Never carry execution configuration
+                 * from one repository URL to another.
+                 */
+                setRepositoryEnvironment(
+                  {}
+                );
+              }}
               placeholder="https://github.com/owner/repository"
               disabled={loading || scanLoading}
               className="mt-3 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-zinc-500 disabled:opacity-60"
@@ -2302,6 +2500,23 @@ const [remediationResult, setRemediationResult] =
             progressByStage={progressByStage}
           />
         )}
+
+        <RepositoryConfiguration
+          requirements={
+            configurationRequirements
+          }
+          values={repositoryEnvironment}
+          loading={loading}
+          onChange={(variable, value) =>
+            setRepositoryEnvironment(
+              (current) => ({
+                ...current,
+                [variable]: value,
+              })
+            )
+          }
+          onRetry={runAssessment}
+        />
 
         {remoteScan && (
           <section className="mb-10 space-y-5">
