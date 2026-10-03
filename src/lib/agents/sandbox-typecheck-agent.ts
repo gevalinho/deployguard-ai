@@ -1,5 +1,6 @@
 import {
   existsSync,
+  readFileSync,
 } from "node:fs";
 
 import {
@@ -21,11 +22,16 @@ import {
 
 import {
   createExecCommand,
+  createRunScriptCommand,
 } from "@/lib/sandbox/package-manager-command";
 
 import {
   getCorepackSandboxConfig,
 } from "@/lib/sandbox/corepack-cache";
+
+interface PackageJson {
+  scripts?: Record<string, string>;
+}
 
 const MAX_TYPECHECK_EVIDENCE = 10;
 
@@ -185,16 +191,46 @@ export async function runSandboxTypecheckAgent(
       true
     );
 
-  const typecheckCommand =
-    createExecCommand(
-      packageManager,
-      "tsc",
-      [
-        "--noEmit",
-        "--pretty",
-        "false",
-      ]
+  const packageJsonPath =
+    join(
+      repositoryPath,
+      "package.json"
     );
+
+  let packageJson: PackageJson = {};
+
+  if (existsSync(packageJsonPath)) {
+    packageJson = JSON.parse(
+      readFileSync(
+        packageJsonPath,
+        "utf8"
+      )
+    ) as PackageJson;
+  }
+
+  /*
+   * Prefer the repository's explicit typecheck
+   * contract when one exists.
+   *
+   * Otherwise fall back to direct TypeScript
+   * validation for repositories that expose a
+   * tsconfig.json but no typecheck script.
+   */
+  const typecheckCommand =
+    packageJson.scripts?.typecheck
+      ? createRunScriptCommand(
+          packageManager,
+          "typecheck"
+        )
+      : createExecCommand(
+          packageManager,
+          "tsc",
+          [
+            "--noEmit",
+            "--pretty",
+            "false",
+          ]
+        );
 
   const result =
     await runDockerSandboxCommand({
