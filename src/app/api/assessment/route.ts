@@ -6,10 +6,15 @@ import type {
   AssessmentProgressEvent,
 } from "@/lib/orchestration/assessment-progress";
 
+import {
+  parseRepositoryEnvironment,
+} from "@/lib/api/repository-environment-input";
+
 export const runtime = "nodejs";
 
 interface AssessmentRequestBody {
   repositoryUrl?: unknown;
+  environment?: unknown;
 }
 
 function encodeSseEvent(
@@ -66,6 +71,32 @@ export async function POST(
     );
   }
 
+  const environmentResult =
+    parseRepositoryEnvironment(
+      body.environment
+    );
+
+  if (!environmentResult.ok) {
+    return Response.json(
+      {
+        ok: false,
+        error:
+          environmentResult.error,
+      },
+      {
+        status: 400,
+      }
+    );
+  }
+
+  /*
+   * Repository environment values are execution inputs
+   * only. Never include them in SSE events, diagnostics,
+   * assessment reports, or server logs.
+   */
+  const repositoryEnvironment =
+    environmentResult.environment;
+
   const stream =
     new ReadableStream<Uint8Array>({
       start(controller) {
@@ -121,14 +152,18 @@ export async function POST(
             const result =
               await runRemoteReadinessAssessment(
                 repositoryUrl,
-                async (
-                  progress:
-                    AssessmentProgressEvent
-                ) => {
-                  send(
-                    "progress",
-                    progress
-                  );
+                {
+                  environment:
+                    repositoryEnvironment,
+                  onProgress: async (
+                    progress:
+                      AssessmentProgressEvent
+                  ) => {
+                    send(
+                      "progress",
+                      progress
+                    );
+                  },
                 }
               );
 

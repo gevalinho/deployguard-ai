@@ -46,6 +46,21 @@ import {
   createPreparationPlan,
 } from "@/lib/sandbox/preparation-planner";
 
+export interface RemoteReadinessAssessmentOptions {
+  /*
+   * Explicit repository-scoped environment configuration.
+   *
+   * Values are execution inputs only. They must never be
+   * copied into assessment reports, evidence, progress
+   * events, or diagnostic logs.
+   */
+  environment?: Readonly<
+    Record<string, string>
+  >;
+
+  onProgress?: AssessmentProgressCallback;
+}
+
 export interface RemoteReadinessAssessment {
   repository: {
     owner: string;
@@ -200,8 +215,12 @@ function sanitizeResearch(
 
 export async function runRemoteReadinessAssessment(
   repositoryUrl: string,
-  onProgress?: AssessmentProgressCallback
+  options: RemoteReadinessAssessmentOptions = {}
 ): Promise<RemoteReadinessAssessment> {
+  const {
+    environment: repositoryEnvironment = {},
+    onProgress,
+  } = options;
   const assessmentStartedAt = Date.now();
   const timings: PerformanceTiming[] = [];
 
@@ -686,7 +705,8 @@ export async function runRemoteReadinessAssessment(
               runSandboxBuildAgent(
                 ingested.repositoryPath,
                 createBuildEnvironmentRequirements(
-                  preparationPlan.requirements
+                  preparationPlan.requirements,
+                  repositoryEnvironment
                 )
               )
           );

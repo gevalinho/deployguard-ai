@@ -27,7 +27,8 @@ async function main() {
   const result =
   await runRemoteReadinessAssessment(
     repositoryUrl,
-    (event) => {
+    {
+      onProgress: (event) => {
       const elapsedSeconds =
         Math.floor(
           (event.elapsedMs ?? 0) / 1000
@@ -62,6 +63,7 @@ async function main() {
       console.log(
         `[${elapsed}] ${symbol} ${event.label}: ${event.message ?? event.status}`
       );
+      },
     }
   );
 
