@@ -14,6 +14,9 @@ import {
   type ResearchAgentResult,
 } from "@/lib/agents/research-agent";
 import { runSandboxBuildAgent } from "@/lib/agents/sandbox-build-agent";
+import {
+  createBuildEnvironmentRequirements,
+} from "@/lib/sandbox/build-environment-requirements";
 import { runSandboxLintAgent } from "@/lib/agents/sandbox-lint-agent";
 import { runSandboxSecurityAgent } from "@/lib/agents/sandbox-security-agent";
 import { runSandboxTestAgent } from "@/lib/agents/sandbox-test-agent";
@@ -682,32 +685,9 @@ export async function runRemoteReadinessAssessment(
             () =>
               runSandboxBuildAgent(
                 ingested.repositoryPath,
-                preparationPlan.requirements
-                  .filter(
-                    (requirement) =>
-                      requirement.kind ===
-                        "environment" &&
-                      requirement.phase ===
-                        "build"
-                  )
-                  .map(
-                    (requirement) => ({
-                      variable:
-                        requirement.technology,
-                      required:
-                        requirement.required,
-                      /*
-                       * DeployGuard currently has no
-                       * repository-scoped secret injection
-                       * mechanism.
-                       *
-                       * Never treat the host process
-                       * environment as repository
-                       * configuration.
-                       */
-                      available: false,
-                    })
-                  )
+                createBuildEnvironmentRequirements(
+                  preparationPlan.requirements
+                )
               )
           );
 
