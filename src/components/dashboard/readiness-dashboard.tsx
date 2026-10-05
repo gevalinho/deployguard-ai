@@ -2682,12 +2682,25 @@ const [remediationResult, setRemediationResult] =
   />
 )}
 
-{remediationResult?.remediation.verifiedArtifactReference?.artifactId && (
+{report && (
   <RemediationDelivery
-    key={remediationResult.remediation.verifiedArtifactReference.artifactId}
+    key={
+      remediationResult?.remediation
+        .verifiedArtifactReference
+        ?.artifactId ??
+      "remediation-delivery"
+    }
     developer={developer}
-    generated={true}
-    artifactId={remediationResult.remediation.verifiedArtifactReference.artifactId}
+    generated={Boolean(
+      remediationResult?.remediation
+        .verifiedArtifactReference
+        ?.artifactId
+    )}
+    artifactId={
+      remediationResult?.remediation
+        .verifiedArtifactReference
+        ?.artifactId
+    }
   />
 )}
           </div>
