@@ -6,6 +6,7 @@ import type {
   PublicCheckResult,
   PublicProductionReadinessReport,
 } from "@/lib/reporting/types";
+import { ReadinessBreakdown } from "@/components/dashboard/readiness-breakdown";
 
 /* -------------------------------------------------------------------------- */
 /*                                    Types                                   */
@@ -117,20 +118,13 @@ type RemediationResult = {
     };
 
     execution: {
-      status:
-        | "proposed"
-        | "applied"
-        | "failed"
-        | "unsupported";
+      status: "proposed" | "applied" | "failed" | "unsupported";
       summary: string;
       durationMs?: number;
     };
 
     proof?: {
-      status:
-        | "proven"
-        | "not_proven"
-        | "inconclusive";
+      status: "proven" | "not_proven" | "inconclusive";
 
       summary: string;
 
@@ -141,10 +135,9 @@ type RemediationResult = {
         improved: boolean;
       }[];
 
-            regressionChecks:
-        RemediationProofCheck[];
+      regressionChecks: RemediationProofCheck[];
 
-            readinessImpact?: {
+      readinessImpact?: {
         before: {
           score: number;
           coverage: number;
@@ -160,17 +153,14 @@ type RemediationResult = {
     };
 
     verifiedPatch?: {
-  fileCount: number;
+      fileCount: number;
 
-  files: {
-    path: string;
+      files: {
+        path: string;
 
-    changeType:
-      | "added"
-      | "modified"
-      | "deleted";
-  }[];
-};
+        changeType: "added" | "modified" | "deleted";
+      }[];
+    };
   };
 };
 
@@ -188,9 +178,9 @@ const ASSESSMENT_STAGES = [
   { stage: "test", label: "Tests" },
   { stage: "build", label: "Production Build" },
   { stage: "security", label: "Dependency Security" },
-{ stage: "architect", label: "Nemotron Analysis" },
-{ stage: "remediation", label: "Nemotron Remediation" },
-{ stage: "report", label: "Readiness Report" },
+  { stage: "architect", label: "Nemotron Analysis" },
+  { stage: "remediation", label: "Nemotron Remediation" },
+  { stage: "report", label: "Readiness Report" },
 ] as const;
 
 const PROCESS_STEPS = [
@@ -202,20 +192,17 @@ const PROCESS_STEPS = [
   {
     step: "02",
     title: "Verification",
-    description:
-      "Validate build, types, tests, security and deployment.",
+    description: "Validate build, types, tests, security and deployment.",
   },
   {
     step: "03",
     title: "AI Reasoning",
-    description:
-      "NVIDIA Nemotron reasons over verified evidence.",
+    description: "NVIDIA Nemotron reasons over verified evidence.",
   },
   {
     step: "04",
     title: "Readiness",
-    description:
-      "Calculate a deterministic score and remediation plan.",
+    description: "Calculate a deterministic score and remediation plan.",
   },
 ] as const;
 
@@ -224,24 +211,15 @@ const PROCESS_STEPS = [
 /* -------------------------------------------------------------------------- */
 
 function getStatusLabel(check: CheckResult) {
-  if (
-    check.status === "skipped" &&
-    check.skipReason === "not_applicable"
-  ) {
+  if (check.status === "skipped" && check.skipReason === "not_applicable") {
     return "Not applicable";
   }
 
-  if (
-    check.status === "skipped" &&
-    check.skipReason === "not_configured"
-  ) {
+  if (check.status === "skipped" && check.skipReason === "not_configured") {
     return "Not configured";
   }
 
-  if (
-    check.status === "skipped" &&
-    check.skipReason === "unsupported"
-  ) {
+  if (check.status === "skipped" && check.skipReason === "unsupported") {
     return "Unsupported";
   }
 
@@ -310,34 +288,22 @@ function getCheckStatusClass(check: CheckResult) {
   }
 
   if (check.status === "blocked") {
-    return [
-      "border-amber-500/30",
-      "bg-amber-500/10",
-      "text-amber-300",
-    ].join(" ");
+    return ["border-amber-500/30", "bg-amber-500/10", "text-amber-300"].join(
+      " ",
+    );
   }
 
   if (check.status === "failed") {
-    return [
-      "border-red-500/30",
-      "bg-red-500/10",
-      "text-red-300",
-    ].join(" ");
+    return ["border-red-500/30", "bg-red-500/10", "text-red-300"].join(" ");
   }
 
   if (check.status === "error") {
-    return [
-      "border-orange-500/30",
-      "bg-orange-500/10",
-      "text-orange-300",
-    ].join(" ");
+    return ["border-orange-500/30", "bg-orange-500/10", "text-orange-300"].join(
+      " ",
+    );
   }
 
-  return [
-    "border-zinc-700",
-    "bg-zinc-800/50",
-    "text-zinc-400",
-  ].join(" ");
+  return ["border-zinc-700", "bg-zinc-800/50", "text-zinc-400"].join(" ");
 }
 
 function getEvidenceKindClass(kind: CheckEvidence["kind"]) {
@@ -345,25 +311,15 @@ function getEvidenceKindClass(kind: CheckEvidence["kind"]) {
     case "error":
     case "test_failure":
     case "security_finding":
-      return [
-        "border-red-500/20",
-        "bg-red-500/10",
-        "text-red-300",
-      ].join(" ");
+      return ["border-red-500/20", "bg-red-500/10", "text-red-300"].join(" ");
 
     case "warning":
-      return [
-        "border-amber-500/20",
-        "bg-amber-500/10",
-        "text-amber-300",
-      ].join(" ");
+      return ["border-amber-500/20", "bg-amber-500/10", "text-amber-300"].join(
+        " ",
+      );
 
     case "diagnostic":
-      return [
-        "border-sky-500/20",
-        "bg-sky-500/10",
-        "text-sky-300",
-      ].join(" ");
+      return ["border-sky-500/20", "bg-sky-500/10", "text-sky-300"].join(" ");
   }
 }
 
@@ -413,9 +369,7 @@ function formatElapsed(elapsedMs?: number) {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
-function parseSseBlock(
-  block: string
-): {
+function parseSseBlock(block: string): {
   event: string;
   data: unknown;
 } | null {
@@ -458,7 +412,7 @@ function StatusBadge({ check }: { check: CheckResult }) {
   return (
     <span
       className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1 text-xs font-medium capitalize ${getCheckStatusClass(
-        check
+        check,
       )}`}
     >
       {getStatusLabel(check)}
@@ -469,17 +423,25 @@ function StatusBadge({ check }: { check: CheckResult }) {
 function getCheckStateDescription(check: CheckResult) {
   if (check.status === "skipped") {
     switch (check.skipReason) {
-      case "not_configured": return "Required configuration is missing; check did not run.";
-      case "not_applicable": return "Outside this repository’s applicable assessment scope.";
-      case "unsupported": return "This check is not supported for the detected setup.";
-      default: return "Check was skipped; no pass or failure was established.";
+      case "not_configured":
+        return "Required configuration is missing; check did not run.";
+      case "not_applicable":
+        return "Outside this repository’s applicable assessment scope.";
+      case "unsupported":
+        return "This check is not supported for the detected setup.";
+      default:
+        return "Check was skipped; no pass or failure was established.";
     }
   }
   switch (check.status) {
-    case "passed": return "Check ran and met its verification criteria.";
-    case "failed": return "Check ran and found a readiness issue.";
-    case "blocked": return "A prerequisite prevented verification.";
-    case "error": return "Verification encountered an execution error.";
+    case "passed":
+      return "Check ran and met its verification criteria.";
+    case "failed":
+      return "Check ran and found a readiness issue.";
+    case "blocked":
+      return "A prerequisite prevented verification.";
+    case "error":
+      return "Verification encountered an execution error.";
   }
 }
 
@@ -491,14 +453,24 @@ function FindingEvidence({ evidence }: { evidence: CheckEvidence[] }) {
     <ul className="mt-3 space-y-3">
       {findings.slice(0, 3).map((item, index) => {
         const location = formatEvidenceLocation(item);
-        const isSeverity = item.kind === "security_finding" &&
+        const isSeverity =
+          item.kind === "security_finding" &&
           /^(critical|high|moderate|medium|low|info)$/i.test(item.code ?? "");
         return (
-          <li key={index} className="min-w-0 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
+          <li
+            key={index}
+            className="min-w-0 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3"
+          >
             <p className="text-sm leading-6 text-zinc-300">{item.message}</p>
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-400">
-              <span className="capitalize">{formatEvidenceKind(item.kind)}</span>
-              {item.code && <span>{isSeverity ? "Severity" : "Code"}: {item.code}</span>}
+              <span className="capitalize">
+                {formatEvidenceKind(item.kind)}
+              </span>
+              {item.code && (
+                <span>
+                  {isSeverity ? "Severity" : "Code"}: {item.code}
+                </span>
+              )}
               {location && <span className="font-mono">File: {location}</span>}
             </div>
           </li>
@@ -513,7 +485,10 @@ function FindingEvidence({ evidence }: { evidence: CheckEvidence[] }) {
   );
 }
 
-function AssessmentSummary({ report, completion }: {
+function AssessmentSummary({
+  report,
+  completion,
+}: {
   report: ReadinessReport;
   completion?: AssessmentProgressEvent;
 }) {
@@ -523,15 +498,26 @@ function AssessmentSummary({ report, completion }: {
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
   const actions = report.aiRemediation?.actions.length ?? 0;
-  const elapsed = completion?.status === "completed" ? completion.elapsedMs : undefined;
+  const elapsed =
+    completion?.status === "completed" ? completion.elapsedMs : undefined;
 
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
       <h2 className="text-sm font-medium text-zinc-200">Assessment complete</h2>
-      <ul aria-label="Assessment summary" className="mt-3 flex flex-wrap gap-2 text-xs text-zinc-300">
-        <li className="rounded-full border border-zinc-700 px-3 py-1">{report.checks.length} checks</li>
+      <ul
+        aria-label="Assessment summary"
+        className="mt-3 flex flex-wrap gap-2 text-xs text-zinc-300"
+      >
+        <li className="rounded-full border border-zinc-700 px-3 py-1">
+          {report.checks.length} checks
+        </li>
         {Array.from(counts, ([label, count]) => (
-          <li key={label} className="rounded-full border border-zinc-700 px-3 py-1">{count} {label.toLowerCase()}</li>
+          <li
+            key={label}
+            className="rounded-full border border-zinc-700 px-3 py-1"
+          >
+            {count} {label.toLowerCase()}
+          </li>
         ))}
         <li className="rounded-full border border-violet-500/30 px-3 py-1 text-violet-300">
           {actions} verified AI {actions === 1 ? "action" : "actions"}
@@ -539,7 +525,9 @@ function AssessmentSummary({ report, completion }: {
       </ul>
       <p className="mt-3 text-xs leading-5 text-zinc-400">
         {elapsed !== undefined && Number.isFinite(elapsed) && elapsed >= 0 && (
-          <span className="mr-2 inline-block">Assessment completed in {(elapsed / 1000).toFixed(1)}s ·</span>
+          <span className="mr-2 inline-block">
+            Assessment completed in {(elapsed / 1000).toFixed(1)}s ·
+          </span>
         )}
         Repository evidence verified • AI claims independently checked
       </p>
@@ -552,10 +540,17 @@ function KeyFindings({ checks }: { checks: CheckResult[] }) {
   if (failed.length === 0) return null;
 
   return (
-    <section aria-labelledby="key-findings-title" className="rounded-2xl border border-red-500/20 bg-zinc-900 p-5">
+    <section
+      aria-labelledby="key-findings-title"
+      className="rounded-2xl border border-red-500/20 bg-zinc-900 p-5"
+    >
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 id="key-findings-title" className="text-lg font-semibold">Key Findings</h2>
-        <span className="text-xs text-zinc-400">Deterministic evidence · Verified by DeployGuard</span>
+        <h2 id="key-findings-title" className="text-lg font-semibold">
+          Key Findings
+        </h2>
+        <span className="text-xs text-zinc-400">
+          Deterministic evidence · Verified by DeployGuard
+        </span>
       </div>
       <div className="mt-4 grid min-w-0 gap-4 md:grid-cols-2">
         {failed.map((check) => (
@@ -564,7 +559,9 @@ function KeyFindings({ checks }: { checks: CheckResult[] }) {
               <h3 className="font-medium">{check.name}</h3>
               <StatusBadge check={check} />
             </div>
-            <p className="mt-2 text-sm leading-6 text-zinc-300">{check.summary}</p>
+            <p className="mt-2 text-sm leading-6 text-zinc-300">
+              {check.summary}
+            </p>
             <FindingEvidence evidence={check.evidence ?? []} />
           </article>
         ))}
@@ -581,13 +578,9 @@ function ProcessOverview() {
           key={item.step}
           className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4"
         >
-          <p className="font-mono text-xs text-zinc-600">
-            {item.step}
-          </p>
+          <p className="font-mono text-xs text-zinc-600">{item.step}</p>
 
-          <p className="mt-2 font-medium text-zinc-200">
-            {item.title}
-          </p>
+          <p className="mt-2 font-medium text-zinc-200">{item.title}</p>
 
           <p className="mt-1 text-xs leading-5 text-zinc-500">
             {item.description}
@@ -613,20 +606,12 @@ function AssessmentPipeline({
     <section className="mb-10">
       <div className="mb-4 flex items-end justify-between gap-4">
         <div>
-          <p className="text-sm text-zinc-500">
-            Live verification
-          </p>
+          <p className="text-sm text-zinc-500">Live verification</p>
 
-          <h2 className="mt-1 text-xl font-semibold">
-            Assessment Pipeline
-          </h2>
+          <h2 className="mt-1 text-xl font-semibold">Assessment Pipeline</h2>
         </div>
 
-        {loading && (
-          <span className="text-sm text-zinc-500">
-            Running
-          </span>
-        )}
+        {loading && <span className="text-sm text-zinc-500">Running</span>}
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900">
@@ -641,7 +626,7 @@ function AssessmentPipeline({
             >
               <div
                 className={`w-6 shrink-0 text-center font-semibold ${getProgressTextClass(
-                  status
+                  status,
                 )}`}
               >
                 {getProgressSymbol(status)}
@@ -649,9 +634,7 @@ function AssessmentPipeline({
 
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="font-medium">
-                    {label}
-                  </p>
+                  <p className="font-medium">{label}</p>
 
                   {progress?.elapsedMs !== undefined && (
                     <span className="font-mono text-xs text-zinc-600">
@@ -682,15 +665,11 @@ function ReadinessScoreCard({ score }: { score: number }) {
     <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-sm text-zinc-400">
-            Production Readiness
-          </p>
+          <p className="text-sm text-zinc-400">Production Readiness</p>
 
           <p className="mt-2 text-5xl font-semibold">
             {score}
-            <span className="text-2xl text-zinc-500">
-              /100
-            </span>
+            <span className="text-2xl text-zinc-500">/100</span>
           </p>
         </div>
 
@@ -702,21 +681,20 @@ function ReadinessScoreCard({ score }: { score: number }) {
       <div className="mt-5 h-2 overflow-hidden rounded-full bg-zinc-800">
         <div
           className={`h-full rounded-full transition-all duration-500 ${getScoreBarClass(
-            score
+            score,
           )}`}
           style={{ width: `${score}%` }}
         />
       </div>
 
       <p className="mt-4 text-sm font-medium leading-6 text-zinc-300">
-        Score reflects verified readiness only. Blocked and
-        unconfigured areas do not receive readiness credit.
+        Score reflects verified readiness only. Blocked and unconfigured areas
+        do not receive readiness credit.
       </p>
 
       <p className="mt-2 text-sm leading-6 text-zinc-500">
-        Calculated from verified build, type, lint, test,
-        security, database, deployment and environment evidence —
-        not from an AI opinion.
+        Calculated from verified build, type, lint, test, security, database,
+        deployment and environment evidence — not from an AI opinion.
       </p>
     </div>
   );
@@ -727,15 +705,11 @@ function CoverageCard({ coverage }: { coverage: number }) {
     <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-sm text-zinc-400">
-            Assessment Coverage
-          </p>
+          <p className="text-sm text-zinc-400">Assessment Coverage</p>
 
           <p className="mt-2 text-5xl font-semibold">
             {coverage}
-            <span className="text-2xl text-zinc-500">
-              %
-            </span>
+            <span className="text-2xl text-zinc-500">%</span>
           </p>
         </div>
 
@@ -752,8 +726,8 @@ function CoverageCard({ coverage }: { coverage: number }) {
       </div>
 
       <p className="mt-4 text-sm leading-6 text-zinc-500">
-        Shows how much of the applicable production readiness
-        surface DeployGuard was able to evaluate.
+        Shows how much of the applicable production readiness surface
+        DeployGuard was able to evaluate.
       </p>
     </div>
   );
@@ -765,11 +739,7 @@ function CoverageCard({ coverage }: { coverage: number }) {
 
 type RepositoryConfigurationRequirement = {
   variable: string;
-  phase:
-    | "build"
-    | "runtime"
-    | "test"
-    | "unknown";
+  phase: "build" | "runtime" | "test" | "unknown";
   reason: string;
 };
 
@@ -780,29 +750,19 @@ function RepositoryConfiguration({
   onChange,
   onRetry,
 }: {
-  requirements:
-    RepositoryConfigurationRequirement[];
+  requirements: RepositoryConfigurationRequirement[];
   values: Record<string, string>;
   loading: boolean;
-  onChange: (
-    variable: string,
-    value: string
-  ) => void;
+  onChange: (variable: string, value: string) => void;
   onRetry: () => void;
 }) {
   if (requirements.length === 0) {
     return null;
   }
 
-  const complete =
-    requirements.every(
-      (requirement) =>
-        Boolean(
-          values[
-            requirement.variable
-          ]?.length
-        )
-    );
+  const complete = requirements.every((requirement) =>
+    Boolean(values[requirement.variable]?.length),
+  );
 
   return (
     <section className="mb-10 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-6">
@@ -816,11 +776,10 @@ function RepositoryConfiguration({
         </h2>
 
         <p className="mt-3 text-sm leading-6 text-zinc-400">
-          DeployGuard discovered configuration that the
-          repository requires during isolated verification.
-          Values entered here are sent only as execution
-          inputs for this assessment and are never included
-          in the public readiness report.
+          DeployGuard discovered configuration that the repository requires
+          during isolated verification. Values entered here are sent only as
+          execution inputs for this assessment and are never included in the
+          public readiness report.
         </p>
       </div>
 
@@ -852,16 +811,9 @@ function RepositoryConfiguration({
               type="password"
               autoComplete="off"
               spellCheck={false}
-              value={
-                values[
-                  requirement.variable
-                ] ?? ""
-              }
+              value={values[requirement.variable] ?? ""}
               onChange={(event) =>
-                onChange(
-                  requirement.variable,
-                  event.target.value
-                )
+                onChange(requirement.variable, event.target.value)
               }
               disabled={loading}
               placeholder={`Enter ${requirement.variable}`}
@@ -878,14 +830,12 @@ function RepositoryConfiguration({
           disabled={loading || !complete}
           className="rounded-xl bg-amber-300 px-5 py-3 font-medium text-zinc-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {loading
-            ? "Verification running..."
-            : "Retry with Configuration"}
+          {loading ? "Verification running..." : "Retry with Configuration"}
         </button>
 
         <p className="text-xs leading-5 text-zinc-500">
-          Values remain masked in the interface and are not
-          displayed in assessment results.
+          Values remain masked in the interface and are not displayed in
+          assessment results.
         </p>
       </div>
     </section>
@@ -896,21 +846,15 @@ function RepositoryConfiguration({
 /*                         Verification / Check Evidence                      */
 /* -------------------------------------------------------------------------- */
 
-function VerificationChecks({
-  checks,
-}: {
-  checks: CheckResult[];
-}) {
+function VerificationChecks({ checks }: { checks: CheckResult[] }) {
   return (
     <section>
       <div className="mb-4">
-        <h2 className="text-xl font-semibold">
-          Verification Checks
-        </h2>
+        <h2 className="text-xl font-semibold">Verification Checks</h2>
 
         <p className="mt-2 text-sm leading-6 text-zinc-500">
-          Deterministic findings captured directly from repository
-          analysis and isolated sandbox execution.
+          Deterministic findings captured directly from repository analysis and
+          isolated sandbox execution.
         </p>
       </div>
 
@@ -925,9 +869,7 @@ function VerificationChecks({
             >
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                  <p className="font-medium">
-                    {check.name}
-                  </p>
+                  <p className="font-medium">{check.name}</p>
 
                   <p className="mt-2 text-sm leading-6 text-zinc-400">
                     {check.summary}
@@ -955,8 +897,7 @@ function VerificationChecks({
 
                   <div className="space-y-3">
                     {evidence.map((item, index) => {
-                      const location =
-                        formatEvidenceLocation(item);
+                      const location = formatEvidenceLocation(item);
 
                       return (
                         <div
@@ -966,7 +907,7 @@ function VerificationChecks({
                           <div className="flex flex-wrap items-center gap-2">
                             <span
                               className={`rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide ${getEvidenceKindClass(
-                                item.kind
+                                item.kind,
                               )}`}
                             >
                               {formatEvidenceKind(item.kind)}
@@ -1023,13 +964,9 @@ function ExternalEvidence({
     <section className="rounded-2xl border border-violet-500/20 bg-gradient-to-br from-violet-500/5 to-zinc-900 p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-sm text-zinc-500">
-            Live external research
-          </p>
+          <p className="text-sm text-zinc-500">Live external research</p>
 
-          <h2 className="mt-2 text-xl font-semibold">
-            External Evidence
-          </h2>
+          <h2 className="mt-2 text-xl font-semibold">External Evidence</h2>
         </div>
 
         <span className="shrink-0 whitespace-nowrap rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400">
@@ -1063,9 +1000,7 @@ function ExternalEvidence({
             </a>
 
             {evidence.publisher && (
-              <p className="mt-1 text-sm text-zinc-500">
-                {evidence.publisher}
-              </p>
+              <p className="mt-1 text-sm text-zinc-500">{evidence.publisher}</p>
             )}
           </article>
         ))}
@@ -1084,8 +1019,8 @@ function ExternalEvidence({
       )}
 
       <p className="mt-5 border-t border-zinc-800 pt-4 text-sm leading-6 text-zinc-500">
-        External evidence informs Nemotron analysis but does not
-        directly determine the readiness score.
+        External evidence informs Nemotron analysis but does not directly
+        determine the readiness score.
       </p>
     </section>
   );
@@ -1112,16 +1047,13 @@ function ArchitectureAnalysis({
         </span>
       </div>
 
-      <h2 className="mt-3 text-xl font-semibold">
-        AI Architecture Analysis
-      </h2>
+      <h2 className="mt-3 text-xl font-semibold">AI Architecture Analysis</h2>
 
       <p className="mt-3 text-sm leading-6 text-zinc-400">
-        Nemotron reasons over verified evidence. DeployGuard executes checks and calculates the deterministic readiness score.
+        Nemotron reasons over verified evidence. DeployGuard executes checks and
+        calculates the deterministic readiness score.
       </p>
-      <p className="mt-4 leading-7 text-zinc-300">
-        {architecture.summary}
-      </p>
+      <p className="mt-4 leading-7 text-zinc-300">{architecture.summary}</p>
 
       <p className="mt-3 text-sm text-zinc-500">
         {architecture.architectureType}
@@ -1143,11 +1075,12 @@ function RemediationPlan({
 }) {
   return (
     <section>
-      <h2 className="mb-4 text-xl font-semibold">
-        Remediation Plan
-      </h2>
+      <h2 className="mb-4 text-xl font-semibold">Remediation Plan</h2>
 
-      <p className="mb-4 text-sm text-zinc-400">Deterministic recommendations from check outcomes and repository evidence.</p>
+      <p className="mb-4 text-sm text-zinc-400">
+        Deterministic recommendations from check outcomes and repository
+        evidence.
+      </p>
       {items.length === 0 ? (
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6 text-zinc-400">
           No remediation items were generated.
@@ -1160,9 +1093,7 @@ function RemediationPlan({
               className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5"
             >
               <div className="flex flex-wrap items-center gap-3">
-                <h3 className="font-medium">
-                  {item.title}
-                </h3>
+                <h3 className="font-medium">{item.title}</h3>
 
                 <span className="rounded-full border border-zinc-700 px-2.5 py-1 text-xs uppercase tracking-wide text-zinc-400">
                   {item.priority}
@@ -1172,12 +1103,24 @@ function RemediationPlan({
               <p className="mt-3 text-sm leading-6 text-zinc-400">
                 {item.recommendation}
               </p>
-              {checks.filter((check) => check.category === item.category && check.status === "failed" && check.evidence?.length).map((check) => (
-                <div key={check.id} className="mt-4 min-w-0 border-t border-zinc-800 pt-3 [overflow-wrap:anywhere]">
-                  <p className="text-xs font-medium text-zinc-400">Verified evidence · {check.name}</p>
-                  <FindingEvidence evidence={check.evidence ?? []} />
-                </div>
-              ))}
+              {checks
+                .filter(
+                  (check) =>
+                    check.category === item.category &&
+                    check.status === "failed" &&
+                    check.evidence?.length,
+                )
+                .map((check) => (
+                  <div
+                    key={check.id}
+                    className="mt-4 min-w-0 border-t border-zinc-800 pt-3 [overflow-wrap:anywhere]"
+                  >
+                    <p className="text-xs font-medium text-zinc-400">
+                      Verified evidence · {check.name}
+                    </p>
+                    <FindingEvidence evidence={check.evidence ?? []} />
+                  </div>
+                ))}
             </article>
           ))}
         </div>
@@ -1185,7 +1128,6 @@ function RemediationPlan({
     </section>
   );
 }
-
 
 /* -------------------------------------------------------------------------- */
 /*                           AI Remediation Guidance                           */
@@ -1197,84 +1139,48 @@ function AiRemediationGuidance({
   onExecute,
   executing,
 }: {
-  remediation: NonNullable<
-    ReadinessReport["aiRemediation"]
-  >;
+  remediation: NonNullable<ReadinessReport["aiRemediation"]>;
 
   checks: CheckResult[];
 
   onExecute: (
-    action: NonNullable<
-      ReadinessReport["aiRemediation"]
-    >["actions"][number]
+    action: NonNullable<ReadinessReport["aiRemediation"]>["actions"][number],
   ) => Promise<void>;
 
   executing: boolean;
 }) {
-  const checksById = new Map(
-    checks.map((check) => [check.id, check])
-  );
+  const checksById = new Map(checks.map((check) => [check.id, check]));
 
-  const executableActions =
-  remediation.actions.filter((action) => {
-    const check =
-      checksById.get(action.checkId);
+  const executableActions = remediation.actions.filter((action) => {
+    const check = checksById.get(action.checkId);
 
-    if (
-      !check ||
-      check.status !== "failed"
-    ) {
+    if (!check || check.status !== "failed") {
       return false;
     }
 
-    const referencedEvidence =
-      action.evidenceIndexes
-        .map(
-          (index) =>
-            check.evidence?.[index]
-        )
-        .filter(
-          (
-            evidence
-          ): evidence is CheckEvidence =>
-            evidence !== undefined
-        );
+    const referencedEvidence = action.evidenceIndexes
+      .map((index) => check.evidence?.[index])
+      .filter((evidence): evidence is CheckEvidence => evidence !== undefined);
 
-    if (
-      action.checkId === "security" &&
-      check.category === "security"
-    ) {
+    if (action.checkId === "security" && check.category === "security") {
       return referencedEvidence.some(
-        (evidence) =>
-          evidence.kind ===
-          "security_finding"
+        (evidence) => evidence.kind === "security_finding",
       );
     }
 
-    if (
-      action.checkId === "lint" &&
-      check.category === "lint"
-    ) {
+    if (action.checkId === "lint" && check.category === "lint") {
       return referencedEvidence.some(
-        (evidence) =>
-          evidence.kind === "error" ||
-          evidence.kind === "warning"
+        (evidence) => evidence.kind === "error" || evidence.kind === "warning",
       );
     }
 
     return false;
   });
 
-const uniqueExecutableActions =
-  Array.from(
+  const uniqueExecutableActions = Array.from(
     new Map(
-      executableActions.map(
-        (action) => [
-          action.checkId,
-          action,
-        ]
-      )
-    ).values()
+      executableActions.map((action) => [action.checkId, action]),
+    ).values(),
   );
 
   return (
@@ -1296,17 +1202,15 @@ const uniqueExecutableActions =
           </h2>
 
           <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
-            Nemotron explains verified failures using structured
-            evidence captured by DeployGuard. Every displayed
-            evidence reference passed deterministic verification.
+            Nemotron explains verified failures using structured evidence
+            captured by DeployGuard. Every displayed evidence reference passed
+            deterministic verification.
           </p>
         </div>
 
         <span className="shrink-0 whitespace-nowrap rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400">
           {remediation.actions.length} verified{" "}
-          {remediation.actions.length === 1
-            ? "action"
-            : "actions"}
+          {remediation.actions.length === 1 ? "action" : "actions"}
         </span>
       </div>
 
@@ -1324,26 +1228,21 @@ const uniqueExecutableActions =
         {remediation.actions.map((action, actionIndex) => {
           const check = checksById.get(action.checkId);
 
-         
-          const referencedEvidence =
-            check?.evidence
-              ? action.evidenceIndexes
-                  .map((index) => ({
-                    index,
-                    evidence: check.evidence?.[index],
-                  }))
-                  .filter(
-                    (
-                      item
-                    ): item is {
-                      index: number;
-                      evidence: CheckEvidence;
-                    } => item.evidence !== undefined
-                  )
-              : [];
-
-  
-
+          const referencedEvidence = check?.evidence
+            ? action.evidenceIndexes
+                .map((index) => ({
+                  index,
+                  evidence: check.evidence?.[index],
+                }))
+                .filter(
+                  (
+                    item,
+                  ): item is {
+                    index: number;
+                    evidence: CheckEvidence;
+                  } => item.evidence !== undefined,
+                )
+            : [];
 
           return (
             <article
@@ -1399,117 +1298,107 @@ const uniqueExecutableActions =
                   </div>
 
                   <div className="mt-3 space-y-3">
-                    {referencedEvidence.map(
-                      ({ index, evidence }) => {
-                        const location =
-                          formatEvidenceLocation(evidence);
+                    {referencedEvidence.map(({ index, evidence }) => {
+                      const location = formatEvidenceLocation(evidence);
 
-                        return (
-                          <div
-                            key={`${action.checkId}-${actionIndex}-evidence-${index}`}
-                            className="rounded-xl border border-zinc-800 bg-zinc-950 p-4"
-                          >
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="font-mono text-xs text-zinc-600">
-                                Evidence #{index}
+                      return (
+                        <div
+                          key={`${action.checkId}-${actionIndex}-evidence-${index}`}
+                          className="rounded-xl border border-zinc-800 bg-zinc-950 p-4"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-xs text-zinc-600">
+                              Evidence #{index}
+                            </span>
+
+                            <span
+                              className={`rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide ${getEvidenceKindClass(
+                                evidence.kind,
+                              )}`}
+                            >
+                              {formatEvidenceKind(evidence.kind)}
+                            </span>
+
+                            {evidence.code && (
+                              <span className="rounded-full border border-zinc-700 px-2.5 py-1 font-mono text-[11px] text-zinc-400">
+                                {evidence.code}
                               </span>
-
-                              <span
-                                className={`rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide ${getEvidenceKindClass(
-                                  evidence.kind
-                                )}`}
-                              >
-                                {formatEvidenceKind(
-                                  evidence.kind
-                                )}
-                              </span>
-
-                              {evidence.code && (
-                                <span className="rounded-full border border-zinc-700 px-2.5 py-1 font-mono text-[11px] text-zinc-400">
-                                  {evidence.code}
-                                </span>
-                              )}
-                            </div>
-
-                            {location && (
-                              <p className="mt-3 break-all font-mono text-xs leading-5 text-zinc-500">
-                                {location}
-                              </p>
                             )}
-
-                            <p className="mt-2 break-words text-sm leading-6 text-zinc-300">
-                              {evidence.message}
-                            </p>
                           </div>
-                        );
-                      }
-                    )}
+
+                          {location && (
+                            <p className="mt-3 break-all font-mono text-xs leading-5 text-zinc-500">
+                              {location}
+                            </p>
+                          )}
+
+                          <p className="mt-2 break-words text-sm leading-6 text-zinc-300">
+                            {evidence.message}
+                          </p>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
 
               {referencedEvidence.length === 0 && (
                 <p className="mt-5 border-t border-zinc-800 pt-4 text-xs leading-5 text-zinc-600">
-                  This guidance concerns a verification limitation
-                  without structured diagnostic evidence.
+                  This guidance concerns a verification limitation without
+                  structured diagnostic evidence.
                 </p>
               )}
-            
             </article>
           );
         })}
       </div>
 
       {uniqueExecutableActions.length > 0 && (
-  <div className="mt-6 rounded-2xl border border-violet-500/30 bg-violet-500/5 p-5">
-    <p className="text-xs font-medium uppercase tracking-[0.16em] text-violet-300">
-      Controlled Remediation
-    </p>
+        <div className="mt-6 rounded-2xl border border-violet-500/30 bg-violet-500/5 p-5">
+          <p className="text-xs font-medium uppercase tracking-[0.16em] text-violet-300">
+            Controlled Remediation
+          </p>
 
-    <h3 className="mt-2 font-medium text-zinc-100">
-      Verified automated remediation available
-    </h3>
+          <h3 className="mt-2 font-medium text-zinc-100">
+            Verified automated remediation available
+          </h3>
 
-    <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
-      DeployGuard can apply deterministic remediation
-      for the verified checks below and independently
-      re-run verification before claiming success.
-    </p>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
+            DeployGuard can apply deterministic remediation for the verified
+            checks below and independently re-run verification before claiming
+            success.
+          </p>
 
-    <div className="mt-4 flex flex-wrap gap-3">
-      {uniqueExecutableActions.map((action) => {
-        const check =
-          checksById.get(action.checkId);
+          <div className="mt-4 flex flex-wrap gap-3">
+            {uniqueExecutableActions.map((action) => {
+              const check = checksById.get(action.checkId);
 
-        return (
-          <button
-            key={action.checkId}
-            type="button"
-            disabled={executing}
-            onClick={() =>
-              void onExecute(action)
-            }
-            className="rounded-xl border border-violet-500/40 bg-violet-500/10 px-4 py-2.5 text-sm font-medium text-violet-200 transition hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {executing
-              ? "Running controlled remediation..."
-              : `Remediate ${check?.name ?? action.checkId}`}
-          </button>
-        );
-      })}
-    </div>
+              return (
+                <button
+                  key={action.checkId}
+                  type="button"
+                  disabled={executing}
+                  onClick={() => void onExecute(action)}
+                  className="rounded-xl border border-violet-500/40 bg-violet-500/10 px-4 py-2.5 text-sm font-medium text-violet-200 transition hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {executing
+                    ? "Running controlled remediation..."
+                    : `Remediate ${check?.name ?? action.checkId}`}
+                </button>
+              );
+            })}
+          </div>
 
-    <p className="mt-3 text-xs leading-5 text-zinc-500">
-      Remediation runs against a disposable DeployGuard
-      workspace. Your GitHub repository is not modified.
-    </p>
-  </div>
-)}
+          <p className="mt-3 text-xs leading-5 text-zinc-500">
+            Remediation runs against a disposable DeployGuard workspace. Your
+            GitHub repository is not modified.
+          </p>
+        </div>
+      )}
 
       <p className="mt-5 border-t border-zinc-800 pt-4 text-xs leading-5 text-zinc-500">
-        AI remediation is advisory. It does not modify the
-        deterministic readiness score or claim that a suggested
-        change has been executed.
+        AI remediation is advisory. It does not modify the deterministic
+        readiness score or claim that a suggested change has been executed.
       </p>
     </section>
   );
@@ -1519,77 +1408,54 @@ const uniqueExecutableActions =
 /*                                 Dashboard                                  */
 /* -------------------------------------------------------------------------- */
 
-
-function RemediationProof({
-  result,
-}: {
-  result: RemediationResult;
-}) {
+function RemediationProof({ result }: { result: RemediationResult }) {
   const remediation = result.remediation;
   const proof = remediation.proof;
 
-  const verifiedPatch =
-  remediation.verifiedPatch;
+  const verifiedPatch = remediation.verifiedPatch;
 
-  const proven =
-    proof?.status === "proven";
+  const proven = proof?.status === "proven";
 
-  const readinessImpact =
-    proof?.readinessImpact;
+  const readinessImpact = proof?.readinessImpact;
 
-  const comparisons =
-    proof?.comparisons ?? [];
+  const comparisons = proof?.comparisons ?? [];
 
-  const regressionChecks =
-    proof?.regressionChecks ?? [];
+  const regressionChecks = proof?.regressionChecks ?? [];
 
   const regressionPassed =
     regressionChecks.length > 0 &&
-    regressionChecks.every(
-      (check) =>
-        check.status === "passed"
-    );
+    regressionChecks.every((check) => check.status === "passed");
 
-  const isLintRemediation =
-  remediation.proposal.strategy ===
-  "lint_autofix";
+  const isLintRemediation = remediation.proposal.strategy === "lint_autofix";
 
-const targetImproved =
-  comparisons.length > 0 &&
-  comparisons.every(
-    (comparison) =>
-      comparison.improved
-  );
+  const targetImproved =
+    comparisons.length > 0 &&
+    comparisons.every((comparison) => comparison.improved);
 
-const stages = [
-  {
-    label: isLintRemediation
-      ? "Lint failure detected"
-      : "Vulnerability detected",
-    complete:
-      comparisons.length > 0,
-  },
-  {
-    label: "Controlled fix applied",
-    complete:
-      remediation.execution.status ===
-      "applied",
-  },
-  {
-  label: "Available regression checks passed",
-  complete: regressionPassed,
-  },
-  {
-    label: isLintRemediation
-      ? "Lint re-verified"
-      : "Security re-verified",
-    complete: targetImproved,
-  },
-  {
-    label: "Remediation proven",
-    complete: proven,
-  },
-];
+  const stages = [
+    {
+      label: isLintRemediation
+        ? "Lint failure detected"
+        : "Vulnerability detected",
+      complete: comparisons.length > 0,
+    },
+    {
+      label: "Controlled fix applied",
+      complete: remediation.execution.status === "applied",
+    },
+    {
+      label: "Available regression checks passed",
+      complete: regressionPassed,
+    },
+    {
+      label: isLintRemediation ? "Lint re-verified" : "Security re-verified",
+      complete: targetImproved,
+    },
+    {
+      label: "Remediation proven",
+      complete: proven,
+    },
+  ];
 
   return (
     <section
@@ -1607,14 +1473,11 @@ const stages = [
             </p>
 
             <h2 className="mt-2 text-2xl font-semibold">
-              {proven
-                ? "Remediation Proven"
-                : "Remediation Result"}
+              {proven ? "Remediation Proven" : "Remediation Result"}
             </h2>
 
             <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-400">
-              {proof?.summary ??
-                remediation.execution.summary}
+              {proof?.summary ?? remediation.execution.summary}
             </p>
           </div>
 
@@ -1625,8 +1488,7 @@ const stages = [
                 : "border-amber-500/30 bg-amber-500/10 text-amber-300"
             }`}
           >
-            {proof?.status ??
-              remediation.execution.status}
+            {proof?.status ?? remediation.execution.status}
           </span>
         </div>
 
@@ -1638,46 +1500,40 @@ const stages = [
           </p>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-5">
-            {stages.map(
-              (stage, index) => (
-                <div
-                  key={stage.label}
-                  className={`relative rounded-xl border p-4 ${
-                    stage.complete
-                      ? "border-emerald-500/20 bg-emerald-500/5"
-                      : "border-zinc-800 bg-zinc-950/40"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs ${
-                        stage.complete
-                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                          : "border-zinc-700 text-zinc-600"
-                      }`}
-                    >
-                      {stage.complete
-                        ? "✓"
-                        : index + 1}
-                    </span>
-
-                    <span className="text-xs text-zinc-500">
-                      Step {index + 1}
-                    </span>
-                  </div>
-
-                  <p
-                    className={`mt-3 text-sm font-medium leading-5 ${
+            {stages.map((stage, index) => (
+              <div
+                key={stage.label}
+                className={`relative rounded-xl border p-4 ${
+                  stage.complete
+                    ? "border-emerald-500/20 bg-emerald-500/5"
+                    : "border-zinc-800 bg-zinc-950/40"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs ${
                       stage.complete
-                        ? "text-zinc-200"
-                        : "text-zinc-500"
+                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                        : "border-zinc-700 text-zinc-600"
                     }`}
                   >
-                    {stage.label}
-                  </p>
+                    {stage.complete ? "✓" : index + 1}
+                  </span>
+
+                  <span className="text-xs text-zinc-500">
+                    Step {index + 1}
+                  </span>
                 </div>
-              )
-            )}
+
+                <p
+                  className={`mt-3 text-sm font-medium leading-5 ${
+                    stage.complete ? "text-zinc-200" : "text-zinc-500"
+                  }`}
+                >
+                  {stage.label}
+                </p>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -1690,85 +1546,65 @@ const stages = [
             </p>
 
             <div className="mt-4 space-y-4">
-              {comparisons.map(
-                (comparison) => (
-                  <article
-                    key={
-                      comparison.checkId
-                    }
-                    className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <h3 className="font-medium text-zinc-200">
-                        {
-                          comparison.before
-                            .name
-                        }
-                      </h3>
+              {comparisons.map((comparison) => (
+                <article
+                  key={comparison.checkId}
+                  className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <h3 className="font-medium text-zinc-200">
+                      {comparison.before.name}
+                    </h3>
 
-                      {comparison.improved && (
-                        <span className="text-xs font-medium text-emerald-400">
-                          ✓ Verified improvement
-                        </span>
-                      )}
+                    {comparison.improved && (
+                      <span className="text-xs font-medium text-emerald-400">
+                        ✓ Verified improvement
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="mt-5 grid items-stretch gap-3 sm:grid-cols-[1fr_auto_1fr]">
+                    <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4">
+                      <p className="text-xs font-medium uppercase tracking-[0.14em] text-red-400/70">
+                        Before
+                      </p>
+
+                      <p className="mt-2 text-lg font-semibold capitalize text-red-300">
+                        {comparison.before.status}
+                      </p>
+
+                      <p className="mt-2 text-xs leading-5 text-zinc-500">
+                        {comparison.before.summary}
+                      </p>
                     </div>
 
-                    <div className="mt-5 grid items-stretch gap-3 sm:grid-cols-[1fr_auto_1fr]">
-                      <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4">
-                        <p className="text-xs font-medium uppercase tracking-[0.14em] text-red-400/70">
-                          Before
-                        </p>
-
-                        <p className="mt-2 text-lg font-semibold capitalize text-red-300">
-                          {
-                            comparison.before
-                              .status
-                          }
-                        </p>
-
-                        <p className="mt-2 text-xs leading-5 text-zinc-500">
-                          {
-                            comparison.before
-                              .summary
-                          }
-                        </p>
-                      </div>
-
-                      <div className="flex items-center justify-center px-2 text-xl text-zinc-600">
-                        →
-                      </div>
-
-                      <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
-                        <p className="text-xs font-medium uppercase tracking-[0.14em] text-emerald-400/70">
-                          After
-                        </p>
-
-                        <p className="mt-2 text-lg font-semibold capitalize text-emerald-300">
-                          {
-                            comparison.after
-                              .status
-                          }
-                        </p>
-
-                        <p className="mt-2 text-xs leading-5 text-zinc-500">
-                          {
-                            comparison.after
-                              .summary
-                          }
-                        </p>
-                      </div>
+                    <div className="flex items-center justify-center px-2 text-xl text-zinc-600">
+                      →
                     </div>
-                  </article>
-                )
-              )}
+
+                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+                      <p className="text-xs font-medium uppercase tracking-[0.14em] text-emerald-400/70">
+                        After
+                      </p>
+
+                      <p className="mt-2 text-lg font-semibold capitalize text-emerald-300">
+                        {comparison.after.status}
+                      </p>
+
+                      <p className="mt-2 text-xs leading-5 text-zinc-500">
+                        {comparison.after.summary}
+                      </p>
+                    </div>
+                  </div>
+                </article>
+              ))}
             </div>
           </div>
         )}
 
         {/* Regression safety */}
 
-        {regressionChecks.length >
-          0 && (
+        {regressionChecks.length > 0 && (
           <div className="mt-8">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-600">
@@ -1783,44 +1619,38 @@ const stages = [
             </div>
 
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {regressionChecks.map(
-                (check) => (
-                  <div
-                    key={check.id}
-                    className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4"
+              {regressionChecks.map((check) => (
+                <div
+                  key={check.id}
+                  className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4"
+                >
+                  <p className="text-sm font-medium text-zinc-200">
+                    {check.name}
+                  </p>
+
+                  <p
+                    className={`mt-2 text-xs font-medium uppercase ${
+                      check.status === "passed"
+                        ? "text-emerald-400"
+                        : "text-amber-400"
+                    }`}
                   >
-                    <p className="text-sm font-medium text-zinc-200">
-                      {check.name}
-                    </p>
+                    {check.status === "passed" ? "✓ " : ""}
+                    {check.status}
+                  </p>
 
-                    <p
-                      className={`mt-2 text-xs font-medium uppercase ${
-                        check.status ===
-                        "passed"
-                          ? "text-emerald-400"
-                          : "text-amber-400"
-                      }`}
-                    >
-                      {check.status ===
-                      "passed"
-                        ? "✓ "
-                        : ""}
-                      {check.status}
-                    </p>
-
-                    <p className="mt-2 text-xs leading-5 text-zinc-500">
-                      {check.summary}
-                    </p>
-                  </div>
-                )
-              )}
+                  <p className="mt-2 text-xs leading-5 text-zinc-500">
+                    {check.summary}
+                  </p>
+                </div>
+              ))}
             </div>
           </div>
         )}
 
-                {/* Deterministic readiness impact */}
+        {/* Deterministic readiness impact */}
 
-                {/* Deterministic readiness impact */}
+        {/* Deterministic readiness impact */}
 
         {readinessImpact && (
           <div className="mt-8">
@@ -1844,14 +1674,11 @@ const stages = [
 
                 <p className="mt-2 text-2xl font-semibold text-zinc-200">
                   {readinessImpact.before.score}
-                  <span className="text-sm text-zinc-600">
-                    /100
-                  </span>
+                  <span className="text-sm text-zinc-600">/100</span>
                 </p>
 
                 <p className="mt-2 text-xs text-zinc-500">
-                  Coverage{" "}
-                  {readinessImpact.before.coverage}%
+                  Coverage {readinessImpact.before.coverage}%
                 </p>
               </div>
 
@@ -1862,14 +1689,11 @@ const stages = [
 
                 <p className="mt-2 text-2xl font-semibold text-emerald-300">
                   {readinessImpact.after.score}
-                  <span className="text-sm text-zinc-600">
-                    /100
-                  </span>
+                  <span className="text-sm text-zinc-600">/100</span>
                 </p>
 
                 <p className="mt-2 text-xs text-zinc-500">
-                  Coverage{" "}
-                  {readinessImpact.after.coverage}%
+                  Coverage {readinessImpact.after.coverage}%
                 </p>
               </div>
 
@@ -1887,9 +1711,7 @@ const stages = [
                         : "text-zinc-300"
                   }`}
                 >
-                  {readinessImpact.delta > 0
-                    ? "+"
-                    : ""}
+                  {readinessImpact.delta > 0 ? "+" : ""}
                   {readinessImpact.delta}
                 </p>
 
@@ -1900,99 +1722,83 @@ const stages = [
             </div>
 
             <p className="mt-3 text-xs leading-5 text-zinc-500">
-              Recalculated deterministically from verified
-              post-remediation checks. AI does not modify
-              this score.
+              Recalculated deterministically from verified post-remediation
+              checks. AI does not modify this score.
             </p>
           </div>
         )}
       </div>
 
-
       {/* Verified changes */}
 
-{verifiedPatch &&
-  verifiedPatch.fileCount > 0 && (
-    <div className="mt-8">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-600">
-            Verified Changes
-          </p>
+      {verifiedPatch && verifiedPatch.fileCount > 0 && (
+        <div className="mt-8">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-[0.16em] text-zinc-600">
+                Verified Changes
+              </p>
 
-          <p className="mt-2 text-sm leading-6 text-zinc-400">
-            DeployGuard captured these workspace
-            changes only after deterministic
-            verification proved the remediation.
-          </p>
-        </div>
+              <p className="mt-2 text-sm leading-6 text-zinc-400">
+                DeployGuard captured these workspace changes only after
+                deterministic verification proved the remediation.
+              </p>
+            </div>
 
-        <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300">
-          ✓ Proven patch
-        </span>
-      </div>
+            <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300">
+              ✓ Proven patch
+            </span>
+          </div>
 
-      <div className="mt-4 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950/60">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-5 py-4">
-          <p className="text-sm font-medium text-zinc-300">
-            {verifiedPatch.fileCount}{" "}
-            {verifiedPatch.fileCount === 1
-              ? "file"
-              : "files"}{" "}
-            changed
-          </p>
+          <div className="mt-4 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950/60">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-5 py-4">
+              <p className="text-sm font-medium text-zinc-300">
+                {verifiedPatch.fileCount}{" "}
+                {verifiedPatch.fileCount === 1 ? "file" : "files"} changed
+              </p>
 
-          <p className="text-xs text-zinc-600">
-            Source contents protected
-          </p>
-        </div>
+              <p className="text-xs text-zinc-600">Source contents protected</p>
+            </div>
 
-        <div className="divide-y divide-zinc-800">
-          {verifiedPatch.files.map(
-            (file) => (
-              <div
-                key={file.path}
-                className="flex flex-wrap items-center justify-between gap-3 px-5 py-4"
-              >
-                <p className="break-all font-mono text-sm text-zinc-300">
-                  {file.path}
-                </p>
-
-                <span
-                  className={`rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide ${
-                    file.changeType ===
-                    "added"
-                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                      : file.changeType ===
-                          "deleted"
-                        ? "border-red-500/30 bg-red-500/10 text-red-300"
-                        : "border-amber-500/30 bg-amber-500/10 text-amber-300"
-                  }`}
+            <div className="divide-y divide-zinc-800">
+              {verifiedPatch.files.map((file) => (
+                <div
+                  key={file.path}
+                  className="flex flex-wrap items-center justify-between gap-3 px-5 py-4"
                 >
-                  {file.changeType}
-                </span>
-              </div>
-            )
-          )}
-        </div>
-      </div>
+                  <p className="break-all font-mono text-sm text-zinc-300">
+                    {file.path}
+                  </p>
 
-      <p className="mt-3 text-xs leading-5 text-zinc-600">
-        Full before/after source content remains
-        inside the trusted DeployGuard execution
-        boundary and is not returned by the public
-        remediation API.
-      </p>
-    </div>
-  )}
+                  <span
+                    className={`rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide ${
+                      file.changeType === "added"
+                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                        : file.changeType === "deleted"
+                          ? "border-red-500/30 bg-red-500/10 text-red-300"
+                          : "border-amber-500/30 bg-amber-500/10 text-amber-300"
+                    }`}
+                  >
+                    {file.changeType}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <p className="mt-3 text-xs leading-5 text-zinc-600">
+            Full before/after source content remains inside the trusted
+            DeployGuard execution boundary and is not returned by the public
+            remediation API.
+          </p>
+        </div>
+      )}
 
       {/* Trust boundary */}
 
       <div className="border-t border-zinc-800 bg-zinc-950/40 px-6 py-4">
         <div className="flex items-start gap-3">
-          <span className="mt-0.5 text-emerald-400">
-            ✓
-          </span>
+          <span className="mt-0.5 text-emerald-400">✓</span>
 
           <div>
             <p className="text-xs font-medium text-zinc-300">
@@ -2000,10 +1806,8 @@ const stages = [
             </p>
 
             <p className="mt-1 text-xs leading-5 text-zinc-500">
-              Remediation was executed inside a
-              disposable DeployGuard workspace.
-              The source GitHub repository was
-              not modified.
+              Remediation was executed inside a disposable DeployGuard
+              workspace. The source GitHub repository was not modified.
             </p>
           </div>
         </div>
@@ -2012,28 +1816,28 @@ const stages = [
   );
 }
 
-export function ReadinessDashboard({ developer }: { developer: { login: string } | null }) {
+export function ReadinessDashboard({
+  developer,
+}: {
+  developer: { login: string } | null;
+}) {
   const [repositoryUrl, setRepositoryUrl] = useState("");
 
-  const [remoteScan, setRemoteScan] =
-    useState<RemoteScanResult | null>(null);
+  const [remoteScan, setRemoteScan] = useState<RemoteScanResult | null>(null);
 
   const [scanLoading, setScanLoading] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
 
   const [showAllResearch, setShowAllResearch] = useState(false);
 
-  const [assessment, setAssessment] =
-    useState<AssessmentResult | null>(null);
+  const [assessment, setAssessment] = useState<AssessmentResult | null>(null);
 
-  const [remediationLoading, setRemediationLoading] =
-  useState(false);
+  const [remediationLoading, setRemediationLoading] = useState(false);
 
-const [remediationError, setRemediationError] =
-  useState<string | null>(null);
+  const [remediationError, setRemediationError] = useState<string | null>(null);
 
-const [remediationResult, setRemediationResult] =
-  useState<RemediationResult | null>(null);
+  const [remediationResult, setRemediationResult] =
+    useState<RemediationResult | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -2050,46 +1854,30 @@ const [remediationResult, setRemediationResult] =
    * component memory. Never copy them into assessment
    * results, progress events, logs, or persistent storage.
    */
-  const [
-    repositoryEnvironment,
-    setRepositoryEnvironment,
-  ] = useState<Record<string, string>>({});
+  const [repositoryEnvironment, setRepositoryEnvironment] = useState<
+    Record<string, string>
+  >({});
 
-  const configurationRequirements =
-    useMemo(() => {
-      const requirements =
-        report?.checks.flatMap(
-          (check) =>
-            check.configurationRequirements ??
-            []
-        ) ?? [];
+  const configurationRequirements = useMemo(() => {
+    const requirements =
+      report?.checks.flatMap(
+        (check) => check.configurationRequirements ?? [],
+      ) ?? [];
 
-      const unique =
-        new Map<
-          string,
-          RepositoryConfigurationRequirement
-        >();
+    const unique = new Map<string, RepositoryConfigurationRequirement>();
 
-      for (const requirement of requirements) {
-        const key =
-          `${requirement.phase}:${requirement.variable}`;
+    for (const requirement of requirements) {
+      const key = `${requirement.phase}:${requirement.variable}`;
 
-        if (!unique.has(key)) {
-          unique.set(
-            key,
-            requirement
-          );
-        }
+      if (!unique.has(key)) {
+        unique.set(key, requirement);
       }
+    }
 
-      return Array.from(
-        unique.values()
-      ).sort((left, right) =>
-        left.variable.localeCompare(
-          right.variable
-        )
-      );
-    }, [report]);
+    return Array.from(unique.values()).sort((left, right) =>
+      left.variable.localeCompare(right.variable),
+    );
+  }, [report]);
 
   const progressByStage = useMemo(() => {
     const map = new Map<string, AssessmentProgressEvent>();
@@ -2120,9 +1908,7 @@ const [remediationResult, setRemediationResult] =
       const data = await response.json();
 
       if (!response.ok || !data.ok) {
-        throw new Error(
-          data.error ?? "Repository scan failed."
-        );
+        throw new Error(data.error ?? "Repository scan failed.");
       }
 
       setRemoteScan({
@@ -2133,7 +1919,7 @@ const [remediationResult, setRemediationResult] =
       setScanError(
         scanError instanceof Error
           ? scanError.message
-          : "Unknown repository scan error."
+          : "Unknown repository scan error.",
       );
     } finally {
       setScanLoading(false);
@@ -2158,12 +1944,9 @@ const [remediationResult, setRemediationResult] =
         body: JSON.stringify({
           repositoryUrl,
 
-          ...(Object.keys(
-            repositoryEnvironment
-          ).length > 0
+          ...(Object.keys(repositoryEnvironment).length > 0
             ? {
-                environment:
-                  repositoryEnvironment,
+                environment: repositoryEnvironment,
               }
             : {}),
         }),
@@ -2172,15 +1955,11 @@ const [remediationResult, setRemediationResult] =
       if (!response.ok) {
         const data = await response.json();
 
-        throw new Error(
-          data.error ?? "Assessment failed."
-        );
+        throw new Error(data.error ?? "Assessment failed.");
       }
 
       if (!response.body) {
-        throw new Error(
-          "Assessment stream is unavailable."
-        );
+        throw new Error("Assessment stream is unavailable.");
       }
 
       const reader = response.body.getReader();
@@ -2211,13 +1990,9 @@ const [remediationResult, setRemediationResult] =
           }
 
           if (parsed.event === "progress") {
-            const progress =
-              parsed.data as AssessmentProgressEvent;
+            const progress = parsed.data as AssessmentProgressEvent;
 
-            setProgressEvents((current) => [
-              ...current,
-              progress,
-            ]);
+            setProgressEvents((current) => [...current, progress]);
 
             continue;
           }
@@ -2241,8 +2016,7 @@ const [remediationResult, setRemediationResult] =
               error?: string;
             };
 
-            assessmentError =
-              payload.error ?? "Assessment failed.";
+            assessmentError = payload.error ?? "Assessment failed.";
           }
         }
       }
@@ -2254,7 +2028,7 @@ const [remediationResult, setRemediationResult] =
       setError(
         assessmentError instanceof Error
           ? assessmentError.message
-          : "Unknown assessment error."
+          : "Unknown assessment error.",
       );
     } finally {
       setLoading(false);
@@ -2262,67 +2036,57 @@ const [remediationResult, setRemediationResult] =
   }
 
   async function runControlledRemediation(
-    action: NonNullable<
-      ReadinessReport["aiRemediation"]
-    >["actions"][number]
+    action: NonNullable<ReadinessReport["aiRemediation"]>["actions"][number],
   ) {
     setRemediationLoading(true);
     setRemediationError(null);
     setRemediationResult(null);
 
     try {
-      const check = report?.checks.find(
-        (item) => item.id === action.checkId
-      );
+      const check = report?.checks.find((item) => item.id === action.checkId);
 
       if (!check) {
-        throw new Error(
-          "The remediation target check could not be found."
-        );
+        throw new Error("The remediation target check could not be found.");
       }
 
       const isDependencySecurity =
-        action.checkId === "security" &&
-        check.category === "security";
+        action.checkId === "security" && check.category === "security";
 
       const isLintAutofix =
-        action.checkId === "lint" &&
-        check.category === "lint";
+        action.checkId === "lint" && check.category === "lint";
 
       if (!isDependencySecurity && !isLintAutofix) {
         throw new Error(
-          "No controlled remediation strategy is available for this check."
+          "No controlled remediation strategy is available for this check.",
         );
       }
 
-      const referencedEvidence =
-        action.evidenceIndexes
-          .map((index) => check.evidence?.[index])
-          .filter(
-            (evidence): evidence is CheckEvidence =>
-              evidence !== undefined
-          );
+      const referencedEvidence = action.evidenceIndexes
+        .map((index) => check.evidence?.[index])
+        .filter(
+          (evidence): evidence is CheckEvidence => evidence !== undefined,
+        );
 
       let proposal;
 
       if (isDependencySecurity) {
         const securityFinding = referencedEvidence.find(
-          (evidence) => evidence.kind === "security_finding"
+          (evidence) => evidence.kind === "security_finding",
         );
 
         if (!securityFinding) {
           throw new Error(
-            "No verified dependency security finding was available for this remediation."
+            "No verified dependency security finding was available for this remediation.",
           );
         }
 
         const packageName = securityFinding.message.match(
-          /^(.+?) has a (?:high|critical)-severity dependency vulnerability\.$/i
+          /^(.+?) has a (?:high|critical)-severity dependency vulnerability\.$/i,
         )?.[1];
 
         if (!packageName) {
           throw new Error(
-            "DeployGuard could not determine the affected package from verified evidence."
+            "DeployGuard could not determine the affected package from verified evidence.",
           );
         }
 
@@ -2343,7 +2107,7 @@ const [remediationResult, setRemediationResult] =
       } else {
         if (referencedEvidence.length === 0) {
           throw new Error(
-            "No verified lint evidence was available for this remediation."
+            "No verified lint evidence was available for this remediation.",
           );
         }
 
@@ -2376,9 +2140,7 @@ const [remediationResult, setRemediationResult] =
       const data = await response.json();
 
       if (!response.ok || !data.ok) {
-        throw new Error(
-          data.error ?? "Controlled remediation failed."
-        );
+        throw new Error(data.error ?? "Controlled remediation failed.");
       }
 
       setRemediationResult(data.remediation);
@@ -2386,7 +2148,7 @@ const [remediationResult, setRemediationResult] =
       setRemediationError(
         remediationError instanceof Error
           ? remediationError.message
-          : "Unknown remediation error."
+          : "Unknown remediation error.",
       );
     } finally {
       setRemediationLoading(false);
@@ -2406,10 +2168,9 @@ const [remediationResult, setRemediationResult] =
           </h1>
 
           <p className="mt-5 max-w-3xl text-lg leading-8 text-zinc-400">
-            DeployGuard executes real repository checks inside an
-            isolated sandbox, verifies the evidence, then uses NVIDIA
-            Nemotron to explain what is safe to ship and what still
-            needs attention.
+            DeployGuard executes real repository checks inside an isolated
+            sandbox, verifies the evidence, then uses NVIDIA Nemotron to explain
+            what is safe to ship and what still needs attention.
           </p>
 
           <ProcessOverview />
@@ -2427,17 +2188,13 @@ const [remediationResult, setRemediationResult] =
               type="url"
               value={repositoryUrl}
               onChange={(event) => {
-                setRepositoryUrl(
-                  event.target.value
-                );
+                setRepositoryUrl(event.target.value);
 
                 /*
                  * Never carry execution configuration
                  * from one repository URL to another.
                  */
-                setRepositoryEnvironment(
-                  {}
-                );
+                setRepositoryEnvironment({});
               }}
               placeholder="https://github.com/owner/repository"
               disabled={loading || scanLoading}
@@ -2448,11 +2205,7 @@ const [remediationResult, setRemediationResult] =
               <button
                 type="button"
                 onClick={scanRepository}
-                disabled={
-                  scanLoading ||
-                  loading ||
-                  !repositoryUrl.trim()
-                }
+                disabled={scanLoading || loading || !repositoryUrl.trim()}
                 className="rounded-xl border border-zinc-700 px-5 py-3 font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {scanLoading ? "Scanning..." : "Static Scan"}
@@ -2461,36 +2214,24 @@ const [remediationResult, setRemediationResult] =
               <button
                 type="button"
                 onClick={runAssessment}
-                disabled={
-                  loading ||
-                  scanLoading ||
-                  !repositoryUrl.trim()
-                }
+                disabled={loading || scanLoading || !repositoryUrl.trim()}
                 className="rounded-xl bg-white px-5 py-3 font-medium text-zinc-950 transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {loading
-                  ? "Assessment running..."
-                  : "Assess Repository"}
+                {loading ? "Assessment running..." : "Assess Repository"}
               </button>
             </div>
 
             <p className="mt-3 text-xs leading-5 text-zinc-500">
-              Static Scan inspects repository evidence without
-              executing code. Full Assessment runs isolated
-              verification checks inside the DeployGuard sandbox.
+              Static Scan inspects repository evidence without executing code.
+              Full Assessment runs isolated verification checks inside the
+              DeployGuard sandbox.
             </p>
 
             {scanError && (
-              <p className="mt-3 text-sm text-red-400">
-                {scanError}
-              </p>
+              <p className="mt-3 text-sm text-red-400">{scanError}</p>
             )}
 
-            {error && (
-              <p className="mt-3 text-sm text-red-400">
-                {error}
-              </p>
-            )}
+            {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
           </div>
         </header>
 
@@ -2502,18 +2243,14 @@ const [remediationResult, setRemediationResult] =
         )}
 
         <RepositoryConfiguration
-          requirements={
-            configurationRequirements
-          }
+          requirements={configurationRequirements}
           values={repositoryEnvironment}
           loading={loading}
           onChange={(variable, value) =>
-            setRepositoryEnvironment(
-              (current) => ({
-                ...current,
-                [variable]: value,
-              })
-            )
+            setRepositoryEnvironment((current) => ({
+              ...current,
+              [variable]: value,
+            }))
           }
           onRetry={runAssessment}
         />
@@ -2521,9 +2258,7 @@ const [remediationResult, setRemediationResult] =
         {remoteScan && (
           <section className="mb-10 space-y-5">
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
-              <p className="text-sm text-zinc-500">
-                Repository
-              </p>
+              <p className="text-sm text-zinc-500">Repository</p>
 
               <h2 className="mt-2 break-words text-xl font-semibold">
                 {remoteScan.repository.fullName}
@@ -2554,8 +2289,7 @@ const [remediationResult, setRemediationResult] =
                     </p>
 
                     <p className="mt-2 text-xs text-zinc-600">
-                      Confidence{" "}
-                      {Math.round(fact.confidence * 100)}%
+                      Confidence {Math.round(fact.confidence * 100)}%
                     </p>
                   </article>
                 ))}
@@ -2563,9 +2297,7 @@ const [remediationResult, setRemediationResult] =
             </div>
 
             <div>
-              <h2 className="mb-4 text-xl font-semibold">
-                Evidence
-              </h2>
+              <h2 className="mb-4 text-xl font-semibold">Evidence</h2>
 
               <div className="space-y-3">
                 {remoteScan.scan.facts.flatMap((fact) =>
@@ -2590,7 +2322,7 @@ const [remediationResult, setRemediationResult] =
                         </span>
                       </div>
                     </article>
-                  ))
+                  )),
                 )}
               </div>
             </div>
@@ -2600,16 +2332,18 @@ const [remediationResult, setRemediationResult] =
         {report && (
           <div className="min-w-0 space-y-8 [overflow-wrap:anywhere]">
             <section className="grid gap-4 md:grid-cols-2">
-              <ReadinessScoreCard
-                score={report.readiness.score}
-              />
+              <ReadinessScoreCard score={report.readiness.score} />
 
-              <CoverageCard
-                coverage={report.readiness.coverage}
-              />
+              <CoverageCard coverage={report.readiness.coverage} />
             </section>
 
-            <AssessmentSummary report={report} completion={progressByStage.get("report")} />
+            <ReadinessBreakdown breakdown={report.readiness.breakdown} />
+
+            <AssessmentSummary
+              report={report}
+              completion={progressByStage.get("report")}
+            />
+
             <KeyFindings checks={report.checks} />
 
             <section className="rounded-2xl border border-zinc-800 bg-zinc-950 p-6">
@@ -2622,10 +2356,10 @@ const [remediationResult, setRemediationResult] =
               </h2>
 
               <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-400">
-                The readiness score above is produced from
-                deterministic repository and runtime evidence.
-                External research and NVIDIA Nemotron add context and
-                explanation, but they do not invent the score.
+                The readiness score above is produced from deterministic
+                repository and runtime evidence. External research and NVIDIA
+                Nemotron add context and explanation, but they do not invent the
+                score.
               </p>
             </section>
 
@@ -2635,74 +2369,62 @@ const [remediationResult, setRemediationResult] =
               <ExternalEvidence
                 research={research}
                 showAll={showAllResearch}
-                onToggle={() =>
-                  setShowAllResearch(
-                    (current) => !current
-                  )
-                }
+                onToggle={() => setShowAllResearch((current) => !current)}
               />
             )}
 
             {report.architecture && (
-              <ArchitectureAnalysis
-                architecture={report.architecture}
-              />
+              <ArchitectureAnalysis architecture={report.architecture} />
             )}
 
             <RemediationPlan
-  items={report.remediation}
-  checks={report.checks}
-/>
+              items={report.remediation}
+              checks={report.checks}
+            />
 
-{report.aiRemediation &&
-  report.aiRemediation.actions.length > 0 && (
-       <AiRemediationGuidance
-  remediation={report.aiRemediation}
-  checks={report.checks}
-  onExecute={runControlledRemediation}
-  executing={remediationLoading}
-/>
-  )}
+            {report.aiRemediation &&
+              report.aiRemediation.actions.length > 0 && (
+                <AiRemediationGuidance
+                  remediation={report.aiRemediation}
+                  checks={report.checks}
+                  onExecute={runControlledRemediation}
+                  executing={remediationLoading}
+                />
+              )}
 
-  {remediationError && (
-  <section className="rounded-2xl border border-red-500/30 bg-red-500/5 p-5">
-    <p className="font-medium text-red-300">
-      Controlled remediation failed
-    </p>
+            {remediationError && (
+              <section className="rounded-2xl border border-red-500/30 bg-red-500/5 p-5">
+                <p className="font-medium text-red-300">
+                  Controlled remediation failed
+                </p>
 
-    <p className="mt-2 text-sm text-red-200/70">
-      {remediationError}
-    </p>
-  </section>
-)}
+                <p className="mt-2 text-sm text-red-200/70">
+                  {remediationError}
+                </p>
+              </section>
+            )}
 
-{remediationResult && (
-  <RemediationProof
-    result={remediationResult}
-  />
-)}
+            {remediationResult && (
+              <RemediationProof result={remediationResult} />
+            )}
 
-{report && (
-  <RemediationDelivery
-    key={
-      remediationResult?.remediation
-        .verifiedArtifactReference
-        ?.artifactId ??
-      "remediation-delivery"
-    }
-    developer={developer}
-    generated={Boolean(
-      remediationResult?.remediation
-        .verifiedArtifactReference
-        ?.artifactId
-    )}
-    artifactId={
-      remediationResult?.remediation
-        .verifiedArtifactReference
-        ?.artifactId
-    }
-  />
-)}
+            {report && (
+              <RemediationDelivery
+                key={
+                  remediationResult?.remediation.verifiedArtifactReference
+                    ?.artifactId ?? "remediation-delivery"
+                }
+                developer={developer}
+                generated={Boolean(
+                  remediationResult?.remediation.verifiedArtifactReference
+                    ?.artifactId,
+                )}
+                artifactId={
+                  remediationResult?.remediation.verifiedArtifactReference
+                    ?.artifactId
+                }
+              />
+            )}
           </div>
         )}
       </div>
