@@ -39,6 +39,11 @@ export interface SandboxPreparationResult {
     | "failed"
     | "timed_out";
 
+  failureKind?:
+    | "network"
+    | "timeout"
+    | "repository";
+
   packageManager?: SandboxPackageManager;
 
   stdout: string;
@@ -608,14 +613,23 @@ const result =
       Date.now() -
       preparationStartedAt,
 
+    failureKind:
+      result.status === "passed"
+        ? undefined
+        : result.status === "timed_out"
+          ? "timeout"
+          : networkFailure
+            ? "network"
+            : "repository",
+
     summary:
-  result.status === "passed"
-    ? `Sandbox workspace prepared successfully using ${packageManager.name}.`
-    : result.status === "timed_out"
-      ? `Sandbox workspace preparation timed out after 120 seconds while installing dependencies with ${packageManager.name}.`
-      : networkFailure
-        ? "Sandbox workspace preparation could not complete because of a package registry or network error."
-        : preparationFailureSummary ??
-          `Sandbox workspace preparation failed using ${packageManager.name}.`,
+      result.status === "passed"
+        ? `Sandbox workspace prepared successfully using ${packageManager.name}.`
+        : result.status === "timed_out"
+          ? `Sandbox workspace preparation timed out after 120 seconds while installing dependencies with ${packageManager.name}.`
+          : networkFailure
+            ? "Sandbox workspace preparation could not complete because of a package registry or network error."
+            : preparationFailureSummary ??
+              `Sandbox workspace preparation failed using ${packageManager.name}.`,
   };
 }

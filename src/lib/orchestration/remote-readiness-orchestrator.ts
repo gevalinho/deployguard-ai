@@ -30,6 +30,10 @@ import type {
   AssessmentProgressStatus,
 } from "@/lib/orchestration/assessment-progress";
 
+import {
+  classifyPreparationFailureStatus,
+} from "@/lib/orchestration/preparation-failure-policy";
+
 import { parseGitHubRepositoryUrl } from "@/lib/repository/github-repository";
 import { ingestGitHubRepository } from "@/lib/repository/repository-ingestion";
 
@@ -135,13 +139,17 @@ function createUnavailableCheck(
   id: string,
   category: CheckResult["category"],
   name: string,
-  summary: string
+  summary: string,
+  status: Extract<
+    CheckResult["status"],
+    "blocked" | "error"
+  > = "error"
 ): CheckResult {
   return {
     id,
     category,
     name,
-    status: "error",
+    status,
     summary,
   };
 }
@@ -762,37 +770,56 @@ export async function runRemoteReadinessAssessment(
         const preparationSummary =
           preparation.summary;
 
+        /*
+         * Infrastructure failures must not be attributed
+         * to the repository.
+         *
+         * A registry/network outage or sandbox timeout
+         * means DeployGuard could not complete verification,
+         * so downstream executable checks are blocked rather
+         * than repository errors.
+         */
+        const unavailableStatus =
+          classifyPreparationFailureStatus(
+            preparation.failureKind
+          );
+
         const unavailableChecks: CheckResult[] =
           [
             createUnavailableCheck(
               "types",
               "types",
               "TypeScript",
-              preparationSummary
+              preparationSummary,
+              unavailableStatus
             ),
             createUnavailableCheck(
               "lint",
               "lint",
               "Lint",
-              preparationSummary
+              preparationSummary,
+              unavailableStatus
             ),
             createUnavailableCheck(
               "test",
               "test",
               "Tests",
-              preparationSummary
+              preparationSummary,
+              unavailableStatus
             ),
             createUnavailableCheck(
               "build",
               "build",
               "Production Build",
-              preparationSummary
+              preparationSummary,
+              unavailableStatus
             ),
             createUnavailableCheck(
               "security",
               "security",
               "Dependency Security",
-              preparationSummary
+              preparationSummary,
+              unavailableStatus
             ),
           ];
 
