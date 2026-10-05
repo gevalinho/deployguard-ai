@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createInstallationAccessToken } from "@/lib/remediation/github-app-auth";
+import { createInstallationAccessToken, GitHubRepositoryInstallationNotFoundError } from "@/lib/remediation/github-app-auth";
 import { githubRemoteMatches } from "@/lib/remediation/github-app-git-transport";
 import { newNonce } from "@/lib/auth/developer-session";
 
@@ -102,7 +102,13 @@ export async function authorizeDeveloperRepository(
 ): Promise<boolean> {
   if (!githubRemoteMatches(repositoryIdentity, `https://github.com/${repositoryIdentity}.git`)) return false;
   const [owner, repository] = repositoryIdentity.split("/");
-  const access = await issueToken(owner, repository, { pull_requests: "read" });
+  let access;
+  try {
+    access = await issueToken(owner, repository, { pull_requests: "read" });
+  } catch (error) {
+    if (error instanceof GitHubRepositoryInstallationNotFoundError) return false;
+    throw error;
+  }
   const expiresAt = Date.parse(access.expiresAt);
   if (access.repositoryIdentity !== repositoryIdentity || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false;
   const response = await request(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/collaborators/${encodeURIComponent(developer.login)}/permission`, {

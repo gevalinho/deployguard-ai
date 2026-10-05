@@ -31,6 +31,13 @@ export interface GitHubInstallationAccessToken {
   repositoryIdentity: string;
 }
 
+export class GitHubRepositoryInstallationNotFoundError extends Error {
+  constructor() {
+    super("GitHub App installation was not found for this repository.");
+    this.name = "GitHubRepositoryInstallationNotFoundError";
+  }
+}
+
 interface GitHubInstallationResponse {
   id?: unknown;
 
@@ -224,6 +231,10 @@ export async function getRepositoryInstallation(
       )}/installation`,
       jwt
     );
+
+  if (response.status === 404) {
+    throw new GitHubRepositoryInstallationNotFoundError();
+  }
 
   if (!response.ok) {
     throw new Error(

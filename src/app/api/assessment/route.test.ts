@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { authorize, session } = vi.hoisted(() => ({
-  authorize: vi.fn(),
+const { issueToken, session } = vi.hoisted(() => ({
+  issueToken: vi.fn(),
   session: vi.fn(),
 }));
 
@@ -10,15 +10,17 @@ vi.mock("@/lib/auth/developer-session", () => ({
   sameOrigin: () => true,
 }));
 
-vi.mock("@/lib/auth/github-developer-auth", () => ({
-  authorizeDeveloperRepository: authorize,
+vi.mock("@/lib/remediation/github-app-auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/remediation/github-app-auth")>()),
+  createInstallationAccessToken: issueToken,
 }));
 
 import { POST } from "./route";
+import { GitHubRepositoryInstallationNotFoundError } from "@/lib/remediation/github-app-auth";
 
 describe("assessment repository authorization responses", () => {
   beforeEach(() => {
-    authorize.mockReset();
+    issueToken.mockReset();
     session.mockReturnValue({ githubId: "1", login: "developer" });
   });
 
@@ -30,7 +32,7 @@ describe("assessment repository authorization responses", () => {
     });
 
   it("marks a denied repository as requiring authorization", async () => {
-    authorize.mockResolvedValue(false);
+    issueToken.mockRejectedValue(new GitHubRepositoryInstallationNotFoundError());
 
     const response = await POST(request());
 
@@ -43,7 +45,7 @@ describe("assessment repository authorization responses", () => {
   });
 
   it("marks an authorization lookup failure as unavailable", async () => {
-    authorize.mockRejectedValue(new Error("GitHub unavailable"));
+    issueToken.mockRejectedValue(new Error("GitHub repository installation lookup failed with status 500."));
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 
     try {
