@@ -1,6 +1,7 @@
 import {
   readDeveloperSession,
 } from "@/lib/auth/developer-session";
+import { createInstallIntent, INSTALL_INTENT_COOKIE, installCookie } from "@/lib/auth/github-install-return";
 
 export const runtime = "nodejs";
 
@@ -56,8 +57,25 @@ export async function GET(
       `https://github.com/apps/${appSlug}/installations/new`
     );
 
-  return Response.redirect(
-    installationUrl,
-    302
-  );
+  const repositoryUrl = new URL(request.url).searchParams.get("repositoryUrl");
+  if (!repositoryUrl) {
+    return Response.redirect(installationUrl, 302);
+  }
+
+  let intent;
+  try {
+    intent = createInstallIntent(repositoryUrl, developer);
+  } catch {
+    return Response.json({ ok: false, error: "A valid GitHub repository URL is required." }, { status: 400 });
+  }
+
+  installationUrl.searchParams.set("state", intent.nonce);
+
+  const response = new Response(null, {
+    status: 302,
+    headers: { Location: installationUrl.toString() },
+  });
+  response.headers.set("Set-Cookie", installCookie(intent, INSTALL_INTENT_COOKIE));
+  response.headers.set("Cache-Control", "no-store");
+  return response;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RemediationDelivery } from "./remediation-delivery";
 import type {
   PublicCheckResult,
@@ -1824,17 +1824,9 @@ export function ReadinessDashboard({
   const [repositoryUrl, setRepositoryUrl] = useState("");
   const [repositoryAuthorizationRequired, setRepositoryAuthorizationRequired] =
     useState(false);
+  const [authorizationReturnStatus, setAuthorizationReturnStatus] = useState<string | null>(null);
+  const authorizationReturnStarted = useRef(false);
 
-  useEffect(() => {
-    const savedUrl = sessionStorage.getItem("deployguard:repository-url");
-
-    if (!savedUrl) return;
-
-    sessionStorage.removeItem("deployguard:repository-url");
-    const restore = window.setTimeout(() => setRepositoryUrl(savedUrl), 0);
-
-    return () => window.clearTimeout(restore);
-  }, []);
 
   const [remoteScan, setRemoteScan] = useState<RemoteScanResult | null>(null);
 
@@ -1939,7 +1931,7 @@ export function ReadinessDashboard({
     }
   }
 
-  async function runAssessment() {
+  const runAssessment = useCallback(async (repositoryOverride?: string) => {
     setLoading(true);
     setError(null);
     setRepositoryAuthorizationRequired(false);
@@ -1956,7 +1948,7 @@ export function ReadinessDashboard({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          repositoryUrl,
+          repositoryUrl: repositoryOverride ?? repositoryUrl,
 
           ...(Object.keys(repositoryEnvironment).length > 0
             ? {
@@ -2057,8 +2049,59 @@ export function ReadinessDashboard({
       );
     } finally {
       setLoading(false);
+      setAuthorizationReturnStatus(null);
     }
-  }
+  }, [repositoryUrl, repositoryEnvironment]);
+
+  useEffect(() => {
+    if (authorizationReturnStarted.current) return;
+    authorizationReturnStarted.current = true;
+
+    const currentUrl = new URL(window.location.href);
+    if (currentUrl.searchParams.get("github_authorization_return") === "1") {
+      currentUrl.searchParams.delete("github_authorization_return");
+      window.history.replaceState(window.history.state, "", currentUrl);
+      const resume = async () => {
+        setAuthorizationReturnStatus("Checking repository access…");
+        try {
+          const response = await fetch("/api/github/install/resume", { method: "POST", cache: "no-store" });
+          const result = await response.json() as {
+            ok: boolean; outcome?: "success" | "incomplete" | "unavailable"; repositoryUrl?: string;
+          };
+          if (!response.ok || !result.ok || !result.repositoryUrl) {
+            throw new Error("The installation return could not be verified. Please assess the repository again.");
+          }
+          sessionStorage.removeItem("deployguard:repository-url");
+          setRepositoryUrl(result.repositoryUrl);
+          if (result.outcome === "success") {
+            setAuthorizationReturnStatus("Repository access granted. Resuming assessment…");
+            await runAssessment(result.repositoryUrl);
+          } else if (result.outcome === "incomplete") {
+            setAuthorizationReturnStatus(null);
+            setError("DeployGuard still does not have access to this repository. Please select it in GitHub and try again.");
+            setRepositoryAuthorizationRequired(true);
+          } else {
+            setAuthorizationReturnStatus(null);
+            setError("Repository authorization could not be verified. Please try assessing the repository again.");
+          }
+        } catch (failure) {
+          setAuthorizationReturnStatus(null);
+          setError(failure instanceof Error ? failure.message : "The installation return could not be verified.");
+        }
+      };
+      void resume();
+      return;
+    }
+
+    const savedUrl = sessionStorage.getItem("deployguard:repository-url");
+
+    if (!savedUrl) return;
+
+    sessionStorage.removeItem("deployguard:repository-url");
+    const restore = window.setTimeout(() => setRepositoryUrl(savedUrl), 0);
+
+    return () => window.clearTimeout(restore);
+  }, [runAssessment]);
 
   async function runControlledRemediation(
     action: NonNullable<ReadinessReport["aiRemediation"]>["actions"][number],
@@ -2239,7 +2282,7 @@ export function ReadinessDashboard({
 
               <button
                 type="button"
-                onClick={runAssessment}
+                onClick={() => void runAssessment()}
                 disabled={loading || scanLoading || !repositoryUrl.trim()}
                 className="rounded-xl bg-white px-5 py-3 font-medium text-zinc-950 transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -2259,6 +2302,12 @@ export function ReadinessDashboard({
 
             {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
 
+            {authorizationReturnStatus && (
+              <p className="mt-3 text-sm text-emerald-300" role="status">
+                {authorizationReturnStatus}
+              </p>
+            )}
+
             {repositoryAuthorizationRequired && (
               <div className="mt-5 rounded-xl border border-amber-700/50 bg-amber-950/30 p-5">
                 <h2 className="font-semibold text-amber-100">
@@ -2270,7 +2319,7 @@ export function ReadinessDashboard({
                   to continue.
                 </p>
                 <a
-                  href="/api/github/install"
+                  href={`/api/github/install?repositoryUrl=${encodeURIComponent(repositoryUrl)}`}
                   onClick={() =>
                     sessionStorage.setItem(
                       "deployguard:repository-url",
@@ -2303,7 +2352,7 @@ export function ReadinessDashboard({
               [variable]: value,
             }))
           }
-          onRetry={runAssessment}
+          onRetry={() => void runAssessment()}
         />
 
         {remoteScan && (
