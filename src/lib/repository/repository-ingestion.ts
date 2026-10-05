@@ -13,6 +13,9 @@ import { join, resolve } from "node:path";
 
 import { runCommand } from "@/lib/execution/command-runner";
 import type { GitHubRepository } from "@/lib/repository/github-repository";
+import type {
+  RepositoryReadTransportFactory,
+} from "@/lib/repository/github-read-transport";
 
 
 export type RepositoryIngestionSource =
@@ -153,6 +156,9 @@ function isCacheWithinStaleFallback(
 
 async function getRemoteHeadIdentity(
   repository: GitHubRepository,
+  readEnvironment: Readonly<
+    Partial<NodeJS.ProcessEnv>
+  > = {},
 ): Promise<RemoteHeadIdentity | null> {
   console.log(
     `[Repository Ingestion] Checking remote HEAD identity for ${repository.fullName}...`,
@@ -165,10 +171,11 @@ async function getRemoteHeadIdentity(
       process.cwd(),
       {
         env: {
-          ...process.env,
+          ...readEnvironment,
           GIT_TERMINAL_PROMPT: "0",
         },
 
+        inheritProcessEnv: false,
         timeoutMs: REMOTE_HEAD_TIMEOUT_MS,
       },
     );
@@ -630,6 +637,9 @@ async function cloneRepository(
   temporaryRoot: string,
   repositoryPath: string,
   onProgress?: RepositoryIngestionProgress,
+  readEnvironment: Readonly<
+    Partial<NodeJS.ProcessEnv>
+  > = {},
 ): Promise<void> {
   console.log("[Repository Ingestion] Starting Git clone fallback...");
 
@@ -677,11 +687,12 @@ async function cloneRepository(
       temporaryRoot,
       {
         env: {
-          ...process.env,
+          ...readEnvironment,
 
           GIT_TERMINAL_PROMPT: "0",
         },
 
+        inheritProcessEnv: false,
         timeoutMs: CLONE_TIMEOUT_MS,
       },
     );
@@ -762,6 +773,7 @@ async function cloneRepository(
 export async function ingestGitHubRepository(
   repository: GitHubRepository,
   onProgress?: RepositoryIngestionProgress,
+  readTransportFactory?: RepositoryReadTransportFactory,
 ): Promise<IngestedRepository> {
   mkdirSync(CACHE_ROOT, {
     recursive: true,
@@ -776,6 +788,13 @@ export async function ingestGitHubRepository(
   const repositoryPath = join(temporaryRoot, "repository");
 
   const ingestionStartedAt = Date.now();
+
+  const readTransport =
+    readTransportFactory
+      ? await readTransportFactory(
+          repository
+        )
+      : null;
 
   try {
     const cacheResult = await copyCachedRepository(repository, repositoryPath);
@@ -816,7 +835,11 @@ export async function ingestGitHubRepository(
 
       // Observe first, then fetch the immutable commit. A moving default branch
       // must not label content from one commit with another commit's identity.
-      const remoteHead = await getRemoteHeadIdentity(repository);
+      const remoteHead =
+        await getRemoteHeadIdentity(
+          repository,
+          readTransport?.env
+        );
       const archiveSucceeded = await tryArchiveDownload(
         repository,
         temporaryRoot,
@@ -831,6 +854,7 @@ export async function ingestGitHubRepository(
           temporaryRoot,
           repositoryPath,
           onProgress,
+          readTransport?.env
         );
       }
 
@@ -919,5 +943,7 @@ export async function ingestGitHubRepository(
     });
 
     throw error;
+  } finally {
+    await readTransport?.dispose?.();
   }
 }

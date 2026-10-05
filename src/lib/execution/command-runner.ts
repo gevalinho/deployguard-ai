@@ -15,7 +15,25 @@ export interface CommandResult {
 }
 
 export interface RunCommandOptions {
-  env?: NodeJS.ProcessEnv;
+  /*
+   * Explicit environment supplied to the child process.
+   *
+   * Callers may intentionally provide an isolated subset
+   * instead of inheriting the server process environment.
+   */
+  env?: Readonly<
+    Partial<NodeJS.ProcessEnv>
+  >;
+
+  /*
+   * Commands inherit the DeployGuard process environment
+   * by default for backwards compatibility.
+   *
+   * Security-sensitive operations such as authenticated
+   * repository reads may explicitly disable inheritance.
+   */
+  inheritProcessEnv?: boolean;
+
   timeoutMs?: number;
 }
 
@@ -88,6 +106,14 @@ export function runCommand(
         process.platform !==
         "win32";
 
+      const childEnvironment:
+        NodeJS.ProcessEnv = {
+          ...(options.inheritProcessEnv === false
+            ? {}
+            : process.env),
+          ...options.env,
+        } as NodeJS.ProcessEnv;
+
       const child = spawn(
         command,
         args,
@@ -96,10 +122,8 @@ export function runCommand(
           shell: false,
           detached:
             useProcessGroup,
-          env: {
-            ...process.env,
-            ...options.env,
-          },
+          env:
+            childEnvironment,
         }
       );
 

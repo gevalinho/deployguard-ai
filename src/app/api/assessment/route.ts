@@ -10,6 +10,23 @@ import {
   parseRepositoryEnvironment,
 } from "@/lib/api/repository-environment-input";
 
+import {
+  readDeveloperSession,
+  sameOrigin,
+} from "@/lib/auth/developer-session";
+
+import {
+  authorizeDeveloperRepository,
+} from "@/lib/auth/github-developer-auth";
+
+import {
+  parseGitHubRepositoryUrl,
+} from "@/lib/repository/github-repository";
+
+import {
+  openGitHubAppReadTransport,
+} from "@/lib/repository/github-app-read-transport";
+
 export const runtime = "nodejs";
 
 interface AssessmentRequestBody {
@@ -34,6 +51,41 @@ export async function POST(
 ) {
   const encoder =
     new TextEncoder();
+
+  const developer =
+    readDeveloperSession(request);
+
+  if (!developer) {
+    return Response.json(
+      {
+        ok: false,
+        error:
+          "Developer sign-in required.",
+      },
+      {
+        status: 401,
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      }
+    );
+  }
+
+  if (!sameOrigin(request)) {
+    return Response.json(
+      {
+        ok: false,
+        error:
+          "Invalid request origin.",
+      },
+      {
+        status: 403,
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      }
+    );
+  }
 
   let body: AssessmentRequestBody;
 
@@ -67,6 +119,74 @@ export async function POST(
       },
       {
         status: 400,
+      }
+    );
+  }
+
+  let repository;
+
+  try {
+    repository =
+      parseGitHubRepositoryUrl(
+        repositoryUrl
+      );
+  } catch {
+    return Response.json(
+      {
+        ok: false,
+        error:
+          "A valid GitHub repository URL is required.",
+      },
+      {
+        status: 400,
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      }
+    );
+  }
+
+  let repositoryAuthorized = false;
+
+  try {
+    repositoryAuthorized =
+      await authorizeDeveloperRepository(
+        developer,
+        repository.fullName
+      );
+  } catch (error) {
+    console.error(
+      "[DeployGuard Assessment] Repository authorization failed.",
+      error
+    );
+
+    return Response.json(
+      {
+        ok: false,
+        error:
+          "Repository authorization could not be verified.",
+      },
+      {
+        status: 503,
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      }
+    );
+  }
+
+  if (!repositoryAuthorized) {
+    return Response.json(
+      {
+        ok: false,
+        error:
+          "Repository assessment is not authorized.",
+      },
+      {
+        status: 403,
+        headers: {
+          "Cache-Control": "no-store",
+        },
       }
     );
   }
@@ -155,6 +275,8 @@ export async function POST(
                 {
                   environment:
                     repositoryEnvironment,
+                  readTransportFactory:
+                    openGitHubAppReadTransport,
                   onProgress: async (
                     progress:
                       AssessmentProgressEvent

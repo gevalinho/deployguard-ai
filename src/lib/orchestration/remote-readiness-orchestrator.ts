@@ -36,6 +36,9 @@ import {
 
 import { parseGitHubRepositoryUrl } from "@/lib/repository/github-repository";
 import { ingestGitHubRepository } from "@/lib/repository/repository-ingestion";
+import type {
+  RepositoryReadTransportFactory,
+} from "@/lib/repository/github-read-transport";
 
 import { sanitizeReportForPublic } from "@/lib/reporting/public-report";
 import { createProductionReadinessReport } from "@/lib/reporting/readiness-report";
@@ -61,6 +64,15 @@ export interface RemoteReadinessAssessmentOptions {
   environment?: Readonly<
     Record<string, string>
   >;
+
+  /*
+   * Optional repository-read authority.
+   *
+   * This is used only by repository ingestion and must
+   * never be forwarded into the repository sandbox,
+   * assessment evidence, reports, or progress events.
+   */
+  readTransportFactory?: RepositoryReadTransportFactory;
 
   onProgress?: AssessmentProgressCallback;
 }
@@ -298,7 +310,8 @@ export async function runRemoteReadinessAssessment(
               "Repository",
               "running",
               message
-            )
+            ),
+          options.readTransportFactory
         )
     );
 
