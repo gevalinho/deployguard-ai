@@ -424,7 +424,7 @@ function getCheckStateDescription(check: CheckResult) {
   if (check.status === "skipped") {
     switch (check.skipReason) {
       case "not_configured":
-        return "Required configuration is missing; check did not run.";
+        return "No recognized configuration was detected for this capability. The check did not run.";
       case "not_applicable":
         return "Outside this repository’s applicable assessment scope.";
       case "unsupported":
@@ -437,9 +437,9 @@ function getCheckStateDescription(check: CheckResult) {
     case "passed":
       return "Check ran and met its verification criteria.";
     case "failed":
-      return "Check ran and found a readiness issue.";
+      return "Verified check failed.";
     case "blocked":
-      return "A prerequisite prevented verification.";
+      return "Verification could not complete because the DeployGuard sandbox or an external dependency blocked execution.";
     case "error":
       return "Verification encountered an execution error.";
   }
@@ -566,6 +566,10 @@ function KeyFindings({ checks }: { checks: CheckResult[] }) {
           </article>
         ))}
       </div>
+      <p className="mt-4 text-xs text-zinc-400">
+        Only verified failures appear here. Blocked and unconfigured checks are
+        shown in Verification Checks.
+      </p>
     </section>
   );
 }
@@ -688,8 +692,8 @@ function ReadinessScoreCard({ score }: { score: number }) {
       </div>
 
       <p className="mt-4 text-sm font-medium leading-6 text-zinc-300">
-        Score reflects verified readiness only. Blocked and unconfigured areas
-        do not receive readiness credit.
+        Based only on evaluated evidence. Blocked and unevaluated categories
+        are not verified failures and do not receive readiness credit.
       </p>
 
       <p className="mt-2 text-sm leading-6 text-zinc-500">
@@ -726,8 +730,10 @@ function CoverageCard({ coverage }: { coverage: number }) {
       </div>
 
       <p className="mt-4 text-sm leading-6 text-zinc-500">
-        Shows how much of the applicable production readiness surface
-        DeployGuard was able to evaluate.
+        Share of applicable readiness weight counted as evaluated by the
+        scoring model. Blocked and unevaluated categories are excluded; a
+        not configured category counts as evaluated but earns no readiness
+        credit.
       </p>
     </div>
   );

@@ -40,6 +40,25 @@ function formatStatus(status: ReadinessCategoryStatus) {
   }
 }
 
+function describeStatus(status: ReadinessCategoryStatus) {
+  switch (status) {
+    case "failed":
+      return "Verified check failed.";
+    case "blocked":
+      return "Verification could not complete because the DeployGuard sandbox or an external dependency blocked execution.";
+    case "not_configured":
+      return "No recognized configuration was detected for this capability.";
+    case "unevaluated":
+      return "This category was not evaluated in this assessment.";
+    case "not_applicable":
+      return "This category is outside the applicable assessment scope.";
+    case "partial":
+      return "Some verified checks passed and others failed.";
+    case "passed":
+      return "Verified checks passed.";
+  }
+}
+
 function getStatusClass(status: ReadinessCategoryStatus) {
   switch (status) {
     case "passed":
@@ -52,8 +71,10 @@ function getStatusClass(status: ReadinessCategoryStatus) {
       return "border-red-500/30 bg-red-500/10 text-red-300";
 
     case "blocked":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+
     case "not_configured":
-      return "border-orange-500/30 bg-orange-500/10 text-orange-300";
+      return "border-sky-500/30 bg-sky-500/10 text-sky-300";
 
     case "not_applicable":
     case "unevaluated":
@@ -73,8 +94,10 @@ function getBarClass(status: ReadinessCategoryStatus) {
       return "bg-red-400";
 
     case "blocked":
+      return "bg-amber-400";
+
     case "not_configured":
-      return "bg-orange-400";
+      return "bg-sky-400";
 
     case "not_applicable":
     case "unevaluated":
@@ -184,12 +207,9 @@ export function ReadinessBreakdown({
                 />
               </div>
 
-              {!item.evaluated && (
-                <p className="mt-1.5 text-xs text-zinc-600">
-                  This category did not contribute verified readiness
-                  credit to the score.
-                </p>
-              )}
+              <p className="mt-1.5 text-xs text-zinc-400">
+                {describeStatus(item.status)}
+              </p>
             </div>
           );
         })}
