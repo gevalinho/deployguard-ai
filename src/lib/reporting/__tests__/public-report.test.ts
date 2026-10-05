@@ -190,6 +190,8 @@ describe(
               evaluatedWeight: 0,
               applicableWeight: 100,
               totalWeight: 100,
+
+              breakdown: [],
               passed: 0,
               failed: 0,
               blocked: 1,

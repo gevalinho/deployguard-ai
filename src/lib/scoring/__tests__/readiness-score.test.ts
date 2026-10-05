@@ -135,5 +135,114 @@ describe(
         ).toContain("build");
       }
     );
+
+    it(
+  "exposes deterministic category breakdown",
+  () => {
+    const checks: CheckResult[] = [
+      check(
+        "build",
+        "build",
+        "blocked"
+      ),
+      check(
+        "types",
+        "types",
+        "passed"
+      ),
+      check(
+        "tests",
+        "test",
+        "skipped",
+        "not_configured"
+      ),
+    ];
+
+    const result =
+      calculateReadinessScore(checks);
+
+    expect(
+      result.breakdown.find(
+        (item) =>
+          item.category === "build"
+      )
+    ).toEqual({
+      category: "build",
+      weight: 30,
+      earnedWeight: 0,
+      evaluated: false,
+      status: "blocked",
+    });
+
+    expect(
+      result.breakdown.find(
+        (item) =>
+          item.category === "types"
+      )
+    ).toEqual({
+      category: "types",
+      weight: 15,
+      earnedWeight: 15,
+      evaluated: true,
+      status: "passed",
+    });
+
+    expect(
+      result.breakdown.find(
+        (item) =>
+          item.category === "test"
+      )
+    ).toEqual({
+      category: "test",
+      weight: 20,
+      earnedWeight: 0,
+      evaluated: true,
+      status: "not_configured",
+    });
+  }
+);
+
+it(
+  "reports partial category credit when checks have mixed results",
+  () => {
+    const checks: CheckResult[] = [
+      check(
+        "build-pass",
+        "build",
+        "passed"
+      ),
+      check(
+        "build-fail",
+        "build",
+        "failed"
+      ),
+    ];
+
+    const result =
+      calculateReadinessScore(checks);
+
+    const build =
+      result.breakdown.find(
+        (item) =>
+          item.category === "build"
+      );
+
+    expect(build).toEqual({
+      category: "build",
+      weight: 30,
+      earnedWeight: 15,
+      evaluated: true,
+      status: "partial",
+    });
+
+    expect(result.score).toBe(50);
+    expect(result.earnedWeight).toBe(15);
+    expect(result.evaluatedWeight).toBe(30);
+
+    expect(
+      result.readinessGaps
+    ).toContain("build");
+  }
+);
   }
 );

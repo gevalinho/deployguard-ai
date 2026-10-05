@@ -14,27 +14,22 @@ const CATEGORY_WEIGHTS: Record<CheckCategory, number> = {
   environment: 5,
 };
 
-// export interface ReadinessScore {
-//   score: number;
-//   coverage: number;
+export type ReadinessCategoryStatus =
+  | "passed"
+  | "partial"
+  | "failed"
+  | "blocked"
+  | "not_configured"
+  | "not_applicable"
+  | "unevaluated";
 
-//   earnedWeight: number;
-//   evaluatedWeight: number;
-//   applicableWeight: number;
-//   totalWeight: number;
-
-//   passed: number;
-//   failed: number;
-//   skipped: number;
-//   errors: number;
-//   totalChecks: number;
-
-//   readinessGaps: CheckCategory[];
-//   unevaluatedCategories: CheckCategory[];
-//   notApplicableCategories: CheckCategory[];
-// }
-
-
+export interface ReadinessCategoryBreakdown {
+  category: CheckCategory;
+  weight: number;
+  earnedWeight: number;
+  evaluated: boolean;
+  status: ReadinessCategoryStatus;
+}
 
 export interface ReadinessScore {
   score: number;
@@ -44,6 +39,8 @@ export interface ReadinessScore {
   evaluatedWeight: number;
   applicableWeight: number;
   totalWeight: number;
+
+  breakdown: ReadinessCategoryBreakdown[];
 
   passed: number;
   failed: number;
@@ -55,6 +52,7 @@ export interface ReadinessScore {
   readinessGaps: CheckCategory[];
   unevaluatedCategories: CheckCategory[];
   notApplicableCategories: CheckCategory[];
+
 }
 
 export function calculateReadinessScore(
@@ -75,18 +73,28 @@ export function calculateReadinessScore(
   const readinessGaps: CheckCategory[] = [];
   const unevaluatedCategories: CheckCategory[] = [];
   const notApplicableCategories: CheckCategory[] = [];
+  const breakdown: ReadinessCategoryBreakdown[] = [];
 
   for (const category of categories) {
     const categoryChecks = checks.filter(
       (check) => check.category === category
     );
 
+    const weight = CATEGORY_WEIGHTS[category];
+
     if (categoryChecks.length === 0) {
       unevaluatedCategories.push(category);
+
+      breakdown.push({
+        category,
+        weight,
+        earnedWeight: 0,
+        evaluated: false,
+        status: "unevaluated",
+      });
+
       continue;
     }
-
-    const weight = CATEGORY_WEIGHTS[category];
 
     const allNotApplicable = categoryChecks.every(
       (check) =>
@@ -97,6 +105,15 @@ export function calculateReadinessScore(
     if (allNotApplicable) {
       applicableWeight -= weight;
       notApplicableCategories.push(category);
+
+      breakdown.push({
+        category,
+        weight,
+        earnedWeight: 0,
+        evaluated: false,
+        status: "not_applicable",
+      });
+
       continue;
     }
 
@@ -107,17 +124,35 @@ export function calculateReadinessScore(
     );
 
     const hasBlocked = categoryChecks.some(
-  (check) => check.status === "blocked"
+      (check) => check.status === "blocked"
     );
 
-  if (hasBlocked) {
-  unevaluatedCategories.push(category);
-  continue;
-  }
+    if (hasBlocked) {
+      unevaluatedCategories.push(category);
+
+      breakdown.push({
+        category,
+        weight,
+        earnedWeight: 0,
+        evaluated: false,
+        status: "blocked",
+      });
+
+      continue;
+    }
 
     if (hasNotConfigured) {
       evaluatedWeight += weight;
       readinessGaps.push(category);
+
+      breakdown.push({
+        category,
+        weight,
+        earnedWeight: 0,
+        evaluated: true,
+        status: "not_configured",
+      });
+
       continue;
     }
 
@@ -129,21 +164,46 @@ export function calculateReadinessScore(
       (check) => check.status === "failed"
     ).length;
 
-    const executableChecks = passedChecks + failedChecks;
+    const executableChecks =
+      passedChecks + failedChecks;
 
     if (executableChecks === 0) {
       unevaluatedCategories.push(category);
+
+      breakdown.push({
+        category,
+        weight,
+        earnedWeight: 0,
+        evaluated: false,
+        status: "unevaluated",
+      });
+
       continue;
     }
 
     evaluatedWeight += weight;
 
-    earnedWeight +=
+    const categoryEarnedWeight =
       weight * (passedChecks / executableChecks);
+
+    earnedWeight += categoryEarnedWeight;
 
     if (failedChecks > 0) {
       readinessGaps.push(category);
     }
+
+    breakdown.push({
+      category,
+      weight,
+      earnedWeight: categoryEarnedWeight,
+      evaluated: true,
+      status:
+        failedChecks === 0
+          ? "passed"
+          : passedChecks === 0
+            ? "failed"
+            : "partial",
+    });
   }
 
   const score =
@@ -169,8 +229,8 @@ export function calculateReadinessScore(
   ).length;
 
   const blocked = checks.filter(
-  (check) => check.status === "blocked"
-).length;
+    (check) => check.status === "blocked"
+  ).length;
 
   const skipped = checks.filter(
     (check) => check.status === "skipped"
@@ -188,10 +248,12 @@ export function calculateReadinessScore(
     applicableWeight,
     totalWeight,
 
+    breakdown,
+
     passed,
     failed,
-    skipped,
     blocked,
+    skipped,
     errors,
     totalChecks: checks.length,
 

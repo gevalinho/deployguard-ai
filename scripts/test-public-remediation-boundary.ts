@@ -129,6 +129,8 @@ const remediation: RemediationRun = {
         applicableWeight: 100,
         totalWeight: 100,
 
+        breakdown: [],
+
         passed: 1,
         failed: 1,
         blocked: 0,
@@ -160,6 +162,8 @@ const remediation: RemediationRun = {
         evaluatedWeight: 30,
         applicableWeight: 100,
         totalWeight: 100,
+
+        breakdown: [],
 
         passed: 2,
         failed: 0,
