@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { RemediationDelivery } from "./remediation-delivery";
 import type {
   PublicCheckResult,
@@ -1822,6 +1822,19 @@ export function ReadinessDashboard({
   developer: { login: string } | null;
 }) {
   const [repositoryUrl, setRepositoryUrl] = useState("");
+  const [repositoryAuthorizationRequired, setRepositoryAuthorizationRequired] =
+    useState(false);
+
+  useEffect(() => {
+    const savedUrl = sessionStorage.getItem("deployguard:repository-url");
+
+    if (!savedUrl) return;
+
+    sessionStorage.removeItem("deployguard:repository-url");
+    const restore = window.setTimeout(() => setRepositoryUrl(savedUrl), 0);
+
+    return () => window.clearTimeout(restore);
+  }, []);
 
   const [remoteScan, setRemoteScan] = useState<RemoteScanResult | null>(null);
 
@@ -1929,6 +1942,7 @@ export function ReadinessDashboard({
   async function runAssessment() {
     setLoading(true);
     setError(null);
+    setRepositoryAuthorizationRequired(false);
     setAssessment(null);
     setProgressEvents([]);
     setShowAllResearch(false);
@@ -1953,7 +1967,18 @@ export function ReadinessDashboard({
       });
 
       if (!response.ok) {
-        const data = await response.json();
+        const data = (await response.json()) as {
+          code?: string;
+          error?: string;
+        };
+
+        if (
+          response.status === 403 &&
+          data.code === "REPOSITORY_AUTHORIZATION_REQUIRED"
+        ) {
+          setRepositoryAuthorizationRequired(true);
+          return;
+        }
 
         throw new Error(data.error ?? "Assessment failed.");
       }
@@ -2189,6 +2214,7 @@ export function ReadinessDashboard({
               value={repositoryUrl}
               onChange={(event) => {
                 setRepositoryUrl(event.target.value);
+                setRepositoryAuthorizationRequired(false);
 
                 /*
                  * Never carry execution configuration
@@ -2232,6 +2258,31 @@ export function ReadinessDashboard({
             )}
 
             {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
+
+            {repositoryAuthorizationRequired && (
+              <div className="mt-5 rounded-xl border border-amber-700/50 bg-amber-950/30 p-5">
+                <h2 className="font-semibold text-amber-100">
+                  Repository access required
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-zinc-300">
+                  DeployGuard does not currently have access to this repository.
+                  Authorize the DeployGuard GitHub App and select this repository
+                  to continue.
+                </p>
+                <a
+                  href="/api/github/install"
+                  onClick={() =>
+                    sessionStorage.setItem(
+                      "deployguard:repository-url",
+                      repositoryUrl,
+                    )
+                  }
+                  className="mt-4 inline-block rounded-xl bg-white px-5 py-3 font-medium text-zinc-950 transition hover:bg-zinc-200"
+                >
+                  Authorize Repository
+                </a>
+              </div>
+            )}
           </div>
         </header>
 

@@ -163,6 +163,7 @@ export async function POST(
     return Response.json(
       {
         ok: false,
+        code: "REPOSITORY_AUTHORIZATION_UNAVAILABLE",
         error:
           "Repository authorization could not be verified.",
       },
@@ -179,6 +180,7 @@ export async function POST(
     return Response.json(
       {
         ok: false,
+        code: "REPOSITORY_AUTHORIZATION_REQUIRED",
         error:
           "Repository assessment is not authorized.",
       },
