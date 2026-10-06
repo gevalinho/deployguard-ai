@@ -599,12 +599,14 @@ function ProcessOverview() {
 /*                            Assessment Pipeline                             */
 /* -------------------------------------------------------------------------- */
 
-function AssessmentPipeline({
+export function AssessmentPipeline({
   loading,
   progressByStage,
+  checks,
 }: {
   loading: boolean;
   progressByStage: Map<string, AssessmentProgressEvent>;
+  checks: CheckResult[];
 }) {
   return (
     <section className="mb-10">
@@ -619,7 +621,14 @@ function AssessmentPipeline({
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900">
-        {ASSESSMENT_STAGES.map(({ stage, label }) => {
+        {ASSESSMENT_STAGES.filter(({ stage }) =>
+          !checks.some(
+            (check) =>
+              check.category === stage &&
+              check.status === "skipped" &&
+              check.skipReason === "not_applicable",
+          ),
+        ).map(({ stage, label }) => {
           const progress = progressByStage.get(stage);
           const status = progress?.status ?? "pending";
 
@@ -2367,6 +2376,7 @@ export function ReadinessDashboard({
           <AssessmentPipeline
             loading={loading}
             progressByStage={progressByStage}
+            checks={report?.checks ?? []}
           />
         )}
 
