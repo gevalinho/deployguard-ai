@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { parseGitHubRepositoryUrl } from "@/lib/repository/github-repository";
 import { ingestGitHubRepository, type RepositoryIngestionProvenance } from "@/lib/repository/repository-ingestion";
+import { openGitHubAppReadTransport } from "@/lib/repository/github-app-read-transport";
+import type { RepositoryReadTransport, RepositoryReadTransportFactory } from "@/lib/repository/github-read-transport";
 import { githubRemoteMatches } from "@/lib/remediation/github-app-git-transport";
 import { matchesVerifiedArtifactProvenance } from "@/lib/remediation/artifact-delivery-reference";
 import type { TrustedArtifactMetadata } from "@/lib/remediation/trusted-artifact-repository";
@@ -15,21 +17,28 @@ export function validDeliverySourceBranch(branch: string): boolean {
     !branch.includes("//") && !branch.endsWith("/") && !branch.endsWith(".") && !branch.includes("@{");
 }
 export interface DeliveryWorkspace { path: string; provenance: RepositoryIngestionProvenance; cleanup: () => Promise<void> }
-export async function createDeveloperDeliveryWorkspace(artifact: TrustedArtifactMetadata): Promise<DeliveryWorkspace> {
+export async function createDeveloperDeliveryWorkspace(
+  artifact: TrustedArtifactMetadata,
+  readTransportFactory: RepositoryReadTransportFactory = openGitHubAppReadTransport,
+): Promise<DeliveryWorkspace> {
   const repository = parseGitHubRepositoryUrl(`https://github.com/${artifact.repositoryIdentity}`);
   if (repository.fullName !== artifact.repositoryIdentity || !artifact.sourceBranch || !validDeliverySourceBranch(artifact.sourceBranch))
     throw new Error("Invalid persisted repository identity.");
-  const ingestion = await ingestGitHubRepository(repository);
+  const ingestion = await ingestGitHubRepository(repository, undefined, readTransportFactory);
   let directory: string | null = null;
+  let checkoutTransport: RepositoryReadTransport | null = null;
   try {
     if (!matchesVerifiedArtifactProvenance(artifact, ingestion.provenance)) throw new Error("Remote provenance mismatch.");
     directory = await mkdtemp(join(tmpdir(), "deployguard-delivery-"));
     const path = join(directory, "repository");
+    checkoutTransport = await readTransportFactory(repository);
     const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, NODE_ENV: process.env.NODE_ENV, HOME: directory,
       XDG_CONFIG_HOME: directory, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null",
       GIT_TERMINAL_PROMPT: "0", GIT_ALLOW_PROTOCOL: "https" };
     await run("git", ["clone", "--no-tags", "--depth", "1", "--single-branch", "--branch", artifact.sourceBranch,
-      "--", repository.cloneUrl, path], { cwd: directory, env, timeout: 6 * 60_000 });
+      "--", repository.cloneUrl, path], { cwd: directory, env: { ...env, ...checkoutTransport.env }, timeout: 6 * 60_000 });
+    await checkoutTransport.dispose?.();
+    checkoutTransport = null;
     const git = async (...args: string[]) => (await run("git", args, { cwd: path, env, timeout: 30_000 })).stdout.trim();
     const [head, branch, remote, status] = await Promise.all([
       git("rev-parse", "HEAD"), git("branch", "--show-current"), git("remote", "get-url", "origin"), git("status", "--porcelain"),
@@ -42,13 +51,19 @@ export async function createDeveloperDeliveryWorkspace(artifact: TrustedArtifact
   } catch (error) {
     if (directory) await rm(directory, { recursive: true, force: true });
     throw error;
-  } finally { ingestion.cleanup(); }
+  } finally {
+    await checkoutTransport?.dispose?.();
+    ingestion.cleanup();
+  }
 }
 
-export async function verifyCurrentRepositoryProvenance(artifact: TrustedArtifactMetadata): Promise<boolean> {
+export async function verifyCurrentRepositoryProvenance(
+  artifact: TrustedArtifactMetadata,
+  readTransportFactory: RepositoryReadTransportFactory = openGitHubAppReadTransport,
+): Promise<boolean> {
   const repository = parseGitHubRepositoryUrl(`https://github.com/${artifact.repositoryIdentity}`);
   if (repository.fullName !== artifact.repositoryIdentity) return false;
-  const ingestion = await ingestGitHubRepository(repository);
+  const ingestion = await ingestGitHubRepository(repository, undefined, readTransportFactory);
   try { return matchesVerifiedArtifactProvenance(artifact, ingestion.provenance); }
   finally { ingestion.cleanup(); }
 }

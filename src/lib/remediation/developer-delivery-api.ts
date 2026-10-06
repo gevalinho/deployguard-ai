@@ -92,13 +92,13 @@ export async function handleDeveloperDeliveryPost(request: Request, deps: Delive
     const artifact = await deps.artifact(input.artifactId);
     if (!artifact || !validArtifact(artifact)) return error(404, "Eligible verified artifact was not found.");
     if (!await deps.authorize(developer, artifact.repositoryIdentity)) return error(403, "Repository delivery is not authorized.");
-    const claim = await deps.claim(artifact.id, artifact.repositoryIdentity, developer.githubId);
-    if (claim.kind !== "acquired") return respondExisting(claim, artifact);
     let workspace: DeliveryWorkspace | null = null;
     try {
       workspace = await deps.workspace(artifact);
       if (!matchesVerifiedArtifactProvenance(artifact, workspace.provenance))
         return error(409, "Verified repository provenance changed.");
+      const claim = await deps.claim(artifact.id, artifact.repositoryIdentity, developer.githubId);
+      if (claim.kind !== "acquired") return respondExisting(claim, artifact);
       const secret = randomBytes(32).toString("hex");
       const prepared = await deps.prepare(workspace.path, artifact.repositoryIdentity, artifact.id, secret, workspace.provenance);
       if (prepared.status !== "prepared" || !prepared.delivery || !matchesDelivery(prepared.delivery, artifact))
