@@ -1852,6 +1852,8 @@ export function ReadinessDashboard({
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
+  const signInRequired = !developer || sessionExpired;
 
   const [progressEvents, setProgressEvents] = useState<
     AssessmentProgressEvent[]
@@ -1969,6 +1971,11 @@ export function ReadinessDashboard({
           code?: string;
           error?: string;
         };
+
+        if (response.status === 401) {
+          setSessionExpired(true);
+          return;
+        }
 
         if (
           response.status === 403 &&
@@ -2289,12 +2296,27 @@ export function ReadinessDashboard({
               <button
                 type="button"
                 onClick={() => void runAssessment()}
-                disabled={loading || scanLoading || !repositoryUrl.trim()}
+                disabled={signInRequired || loading || scanLoading || !repositoryUrl.trim()}
                 className="rounded-xl bg-white px-5 py-3 font-medium text-zinc-950 transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {loading ? "Assessment running..." : "Assess Repository"}
               </button>
             </div>
+
+            {signInRequired && (
+              <div className="mt-4 rounded-xl border border-sky-500/25 bg-sky-500/5 p-4">
+                <p className="text-sm leading-6 text-zinc-300">
+                  Sign in with GitHub to assess private repositories and deliver
+                  verified remediation.
+                </p>
+                <a
+                  href="/api/auth/github/start"
+                  className="mt-3 inline-block rounded-xl border border-sky-500/40 bg-sky-500/10 px-5 py-3 text-sm font-medium text-sky-200 transition hover:bg-sky-500/20"
+                >
+                  Sign in with GitHub
+                </a>
+              </div>
+            )}
 
             <p className="mt-3 text-xs leading-5 text-zinc-500">
               Static Scan inspects repository evidence without executing code.
@@ -2520,7 +2542,7 @@ export function ReadinessDashboard({
                   remediationResult?.remediation.verifiedArtifactReference
                     ?.artifactId ?? "remediation-delivery"
                 }
-                developer={developer}
+                developer={sessionExpired ? null : developer}
                 generated={Boolean(
                   remediationResult?.remediation.verifiedArtifactReference
                     ?.artifactId,
