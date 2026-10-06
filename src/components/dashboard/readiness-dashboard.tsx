@@ -100,7 +100,7 @@ type RemediationResult = {
   };
 
   remediation: {
-    verifiedArtifactReference?: { artifactId: string };
+    verifiedArtifactReference?: { artifactId: string; deliveryEligible?: boolean };
     proposal: {
       id: string;
       title: string;
@@ -2561,6 +2561,7 @@ export function ReadinessDashboard({
                   remediationResult?.remediation.verifiedArtifactReference
                     ?.artifactId
                 }
+                deliveryEligible={remediationResult?.remediation.verifiedArtifactReference?.deliveryEligible === true}
               />
             )}
           </div>

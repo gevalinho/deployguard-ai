@@ -308,6 +308,7 @@ async function saveRepositoryToCache(
 async function copyCachedRepository(
   repository: GitHubRepository,
   repositoryPath: string,
+  readEnvironment: Readonly<Partial<NodeJS.ProcessEnv>> = {},
 ): Promise<CacheCopyResult> {
   const cachedPath = getCachedRepositoryPath(repository);
 
@@ -325,7 +326,7 @@ async function copyCachedRepository(
     };
   }
 
-  const remoteHead = await getRemoteHeadIdentity(repository);
+  const remoteHead = await getRemoteHeadIdentity(repository, readEnvironment);
 
   const remoteCommitSha = remoteHead?.commitSha ?? null;
 
@@ -336,6 +337,13 @@ async function copyCachedRepository(
   const cachedCommitAvailable = Boolean(metadata.commitSha);
 
   let provenance: RepositoryIngestionProvenance | null = null;
+
+  // A known remote HEAD cannot make an unverified cache trustworthy. Fetch
+  // the immutable remote content instead of preserving an ineligible TTL hit.
+  if (remoteHeadAvailable && (!cachedCommitAvailable || metadata.contentIdentityVerified !== true)) {
+    removeRepositoryCache(repository);
+    return { hit: false };
+  }
 
   if (remoteCommitSha && metadata.commitSha && metadata.contentIdentityVerified === true) {
     if (remoteCommitSha !== metadata.commitSha) {
@@ -797,7 +805,7 @@ export async function ingestGitHubRepository(
       : null;
 
   try {
-    const cacheResult = await copyCachedRepository(repository, repositoryPath);
+    const cacheResult = await copyCachedRepository(repository, repositoryPath, readTransport?.env);
 
     let provenance: RepositoryIngestionProvenance | null = null;
 

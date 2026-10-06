@@ -101,7 +101,7 @@ export interface ReadinessImpact {
 
 export interface RemediationRun {
   /** Opaque persisted evidence reference; never a delivery capability. */
-  verifiedArtifactReference?: { artifactId: string };
+  verifiedArtifactReference?: { artifactId: string; deliveryEligible?: boolean };
   proposal: FixProposal;
 
   execution:

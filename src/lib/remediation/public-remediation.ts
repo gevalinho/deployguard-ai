@@ -57,7 +57,7 @@ export interface PublicFixProof {
 }
 
 export interface PublicRemediationRun {
-  verifiedArtifactReference?: { artifactId: string };
+  verifiedArtifactReference?: { artifactId: string; deliveryEligible?: boolean };
   proposal: FixProposal;
 
   execution:
@@ -211,7 +211,10 @@ export function sanitizeRemediationForPublic(
     ...(remediation.proposal.packageName ? { packageName: remediation.proposal.packageName } : {}),
   },
   ...(remediation.proof?.status === "proven" && remediation.verifiedArtifactReference
-    ? { verifiedArtifactReference: { artifactId: remediation.verifiedArtifactReference.artifactId } }
+    ? { verifiedArtifactReference: {
+        artifactId: remediation.verifiedArtifactReference.artifactId,
+        deliveryEligible: remediation.verifiedArtifactReference.deliveryEligible === true,
+      } }
     : {}),
 
   execution,

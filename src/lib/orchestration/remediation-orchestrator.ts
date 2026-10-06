@@ -46,6 +46,8 @@ import {
 import {
   ingestGitHubRepository,
 } from "@/lib/repository/repository-ingestion";
+import type { RepositoryReadTransportFactory } from "@/lib/repository/github-read-transport";
+import { validArtifact } from "@/lib/remediation/developer-delivery-api";
 
 import {
   prepareSandboxWorkspace,
@@ -168,7 +170,8 @@ function createRemediationReadinessImpact(
 
 export async function runRemoteRemediation(
   repositoryUrl: string,
-  proposal: FixProposal
+  proposal: FixProposal,
+  readTransportFactory?: RepositoryReadTransportFactory,
 ): Promise<RemoteRemediationResult> {
   const repository =
     parseGitHubRepositoryUrl(
@@ -177,7 +180,9 @@ export async function runRemoteRemediation(
 
   const ingested =
     await ingestGitHubRepository(
-      repository
+      repository,
+      undefined,
+      readTransportFactory,
     );
 
   try {
@@ -501,7 +506,10 @@ if (!persistedArtifact) {
 }
 
 // Only durable evidence leaves remediation. Delivery is a separate request.
-remediation.verifiedArtifactReference = { artifactId: persistedArtifact.id };
+remediation.verifiedArtifactReference = {
+  artifactId: persistedArtifact.id,
+  deliveryEligible: validArtifact(persistedArtifact),
+};
 
 console.log(
   `[DeployGuard Remediation] Verified artifact persisted: ${persistedArtifact.id}, SHA-256 ${persistedArtifact.sha256}.`

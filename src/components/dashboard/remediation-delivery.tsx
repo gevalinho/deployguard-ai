@@ -10,25 +10,25 @@ type Delivery = {
   pullRequestStatus?: "CLAIMED" | "POST_ATTEMPTED" | "VERIFIED";
   pullRequest?: { number: number; url: string; state: string };
 };
-type Workflow = { artifactId?: string; deliveryId?: string };
+type Workflow = { artifactId?: string; deliveryId?: string; deliveryEligible?: boolean };
 const storageKey = "deployguard-delivery-workflow";
 function savedWorkflow(): Workflow {
   try {
     const value = JSON.parse(sessionStorage.getItem(storageKey) ?? "{}");
     if (!value || typeof value !== "object") return {};
     const opaque = (v: unknown) => typeof v === "string" && /^[a-z0-9]{8,64}$/.test(v) ? v : undefined;
-    return { artifactId: opaque(value.artifactId), deliveryId: opaque(value.deliveryId) };
+    return { artifactId: opaque(value.artifactId), deliveryId: opaque(value.deliveryId), deliveryEligible: value.deliveryEligible === true };
   } catch { return {}; }
 }
 function save(value: Workflow) {
   try { sessionStorage.setItem(storageKey, JSON.stringify(value)); } catch { /* Optional navigation continuity. */ }
 }
 
-export function RemediationDelivery({ developer, artifactId, generated }: {
-  developer: { login: string } | null; artifactId?: string; generated: boolean;
+export function RemediationDelivery({ developer, artifactId, generated, deliveryEligible = false }: {
+  developer: { login: string } | null; artifactId?: string; generated: boolean; deliveryEligible?: boolean;
 }) {
   const router = useRouter();
-  const [workflow, setWorkflow] = useState<Workflow>({ artifactId });
+  const [workflow, setWorkflow] = useState<Workflow>({ artifactId, deliveryEligible });
   const [delivery, setDelivery] = useState<Delivery | null>(null);
   const [busy, setBusy] = useState<"delivery" | "pr" | "status" | "logout" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,7 +70,7 @@ export function RemediationDelivery({ developer, artifactId, generated }: {
       const next = result.delivery as Delivery;
       setDelivery(next);
       setStatusStale(false);
-      const reference = { artifactId: next.artifactId, deliveryId: next.deliveryId };
+      const reference = { artifactId: next.artifactId, deliveryId: next.deliveryId, deliveryEligible: true };
       setWorkflow(reference); save(reference);
     } catch (failure) {
       if (action === "status") setStatusStale(true);
@@ -88,12 +88,13 @@ export function RemediationDelivery({ developer, artifactId, generated }: {
     <ol className="space-y-2 text-sm text-zinc-300">
       <li>Remediation: {generated ? "generated" : workflow.artifactId ? "saved workflow; refresh delivery status when available" : "not generated"}</li>
       <li>Artifact: {artifactId ? "verified and persisted" : workflow.artifactId ? "saved reference; server verification required" : "no verified artifact available"}</li>
+      <li>GitHub delivery: {workflow.artifactId ? workflow.deliveryEligible ? "eligible for verification at delivery" : "unavailable; remote repository identity was not verified" : "not available"}</li>
       <li>Delivery: {busy === "delivery" ? "preparing, committing, and pushing; awaiting verified result" : delivery ? delivery.status.toLowerCase() : workflow.deliveryId ? "saved delivery; refresh status" : "not requested"}</li>
       <li>Pull request: {busy === "pr" ? "creation pending verification" : delivery?.pullRequest ? `verified (${delivery.pullRequest.state}${statusStale ? ", last known; refresh failed" : ""})` : delivery?.pullRequestStatus === "POST_ATTEMPTED" ? "outcome uncertain; recovery review required" : delivery?.pullRequestStatus === "CLAIMED" ? "creation pending; recovery review may be required" : "not verified"}</li>
     </ol>
     {delivery && <p className="text-sm text-zinc-400">{delivery.repositoryIdentity} · {delivery.branchName}</p>}
     <div className="flex flex-wrap gap-3">
-      <button className={button} disabled={!developer || !workflow.artifactId || !!busy || !!delivery}
+      <button className={button} disabled={!developer || !workflow.artifactId || !workflow.deliveryEligible || !!busy || !!delivery}
         onClick={() => void act("delivery")}>Confirm branch delivery</button>
       <button className={button} disabled={!developer || !(delivery?.deliveryId ?? workflow.deliveryId) || !!busy}
         onClick={() => void act("status")}>Refresh delivery status</button>

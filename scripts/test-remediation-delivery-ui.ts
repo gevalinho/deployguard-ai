@@ -35,7 +35,7 @@ function text(value: unknown): string {
   if (value && typeof value === "object" && "props" in value) return text((value as Node).props.children);
   return "";
 }
-let props: Parameters<typeof RemediationDelivery>[0] = { developer: null, artifactId: "artifact123", generated: true };
+let props: Parameters<typeof RemediationDelivery>[0] = { developer: null, artifactId: "artifact123", generated: true, deliveryEligible: true };
 function render() { cursor = 0; const tree = RemediationDelivery(props); mounted = true; return tree; }
 const button = (name: string) => nodes(render()).find(n => n.type === "button" && text(n) === name)!;
 const tick = async () => { await new Promise(resolve => setTimeout(resolve, 0)); };
@@ -46,9 +46,14 @@ globalThis.fetch = async (url, init) => { calls.push({ url: String(url), init })
 const delivery = { artifactId: "artifact123", deliveryId: "delivery123", repositoryIdentity: "owner/repo", status: "PUSHED",
   branchName: "deployguard/remediation-aaaaaaaaaaaa", commitSha: "c".repeat(40) };
 async function main() {
+  props = { developer: { login: "developer" }, artifactId: "artifact123", generated: true, deliveryEligible: false };
+  assert(button("Confirm branch delivery").props.disabled);
+  assert(text(render()).includes("remote repository identity was not verified"));
+  values = []; mounted = false; effects = [];
+  props = { developer: null, artifactId: "artifact123", generated: true, deliveryEligible: true };
   assert(button("Confirm branch delivery").props.disabled);
   nodes(render()).find(n => n.props.href === "/api/auth/github/start")!.props.onClick!();
-  assert.deepEqual(JSON.parse(storage.get("deployguard-delivery-workflow")!), { artifactId: "artifact123" });
+  assert.deepEqual(JSON.parse(storage.get("deployguard-delivery-workflow")!), { artifactId: "artifact123", deliveryEligible: true });
   // Simulate OAuth remount: restoring state alone must not send any request.
   values = []; mounted = false; effects = []; props = { developer: { login: "developer" }, generated: false };
   render(); effects.forEach(effect => effect()); await tick(); render();
@@ -92,7 +97,7 @@ async function main() {
   assert(nodes(render()).some(n => n.props.href === "https://github.com/owner/repo/pull/1"));
   response = async () => Response.json({ ok: false, error: "Sign-in required" }, { status: 401 });
   button("Refresh delivery status").props.onClick!(); await tick(); assert(text(render()).includes("Authorization"));
-  assert.deepEqual(JSON.parse(storage.get("deployguard-delivery-workflow")!), { artifactId: "artifact123", deliveryId: "delivery123" });
+  assert.deepEqual(JSON.parse(storage.get("deployguard-delivery-workflow")!), { artifactId: "artifact123", deliveryId: "delivery123", deliveryEligible: true });
   console.log("Dashboard explicit intent, OAuth restoration, duplicate click, status and recovery tests passed (hook harness).");
 }
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => { globalThis.fetch = originalFetch; });

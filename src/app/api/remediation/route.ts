@@ -5,6 +5,10 @@ import {
 import type {
   FixProposal,
 } from "@/lib/remediation/types";
+import { readDeveloperSession, sameOrigin } from "@/lib/auth/developer-session";
+import { authorizeDeveloperRepository } from "@/lib/auth/github-developer-auth";
+import { parseGitHubRepositoryUrl } from "@/lib/repository/github-repository";
+import { openGitHubAppReadTransport } from "@/lib/repository/github-app-read-transport";
 
 export const runtime = "nodejs";
 
@@ -152,6 +156,9 @@ function isFixProposal(
 export async function POST(
   request: Request
 ) {
+  const developer = readDeveloperSession(request);
+  if (!developer) return Response.json({ ok: false, error: "Developer sign-in required." }, { status: 401 });
+  if (!sameOrigin(request)) return Response.json({ ok: false, error: "Invalid request origin." }, { status: 403 });
   let body:
     RemediationRequestBody;
 
@@ -214,6 +221,20 @@ export async function POST(
     );
   }
 
+  let repository;
+  try {
+    repository = parseGitHubRepositoryUrl(repositoryUrl);
+  } catch {
+    return Response.json({ ok: false, error: "A valid GitHub repository URL is required." }, { status: 400 });
+  }
+  let authorized: boolean;
+  try {
+    authorized = await authorizeDeveloperRepository(developer, repository.fullName);
+  } catch {
+    return Response.json({ ok: false, error: "Repository authorization could not be verified." }, { status: 503 });
+  }
+  if (!authorized) return Response.json({ ok: false, error: "Repository remediation is not authorized." }, { status: 403 });
+
   try {
     const result =
       await runRemoteRemediation(
@@ -230,7 +251,8 @@ export async function POST(
             evidenceIndexes: [...body.proposal.target.evidenceIndexes],
           },
           ...(body.proposal.packageName ? { packageName: body.proposal.packageName } : {}),
-        }
+        },
+        openGitHubAppReadTransport,
       );
 
     return Response.json({
