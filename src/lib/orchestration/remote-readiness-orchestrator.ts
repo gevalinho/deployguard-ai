@@ -728,7 +728,8 @@ export async function runRemoteReadinessAssessment(
                 createBuildEnvironmentRequirements(
                   preparationPlan.requirements,
                   repositoryEnvironment
-                )
+                ),
+                scan.facts
               )
           );
 

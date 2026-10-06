@@ -10,9 +10,13 @@ import { runDockerSandboxCommand } from "@/lib/sandbox/docker-sandbox";
 import { detectPackageManager } from "@/lib/sandbox/package-manager";
 import { createRunScriptCommand } from "@/lib/sandbox/package-manager-command";
 import { getCorepackSandboxConfig } from "@/lib/sandbox/corepack-cache";
+import { hasDirectNodeApiRuntime } from "@/lib/capabilities/build-applicability";
+import { scanRepository } from "@/lib/scanner/repository-scanner";
+import type { RepositoryFact } from "@/lib/evidence/types";
 
 interface PackageJson {
   scripts?: Record<string, string>;
+  workspaces?: unknown;
 }
 
 export interface BuildEnvironmentRequirement {
@@ -265,7 +269,8 @@ function createBuildFailureSummary(
 
 export async function runSandboxBuildAgent(
   repositoryPath: string,
-  environmentRequirements: BuildEnvironmentRequirement[] = []
+  environmentRequirements: BuildEnvironmentRequirement[] = [],
+  repositoryFacts?: RepositoryFact[],
 ): Promise<CheckResult> {
   const packageJsonPath = join(
     repositoryPath,
@@ -309,6 +314,18 @@ export async function runSandboxBuildAgent(
   ) as PackageJson;
 
   if (!packageJson.scripts?.build) {
+    const facts = repositoryFacts ?? scanRepository(repositoryPath).facts;
+    if (!packageJson.workspaces && hasDirectNodeApiRuntime(repositoryPath, packageJson.scripts, facts)) {
+      return {
+        id: "build",
+        category: "build",
+        name: "Production Build",
+        status: "skipped",
+        skipReason: "not_applicable",
+        summary: "The root Express package starts an existing JavaScript entry directly with Node.js; no build step is indicated by this start model.",
+      };
+    }
+
     return {
       id: "build",
       category: "build",

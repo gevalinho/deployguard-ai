@@ -8,6 +8,7 @@ type PackageJson = {
   scripts?: Record<string, string>;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
+  engines?: { node?: string };
 };
 
 function fileExists(repositoryPath: string, file: string): boolean {
@@ -122,10 +123,38 @@ function detectLanguage(
       )
     );
   }
+
+  const sourceRoots = [repositoryPath, path.join(repositoryPath, "src")];
+  const sourceFiles = new Map<string, string>();
+
+  for (const sourceRoot of sourceRoots) {
+    if (!fs.existsSync(sourceRoot) || !fs.statSync(sourceRoot).isDirectory()) {
+      continue;
+    }
+
+    for (const entry of fs.readdirSync(sourceRoot, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      const extension = path.extname(entry.name);
+      if ([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"].includes(extension)) {
+        sourceFiles.set(extension, path.relative(repositoryPath, path.join(sourceRoot, entry.name)));
+      }
+    }
+  }
+
+  const javascriptFile = [".js", ".jsx", ".mjs", ".cjs"].map((extension) => sourceFiles.get(extension)).find(Boolean);
+  if (javascriptFile) {
+    addFactIfMissing(facts, createFact("language", "JavaScript", "file", javascriptFile, "JavaScript source file detected in the root package"));
+  }
+
+  const typescriptFile = [".ts", ".tsx", ".mts", ".cts"].map((extension) => sourceFiles.get(extension)).find(Boolean);
+  if (typescriptFile) {
+    addFactIfMissing(facts, createFact("language", "TypeScript", "file", typescriptFile, "TypeScript source file detected in the root package"));
+  }
 }
 
 function detectFramework(
   repositoryPath: string,
+  packageJson: PackageJson | null,
   facts: RepositoryFact[]
 ): void {
   const nextConfigFiles = [
@@ -138,11 +167,7 @@ function detectFramework(
     fileExists(repositoryPath, file)
   );
 
-  if (!configFile) {
-    return;
-  }
-
-  facts.push(
+  if (configFile) facts.push(
     createFact(
       "framework",
       "Next.js",
@@ -151,6 +176,31 @@ function detectFramework(
       "Next.js configuration file detected"
     )
   );
+
+  const viteConfig = ["vite.config.ts", "vite.config.js", "vite.config.mts", "vite.config.mjs"].find((file) => fileExists(repositoryPath, file));
+  if (viteConfig) {
+    addFactIfMissing(facts, createFact("tooling", "Vite", "config", viteConfig, "Vite configuration file detected"));
+  }
+
+  if (!packageJson) return;
+
+  for (const [dependency, key, value] of [
+    ["next", "framework", "Next.js"],
+    ["react", "framework", "React"],
+    ["vite", "tooling", "Vite"],
+    ["express", "framework", "Express"],
+  ] as const) {
+    if (hasDependency(packageJson, dependency)) {
+      addFactIfMissing(facts, createFact(key, value, "package", "package.json", `${dependency} dependency declared in the root package`));
+    }
+  }
+}
+
+function detectNodeRuntime(packageJson: PackageJson | null, facts: RepositoryFact[]): void {
+  if (!packageJson) return;
+  if (packageJson.engines?.node || packageJson.scripts?.start || packageJson.scripts?.build) {
+    addFactIfMissing(facts, createFact("runtime", "Node.js", "package", "package.json", "Root package declares a Node engine or start/build script"));
+  }
 }
 
 function detectPackageManager(
@@ -327,6 +377,11 @@ function detectInfrastructure(
       value: "MongoDB",
     },
     {
+      dependencies: ["mongoose"],
+      key: "databaseDriver",
+      value: "MongoDB",
+    },
+    {
       dependencies: ["pg"],
       key: "databaseDriver",
       value: "PostgreSQL",
@@ -375,9 +430,11 @@ function detectInfrastructure(
         detection.value,
         "package",
         "package.json",
-        `${detection.value} dependency detected: ${detectedDependencies.join(
-          ", "
-        )}`
+        detectedDependencies.includes("mongoose") && detection.key === "databaseDriver"
+          ? "MongoDB integration declared through the mongoose dependency"
+          : `${detection.value} dependency detected: ${detectedDependencies.join(
+              ", "
+            )}`
       )
     );
   }
@@ -785,8 +842,9 @@ export function scanRepository(
   const packageJson = readPackageJson(repositoryPath);
 
   detectLanguage(repositoryPath, facts);
-  detectFramework(repositoryPath, facts);
+  detectFramework(repositoryPath, packageJson, facts);
   detectPackageManager(repositoryPath, facts);
+  detectNodeRuntime(packageJson, facts);
 
   detectPackageFacts(packageJson, facts);
 
