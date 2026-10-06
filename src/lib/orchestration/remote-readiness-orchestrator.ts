@@ -8,6 +8,8 @@ import {
   runRemediationAgent,
   type RemediationAnalysis,
 } from "@/lib/agents/remediation-agent";
+import { runAiWithDeadline } from "@/lib/ai/ai-deadline";
+import { NEMOTRON_ANALYSIS_TIMEOUT_MS, NEMOTRON_REMEDIATION_TIMEOUT_MS } from "@/lib/ai/nebius";
 import { verifyRemediationAnalysis } from "@/lib/agents/remediation-verifier";
 import {
   runResearchAgent,
@@ -539,11 +541,10 @@ export async function runRemoteReadinessAssessment(
               const analysis =
                 await measureStage(
                   "Nemotron Analysis",
-                  () =>
-                    runArchitectAgent(
-                      scan,
-                      research
-                    )
+                  () => runAiWithDeadline(
+                    NEMOTRON_ANALYSIS_TIMEOUT_MS,
+                    (signal) => runArchitectAgent(scan, research, signal),
+                  )
                 );
 
               return {
@@ -936,10 +937,10 @@ export async function runRemoteReadinessAssessment(
                 const analysis =
                   await measureStage(
                     "Nemotron Remediation",
-                    () =>
-                      runRemediationAgent(
-                        checks
-                      )
+                    () => runAiWithDeadline(
+                      NEMOTRON_REMEDIATION_TIMEOUT_MS,
+                      (signal) => runRemediationAgent(checks, signal),
+                    )
                   );
 
                 return {
@@ -1124,6 +1125,12 @@ export async function runRemoteReadinessAssessment(
           "AI remediation was unavailable. Deterministic remediation remains available."
         );
       }
+
+      report.aiAvailability = {
+        architecture: architectureOutcome.status === "passed" ? "available" : "unavailable",
+        remediation: remediationOutcome.status === "passed" ? "available" :
+          remediationOutcome.status === "skipped" ? "not_needed" : "unavailable",
+      };
 
       /*
        * Never expose the temporary host workspace

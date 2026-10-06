@@ -9,6 +9,7 @@ import {
 import {
   getNebiusClient,
   NEBIUS_MODELS,
+  NEMOTRON_REMEDIATION_TIMEOUT_MS,
 } from "@/lib/ai/nebius";
 
 import {
@@ -50,7 +51,8 @@ export interface RemediationAnalysis {
  * are deliberately excluded.
  */
 export async function runRemediationAgent(
-  checks: CheckResult[]
+  checks: CheckResult[],
+  signal?: AbortSignal,
 ): Promise<RemediationAnalysis> {
   const remediationChecks =
     createRemediationCheckInputs(
@@ -66,7 +68,7 @@ export async function runRemediationAgent(
   }
 
   const nebius =
-    getNebiusClient();
+    getNebiusClient(NEMOTRON_REMEDIATION_TIMEOUT_MS);
 
   const response =
     await nebius.chat.completions.create({
@@ -199,7 +201,7 @@ ${JSON.stringify(
           `.trim(),
         },
       ],
-    });
+    }, { signal });
 
   const content =
     response.choices[0]

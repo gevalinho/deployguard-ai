@@ -42,6 +42,12 @@ export interface VerifiedAiRemediation {
 export interface ProductionReadinessReport {
   generatedAt: string;
 
+  /** AI enrichment status; never changes deterministic readiness. */
+  aiAvailability?: {
+    architecture: "available" | "unavailable";
+    remediation: "available" | "unavailable" | "not_needed";
+  };
+
   repository: {
     path: string;
     scannedAt: string;

@@ -5,10 +5,10 @@ export const NEBIUS_MODELS = {
     "nvidia/nemotron-3-super-120b-a12b",
 } as const;
 
-const NEBIUS_TIMEOUT_MS =
-  90_000;
+export const NEMOTRON_ANALYSIS_TIMEOUT_MS = 20_000;
+export const NEMOTRON_REMEDIATION_TIMEOUT_MS = 12_000;
 
-export function getNebiusClient(): OpenAI {
+export function getNebiusClient(timeoutMs: number): OpenAI {
   const apiKey =
     process.env.NEBIUS_API_KEY;
 
@@ -22,8 +22,7 @@ export function getNebiusClient(): OpenAI {
     apiKey,
     baseURL:
       "https://api.tokenfactory.us-central1.nebius.com/v1/",
-    timeout:
-      NEBIUS_TIMEOUT_MS,
-    maxRetries: 1,
+    timeout: timeoutMs,
+    maxRetries: 0,
   });
 }

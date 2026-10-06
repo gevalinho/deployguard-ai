@@ -4,6 +4,7 @@ import type { ResearchAgentResult } from "@/lib/agents/research-agent";
 import {
   getNebiusClient,
   NEBIUS_MODELS,
+  NEMOTRON_ANALYSIS_TIMEOUT_MS,
 } from "@/lib/ai/nebius";
 
 import {
@@ -48,10 +49,11 @@ export interface ArchitectureAnalysis {
 
 export async function runArchitectAgent(
   scan: RepositoryScanResult,
-  research?: ResearchAgentResult
+  research?: ResearchAgentResult,
+  signal?: AbortSignal,
 ): Promise<ArchitectureAnalysis> {
   const nebius =
-    getNebiusClient();
+    getNebiusClient(NEMOTRON_ANALYSIS_TIMEOUT_MS);
 
   const researchEvidence =
     research?.results.flatMap(
@@ -214,7 +216,7 @@ ${JSON.stringify(
           `.trim(),
         },
       ],
-    });
+    }, { signal });
 
   const content =
     response.choices[0]

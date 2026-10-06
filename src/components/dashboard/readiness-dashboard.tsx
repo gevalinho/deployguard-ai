@@ -599,6 +599,20 @@ function ProcessOverview() {
 /*                            Assessment Pipeline                             */
 /* -------------------------------------------------------------------------- */
 
+export function AiAvailabilityNotice({ availability }: {
+  availability?: ReadinessReport["aiAvailability"];
+}) {
+  if (!availability ||
+      (availability.architecture !== "unavailable" && availability.remediation !== "unavailable")) return null;
+  const unavailable = [
+    availability.architecture === "unavailable" ? "architecture analysis" : null,
+    availability.remediation === "unavailable" ? "remediation" : null,
+  ].filter(Boolean).join(" and ");
+  return <p role="status" className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-200">
+    AI guidance was unavailable for {unavailable}. The verified checks, readiness score, and deterministic remediation plan are complete.
+  </p>;
+}
+
 export function AssessmentPipeline({
   loading,
   progressByStage,
@@ -1949,6 +1963,7 @@ export function ReadinessDashboard({
   }
 
   const runAssessment = useCallback(async (repositoryOverride?: string) => {
+    let receivedResult = false;
     setLoading(true);
     setError(null);
     setRepositoryAuthorizationRequired(false);
@@ -2043,6 +2058,7 @@ export function ReadinessDashboard({
             };
 
             if (payload.ok && payload.assessment) {
+              receivedResult = true;
               setAssessment(payload.assessment);
             }
 
@@ -2063,7 +2079,15 @@ export function ReadinessDashboard({
       if (assessmentError) {
         throw new Error(assessmentError);
       }
+      if (!receivedResult) {
+        throw new Error("Assessment connection ended before a final report was received.");
+      }
     } catch (assessmentError) {
+      if (!receivedResult) {
+        setProgressEvents((current) => current.map((event) => event.status === "running"
+          ? { ...event, status: "error", message: "Assessment connection ended before a final report was received." }
+          : event));
+      }
       setError(
         assessmentError instanceof Error
           ? assessmentError.message
@@ -2481,6 +2505,8 @@ export function ReadinessDashboard({
               report={report}
               completion={progressByStage.get("report")}
             />
+
+            <AiAvailabilityNotice availability={report.aiAvailability} />
 
             <KeyFindings checks={report.checks} />
 

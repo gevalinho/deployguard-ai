@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AssessmentPipeline, ReadinessDashboard } from "./readiness-dashboard";
+import { AiAvailabilityNotice, AssessmentPipeline, ReadinessDashboard } from "./readiness-dashboard";
 import type { PublicCheckResult } from "@/lib/reporting/types";
 
 describe("repository assessment sign-in state", () => {
@@ -55,5 +55,16 @@ describe("assessment pipeline applicability", () => {
     );
 
     expect(html.includes(`>${label}</p>`)).toBe(visible);
+  });
+});
+
+describe("AI availability presentation", () => {
+  it("shows a completed deterministic report when AI enrichment is unavailable", () => {
+    const html = renderToStaticMarkup(<AiAvailabilityNotice availability={{
+      architecture: "unavailable", remediation: "unavailable",
+    }} />);
+    expect(html).toContain("AI guidance was unavailable for architecture analysis and remediation");
+    expect(html).toContain("readiness score, and deterministic remediation plan are complete");
+    expect(html).toContain('role="status"');
   });
 });
