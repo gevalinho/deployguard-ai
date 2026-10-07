@@ -36,7 +36,7 @@ const { refreshVerifiedGitHubPullRequest } = require("@/lib/remediation/github-p
 const { handleDeveloperDeliveryGet, deliveryApiDependencies } = require("@/lib/remediation/developer-delivery-api") as typeof import("@/lib/remediation/developer-delivery-api");
 const remote = (state: "open" | "closed", merged: boolean) => ({ number: 7, html_url: initial.prUrl, state, merged,
   // Base advances after merge. No branch lookup is allowed, including deleted heads.
-  base: { ref: "main", sha: "e".repeat(40), repo: { full_name: identity } },
+  base: { ref: delivery.sourceBranch, sha: "e".repeat(40), repo: { full_name: identity } },
   head: { ref: delivery.branchName, sha: delivery.commitSha, repo: { full_name: identity } } });
 let payload: unknown = remote("open", false);
 let httpFailure = false, networkFailure = false, wrongToken = false;
@@ -70,6 +70,10 @@ async function main() {
     assert.equal(writes, 1); assert.equal(reads, 1); assert.equal(tokens, 1);
     assert.equal(row.status, "VERIFIED"); assert.equal(row.verifiedAt, initial.verifiedAt);
   }
+  delivery.sourceBranch = "master"; artifact.sourceBranch = "master";
+  reset(); payload = remote("open", false);
+  assert.equal((await get()).status, 200);
+  delivery.sourceBranch = "main"; artifact.sourceBranch = "main";
   for (const fail of [() => { httpFailure = true; }, () => { networkFailure = true; }, () => { wrongToken = true; },
     () => { payload = null; }, () => { payload = { ...remote("closed", true), number: 8 }; },
     () => { payload = { ...remote("closed", true), html_url: "https://evil.test" }; },

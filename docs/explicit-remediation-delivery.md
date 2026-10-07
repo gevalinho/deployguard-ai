@@ -100,7 +100,7 @@ repository, artifact hash, branches, commits, base SHA, token, capability,
 provenance, and title/body. The handler authenticates the developer, checks same
 origin, loads the trusted artifact/delivery relationship, freshly authorizes the
 repository, and requires a PUSHED delivery on its deterministic remediation branch.
-The existing base policy requires `main`.
+The PR base is the persisted verified source branch from the artifact and delivery. The server requires their branch and original commit to match, then independently verifies the current remote base HEAD before any PR POST. The client cannot select a base branch.
 
 Only after those checks does the server issue and HMAC-sign a five-minute PR
 capability entirely from persisted state. It follows the delivery handler's

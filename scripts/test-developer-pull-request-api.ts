@@ -50,7 +50,7 @@ async function main() {
   await denied(403, { authorize: async () => false });
   for (const body of [null, [], {}, { confirmPullRequest: false }, { confirmPullRequest: "true" }]) await denied(400, {}, request(body));
   for (const field of ["repositoryIdentity", "artifactId", "artifactSha256", "branchName", "headBranch", "commitSha", "baseHeadSha",
-    "token", "githubToken", "capability", "signature", "title", "body", "provenance", "deliveryId", "sourceBranch"]) {
+    "token", "githubToken", "capability", "signature", "title", "body", "provenance", "deliveryId", "sourceBranch", "baseBranch"]) {
     await denied(400, {}, request({ confirmPullRequest: true, [field]: "forged" }));
   }
   const malformed = request();
@@ -65,8 +65,21 @@ async function main() {
   for (const changes of [{ status: "COMMITTED" as const }, { branchName: "main" }, { remoteName: "other" }, { pushedAt: null }, { commitSha: "bad" }]) {
     await denied(409, { delivery: async () => ({ ...delivery, ...changes }) });
   }
-  await denied(409, { artifact: async () => ({ ...artifact, sourceBranch: "master" }),
-    delivery: async () => ({ ...delivery, sourceBranch: "master" }) });
+  await denied(409, { artifact: async () => ({ ...artifact, sourceBranch: "master" }) });
+  await denied(409, { delivery: async () => ({ ...delivery, sourceBranch: "master" }) });
+  await denied(409, { artifact: async () => ({ ...artifact, sourceBranch: "bad..branch" }),
+    delivery: async () => ({ ...delivery, sourceBranch: "bad..branch" }) });
+  const masterArtifact = { ...artifact, sourceBranch: "master" };
+  const masterDelivery = { ...delivery, sourceBranch: "master" };
+  const masterResponse = await handleDeveloperPullRequestPost(request(), delivery.id, {
+    ...deps, artifact: async () => masterArtifact, delivery: async () => masterDelivery,
+    create: async (_identity, _id, signed) => {
+      assert.equal(signed.capability.baseBranch, "master");
+      assert.equal(signed.capability.baseHeadSha, delivery.originalHead);
+      return { status: "created", summary: "created" };
+    },
+  });
+  assert.equal(masterResponse.status, 201);
   for (let i = 0; i < 2; i++) {
     const response = await handleDeveloperPullRequestPost(request(), delivery.id, deps);
     assert.equal(response.status, 201); assert.equal(response.headers.get("cache-control"), "no-store");

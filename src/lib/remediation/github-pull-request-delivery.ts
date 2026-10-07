@@ -9,6 +9,7 @@ import { getRemediationDelivery } from "@/lib/remediation/remediation-delivery-r
 import { getVerifiedArtifactMetadata } from "@/lib/remediation/trusted-artifact-repository";
 
 import { createRemediationBranchName } from "@/lib/remediation/git-delivery";
+import { validDeliverySourceBranch } from "@/lib/remediation/developer-delivery-workspace";
 
 import {
   type SignedGitHubPullRequestCapability,
@@ -275,12 +276,12 @@ export async function createVerifiedGitHubPullRequest(
    */
   const baseBranch = delivery.sourceBranch;
 
-  if (baseBranch !== "main") {
+  if (!validDeliverySourceBranch(baseBranch) || baseBranch !== artifact.sourceBranch) {
     return {
       status: "invalid_delivery_state",
 
       summary:
-        "Pull request base must be the verified main source branch.",
+        "Pull request base must match the verified artifact source branch.",
     };
   }
 
@@ -351,7 +352,7 @@ export async function createVerifiedGitHubPullRequest(
 
   if (baseHeadSha !== delivery.originalHead) {
     return { status: "base_head_mismatch",
-      summary: "GitHub main moved from the authorized original HEAD." };
+      summary: "GitHub verified source branch moved from the authorized original HEAD." };
   }
 
   const headCommitSha = await getGitHubBranchHead(

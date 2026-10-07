@@ -3,6 +3,7 @@ import { sameOrigin } from "@/lib/auth/developer-session";
 import { deliveryApiDependencies, matchesDelivery, publicDelivery, validArtifact, type DeliveryApiDependencies } from "@/lib/remediation/developer-delivery-api";
 import { issueGitHubPullRequestCapability, signGitHubPullRequestCapability } from "@/lib/remediation/github-pull-request-capability";
 import { createVerifiedGitHubPullRequest } from "@/lib/remediation/github-pull-request-delivery";
+import { validDeliverySourceBranch } from "@/lib/remediation/developer-delivery-workspace";
 
 export type PullRequestApiDependencies = Pick<DeliveryApiDependencies, "session" | "authorize" | "artifact" | "delivery" | "pr"> & {
   create: typeof createVerifiedGitHubPullRequest;
@@ -32,8 +33,8 @@ export async function handleDeveloperPullRequestPost(request: Request, deliveryI
       return failure(403, "unauthorized", "Repository delivery is not authorized.");
     if (delivery.status !== "PUSHED" || !/^[a-f0-9]{40}$/.test(delivery.commitSha ?? ""))
       return failure(409, "invalid_delivery_state", "A verified pushed delivery is required.");
-    if (delivery.sourceBranch !== "main")
-      return failure(409, "unsupported_base", "Pull requests require the verified main source branch.");
+    if (!validDeliverySourceBranch(delivery.sourceBranch) || delivery.sourceBranch !== artifact.sourceBranch)
+      return failure(409, "unsupported_base", "Pull request base must match the verified artifact source branch.");
 
     // Match the delivery handler's lifecycle: fresh 32-byte server-only secret,
     // shared only by issuance and verification within this awaited operation.

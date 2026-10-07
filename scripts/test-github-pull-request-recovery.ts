@@ -14,7 +14,7 @@ const headSha = "57b64cc5fd7452ab9daf3b34253a45c9cee4a0e6";
 const artifactSha = "9c9b23d4566b966be68e4be67469c63c8f8aced4c3be61b2bf0778d2541a0150";
 const headBranch = "deployguard/remediation-9c9b23d4566b";
 const secret = "SECRET_TOKEN Authorization: Bearer secret private-key";
-let deliveryRepo = repo, artifactRepo = repo, artifactSource = "verified-cache";
+let deliveryRepo = repo, artifactRepo = repo, artifactSource = "verified-cache", sourceBranch = "main", artifactBranch = "main";
 let deliveryStatus = "PUSHED", remoteBase = baseSha, remoteHead = headSha;
 let list: "one" | "none" | "many" = "one", fail = "", state: "open" | "closed" = "open";
 let prRepo = repo, prBase = baseSha, prHead = headSha, prBaseBranch = "main", prHeadBranch = headBranch;
@@ -31,12 +31,12 @@ stub("@/lib/database/prisma", { prisma: { async $disconnect() {} } });
 stub("@/lib/remediation/remediation-delivery-repository", {
   async getRemediationDelivery(id: string) { assert.equal(id, deliveryId);
     return { id: deliveryId, artifactId, status: deliveryStatus, repositoryIdentity: deliveryRepo,
-      sourceBranch: "main", originalHead: baseSha, branchName: headBranch, commitSha: headSha }; },
+      sourceBranch, originalHead: baseSha, branchName: headBranch, commitSha: headSha }; },
 });
 stub("@/lib/remediation/trusted-artifact-repository", {
   async getVerifiedArtifactMetadata(id: string) { assert.equal(id, artifactId);
     return { id: artifactId, repositoryIdentity: artifactRepo, sha256: artifactSha,
-      sourceBranch: "main", sourceCommitSha: baseSha,
+      sourceBranch: artifactBranch, sourceCommitSha: baseSha,
       ingestionSource: artifactSource, ingestionRemoteVerified: true }; },
 });
 stub("@/lib/remediation/github-app-auth", {
@@ -73,10 +73,10 @@ globalThis.fetch = async (input, init) => {
   const url = String(input);
   assert(url.startsWith(`https://api.github.com/repos/${repo}/`));
   if (fail === "network") throw new Error(secret);
-  if (url.includes("/branches/main")) return Response.json({ name: "main", commit: { sha: remoteBase } });
+  if (url.includes(`/branches/${sourceBranch}`)) return Response.json({ name: sourceBranch, commit: { sha: remoteBase } });
   if (url.includes("/branches/deployguard%2F")) return Response.json({ name: headBranch, commit: { sha: remoteHead } });
   if (url.includes("/pulls?")) {
-    assert(url.includes("state=all")); assert(url.includes("base=main"));
+    assert(url.includes("state=all")); assert(url.includes(`base=${sourceBranch}`));
     return Response.json(list === "none" ? [] : list === "many" ? [pr(), pr()] : [pr()]);
   }
   assert(url.endsWith("/pulls/1")); return Response.json(pr());
@@ -87,7 +87,7 @@ console.error = (...args) => { output.push(args.join(" ")); };
 const { runExistingPullRequestBackfill } = require("./scripts/backfill-existing-github-pull-request") as typeof import("./backfill-existing-github-pull-request");
 const run = () => recoverExistingGitHubPullRequest(deliveryId, 1);
 function reset() {
-  deliveryRepo = repo; artifactRepo = repo; artifactSource = "verified-cache";
+  deliveryRepo = repo; artifactRepo = repo; artifactSource = "verified-cache"; sourceBranch = "main"; artifactBranch = "main";
   deliveryStatus = "PUSHED"; remoteBase = baseSha; remoteHead = headSha;
   list = "one"; fail = ""; state = "open"; prRepo = repo;
   prBase = baseSha; prHead = headSha; prBaseBranch = "main"; prHeadBranch = headBranch;
@@ -104,6 +104,10 @@ async function main() {
   assert.equal(claims, 1); assert.equal(writes, 1);
   assert.equal((await run()).status, "already_verified");
   assert.equal(claims, 1); assert.equal(writes, 1);
+  reset(); sourceBranch = "master"; artifactBranch = "master"; prBaseBranch = "master";
+  assert.equal((await run()).status, "recovered"); assert.equal(row?.status, "VERIFIED");
+  reset(); sourceBranch = "master";
+  assert.equal((await run()).status, "artifact_denied");
   reset(); state = "closed";
   assert.equal((await run()).status, "recovered");
   assert.equal(row?.prState, "closed");

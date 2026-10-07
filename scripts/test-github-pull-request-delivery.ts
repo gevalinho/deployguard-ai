@@ -11,7 +11,7 @@ const sha = "a".repeat(64), baseSha = "b".repeat(40), headSha = "c".repeat(40);
 const branch = `deployguard/remediation-${sha.slice(0, 12)}`;
 const secret = "test-only-signing-secret";
 let state = "PUSHED", source = "verified-cache", remoteVerified = true;
-let artifactIdentity = repo, artifactSha = sha;
+let artifactIdentity = repo, artifactSha = sha, sourceBranch = "main", artifactSourceBranch = "main";
 let base = baseSha, head = headSha, tokenFails = false, persistenceFails = false, persistFails = false;
 let remote: "none" | "one" | "two" = "none", prState: "open" | "closed" = "open";
 let postMode: "normal" | "timeout_found" | "timeout_none" | "malformed" = "normal";
@@ -20,12 +20,12 @@ let row: { status: "CLAIMED" | "POST_ATTEMPTED" | "VERIFIED"; prNumber: number |
 let posts = 0, claims = 0, persists = 0;
 stub("@/lib/remediation/remediation-delivery-repository", {
   async getRemediationDelivery() { return { id: "delivery", artifactId: "artifact", status: state,
-    repositoryIdentity: repo, sourceBranch: "main", originalHead: baseSha,
+    repositoryIdentity: repo, sourceBranch, originalHead: baseSha,
     branchName: branch, commitSha: headSha }; },
 });
 stub("@/lib/remediation/trusted-artifact-repository", {
   async getVerifiedArtifactMetadata() { return { id: "artifact", repositoryIdentity: artifactIdentity, sha256: artifactSha,
-    sourceBranch: "main", sourceCommitSha: baseSha, ingestionSource: source,
+    sourceBranch: artifactSourceBranch, sourceCommitSha: baseSha, ingestionSource: source,
     ingestionRemoteVerified: remoteVerified }; },
 });
 stub("@/lib/remediation/github-app-auth", {
@@ -52,16 +52,16 @@ stub("@/lib/remediation/github-pull-request-repository", {
 const cap = require("@/lib/remediation/github-pull-request-capability") as typeof import("@/lib/remediation/github-pull-request-capability");
 const { createVerifiedGitHubPullRequest } = require("@/lib/remediation/github-pull-request-delivery") as typeof import("@/lib/remediation/github-pull-request-delivery");
 const signed = () => cap.signGitHubPullRequestCapability(
-  cap.issueGitHubPullRequestCapability(repo, "delivery", sha, branch, headSha, "main", baseSha), secret);
+  cap.issueGitHubPullRequestCapability(repo, "delivery", sha, branch, headSha, sourceBranch, baseSha), secret);
 const pr = () => ({ number: 7, state: prState, html_url: `https://github.com/${repo}/pull/7`,
   head: { ref: branch, sha: headSha, repo: { full_name: repo } },
-  base: { ref: "main", sha: baseSha, repo: { full_name: repo } } });
+  base: { ref: sourceBranch, sha: baseSha, repo: { full_name: repo } } });
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   const url = String(input);
   assert(url.startsWith(`https://api.github.com/repos/${repo}/`));
   assert.equal(init?.redirect, "error");
-  if (url.includes("/branches/main")) return Response.json({ name: "main", commit: { sha: base } });
+  if (url.includes(`/branches/${sourceBranch}`)) return Response.json({ name: sourceBranch, commit: { sha: base } });
   if (url.includes("/branches/deployguard%2F")) return Response.json({ name: branch, commit: { sha: head } });
   if (url.includes("/pulls?")) {
     assert(url.includes("state=all"));
@@ -80,7 +80,7 @@ globalThis.fetch = async (input, init) => {
 const run = () => createVerifiedGitHubPullRequest(repo, "delivery", signed(), secret, "Test", "Body");
 function reset() { row = null; remote = "none"; prState = "open"; postMode = "normal";
   state = "PUSHED"; source = "verified-cache"; remoteVerified = true;
-  artifactIdentity = repo; artifactSha = sha;
+  artifactIdentity = repo; artifactSha = sha; sourceBranch = "main"; artifactSourceBranch = "main";
   base = baseSha; head = headSha; tokenFails = false; persistenceFails = false; persistFails = false; posts = 0; claims = 0; persists = 0; }
 async function main() {
   reset(); state = "COMMITTED";
@@ -90,6 +90,14 @@ async function main() {
   reset(); artifactSha = "f".repeat(64); assert.equal((await run()).status, "invalid_remediation_branch");
   reset(); source = "fresh-ttl-cache"; assert.equal((await run()).status, "artifact_mismatch");
   reset(); remoteVerified = false; assert.equal((await run()).status, "artifact_mismatch");
+  reset(); sourceBranch = "master"; artifactSourceBranch = "master";
+  assert.equal((await run()).status, "created"); assert.equal(posts, 1);
+  reset(); sourceBranch = "master";
+  assert.equal((await run()).status, "artifact_mismatch"); assert.equal(posts, 0);
+  reset(); sourceBranch = "master"; artifactSourceBranch = "master"; base = "d".repeat(40);
+  assert.equal((await run()).status, "base_head_mismatch"); assert.equal(posts, 0);
+  reset(); sourceBranch = "master"; artifactSourceBranch = "master"; head = "e".repeat(40);
+  assert.equal((await run()).status, "head_commit_mismatch"); assert.equal(posts, 0);
   reset(); base = "d".repeat(40); assert.equal((await run()).status, "base_head_mismatch");
   reset(); head = "e".repeat(40); assert.equal((await run()).status, "head_commit_mismatch");
   reset(); tokenFails = true;

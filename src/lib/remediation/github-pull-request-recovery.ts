@@ -1,6 +1,7 @@
 import { createInstallationAccessToken } from "@/lib/remediation/github-app-auth";
 import { matchesVerifiedArtifactProvenance } from "@/lib/remediation/artifact-delivery-reference";
 import { createRemediationBranchName } from "@/lib/remediation/git-delivery";
+import { validDeliverySourceBranch } from "@/lib/remediation/developer-delivery-workspace";
 import { isVerifiedPullRequestIdentity, type GitHubPullRequestIdentityResponse,
   type VerifiedPullRequestIdentity } from "@/lib/remediation/github-pull-request-identity";
 import { claimPullRequestDelivery, getDurablePullRequestDelivery,
@@ -24,7 +25,7 @@ export async function recoverExistingGitHubPullRequest(
   try { delivery = await getRemediationDelivery(deliveryId); }
   catch { return { status: "persistence_failed" }; }
   if (!delivery || delivery.status !== "PUSHED" || !delivery.commitSha ||
-      delivery.sourceBranch !== "main") return { status: "delivery_denied" };
+      !validDeliverySourceBranch(delivery.sourceBranch)) return { status: "delivery_denied" };
   const parts = delivery.repositoryIdentity.split("/");
   if (parts.length !== 2 || !/^[A-Za-z0-9-]+$/.test(parts[0]) ||
       !/^[A-Za-z0-9_.-]+$/.test(parts[1]) || parts[1] === "." || parts[1] === "..") {

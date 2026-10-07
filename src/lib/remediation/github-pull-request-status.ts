@@ -1,5 +1,6 @@
 import { createInstallationAccessToken } from "@/lib/remediation/github-app-auth";
 import { githubRemoteMatches } from "@/lib/remediation/github-app-git-transport";
+import { validDeliverySourceBranch } from "@/lib/remediation/developer-delivery-workspace";
 import { updateVerifiedPullRequestState, type DurablePullRequestDelivery } from "@/lib/remediation/github-pull-request-repository";
 import type { RemediationDeliveryMetadata } from "@/lib/remediation/remediation-delivery-repository";
 import type { GitHubPullRequestIdentityResponse } from "@/lib/remediation/github-pull-request-identity";
@@ -19,7 +20,7 @@ export async function refreshVerifiedGitHubPullRequest(
 ): Promise<DurablePullRequestDelivery | null> {
   try {
     const identity = delivery.repositoryIdentity;
-    if (delivery.status !== "PUSHED" || !delivery.commitSha || delivery.sourceBranch !== "main" ||
+    if (delivery.status !== "PUSHED" || !delivery.commitSha || !validDeliverySourceBranch(delivery.sourceBranch) ||
         !githubRemoteMatches(identity, `https://github.com/${identity}.git`) ||
         recorded.status !== "VERIFIED" || !recorded.verifiedAt || recorded.provider !== "github" ||
         recorded.deliveryId !== delivery.id || recorded.repositoryIdentity !== identity ||
