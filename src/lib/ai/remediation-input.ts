@@ -12,6 +12,7 @@ export interface RemediationCheckInput {
   evidence: CheckEvidence[];
 }
 
+export const MAX_REMEDIATION_INPUT_CHARS = 28_000;
 const MAX_REMEDIATION_CHECKS = 12;
 const MAX_EVIDENCE_PER_CHECK = 10;
 const MAX_SUMMARY_LENGTH = 1_000;
@@ -46,17 +47,15 @@ function sanitizeEvidenceForAi(
 export function createRemediationCheckInputs(
   checks: CheckResult[]
 ): RemediationCheckInput[] {
-  return checks
+  const selected = checks
     .filter(
       (check) =>
         check.status === "failed" ||
         check.status === "blocked" ||
         check.status === "error"
     )
-    .slice(
-      0,
-      MAX_REMEDIATION_CHECKS
-    )
+    .sort((a, b) => Number(b.status === "failed") - Number(a.status === "failed"))
+    .slice(0, MAX_REMEDIATION_CHECKS)
     .map((check) => ({
       id: check.id,
       category: check.category,
@@ -66,15 +65,30 @@ export function createRemediationCheckInputs(
         check.summary,
         MAX_SUMMARY_LENGTH
       ),
-      evidence: (
-        check.evidence ?? []
-      )
-        .slice(
-          0,
-          MAX_EVIDENCE_PER_CHECK
-        )
-        .map(
-          sanitizeEvidenceForAi
-        ),
+      evidence: [] as CheckEvidence[],
     }));
+
+  // Reserve each check's identity and summary before assigning evidence space.
+  let used = JSON.stringify(selected).length;
+  for (const check of selected) {
+    const source = checks.find((candidate) => candidate.id === check.id);
+    if (!source) continue;
+    const ranked = (source.evidence ?? [])
+      .map((evidence, index) => ({ evidence, index }))
+      .sort((a, b) => {
+        const score = (item: CheckEvidence) =>
+          Number(Boolean(item.file)) * 4 + Number(Boolean(item.line)) * 2 +
+          Number(Boolean(item.code)) + Number(item.kind === "error" || item.kind === "security_finding");
+        return score(b.evidence) - score(a.evidence) || a.index - b.index;
+      })
+      .slice(0, MAX_EVIDENCE_PER_CHECK);
+    for (const item of ranked) {
+      const evidence = sanitizeEvidenceForAi(item.evidence);
+      const cost = JSON.stringify(evidence).length + 1;
+      if (used + cost > MAX_REMEDIATION_INPUT_CHARS) continue;
+      check.evidence.push(evidence);
+      used += cost;
+    }
+  }
+  return selected;
 }

@@ -15,6 +15,10 @@ import {
   validateArchitectureAnalysis,
 } from "@/lib/ai/architecture-validation";
 
+import { createArchitectureInput } from "@/lib/ai/architecture-input";
+import { runObservedNemotron } from "@/lib/ai/nemotron-telemetry";
+import { architectureResponseFormat } from "@/lib/ai/nemotron-response-schemas";
+
 export type RiskSeverity =
   | "low"
   | "medium"
@@ -55,43 +59,9 @@ export async function runArchitectAgent(
   const nebius =
     getNebiusClient(NEMOTRON_ANALYSIS_TIMEOUT_MS);
 
-  const researchEvidence =
-    research?.results.flatMap(
-      (result) =>
-        result.evidence.map(
-          (item) => ({
-            topic: item.topic,
-            excerpt: item.excerpt,
-            relevanceScore:
-              item.relevanceScore,
-            source: {
-              title:
-                item.source.title,
-              url:
-                item.source.url,
-              sourceType:
-                item.source.sourceType,
-              authority:
-                item.source.authority,
-              publisher:
-                item.source.publisher,
-              publishedAt:
-                item.source.publishedAt,
-            },
-          })
-        )
-    ) ?? [];
-
-  const response =
-    await nebius.chat.completions.create({
-      model:
-        NEBIUS_MODELS.architect,
-      temperature: 0.1,
-
-      messages: [
-        {
-          role: "system",
-          content: `
+  const input = createArchitectureInput(scan, research);
+  const userContent = `Analyze verified repository facts and external research evidence.\n${JSON.stringify(input)}`;
+  const systemContent = `
 You are the Architect Agent for DeployGuard AI.
 
 Your job is to reason about VERIFIED repository evidence and,
@@ -173,65 +143,23 @@ IMPORTANT RULES:
     already patched in the detected version may be mentioned in the
     summary or recommendations, but must not be reported as current risks.    
 
-Return ONLY valid JSON with this exact structure:
+Return the required fields in the provided response schema.
+`.trim();
 
-{
-  "summary": "string",
-  "architectureType": "string",
-  "recommendedChecks": ["string"],
-  "risks": [
-    {
-      "title": "string",
-      "severity": "low | medium | high | critical",
-      "reason": "string",
-      "evidenceKeys": ["string"],
-      "researchUrls": ["string"],
-      "inference": true
-    }
-  ]
-}
-          `.trim(),
-        },
-
-        {
-          role: "user",
-          content: `
-Analyze the following evidence.
-
-VERIFIED REPOSITORY FACTS:
-
-${JSON.stringify(
-  scan.facts,
-  null,
-  2
-)}
-
-EXTERNAL RESEARCH EVIDENCE:
-
-${JSON.stringify(
-  researchEvidence,
-  null,
-  2
-)}
-          `.trim(),
-        },
+  return runObservedNemotron({
+    agent: "architecture",
+    model: NEBIUS_MODELS.architect,
+    requestChars: systemContent.length + userContent.length,
+    signal,
+    request: () => nebius.chat.completions.create({
+      model: NEBIUS_MODELS.architect,
+      temperature: 0.1,
+      response_format: architectureResponseFormat,
+      messages: [
+        { role: "system", content: systemContent },
+        { role: "user", content: userContent },
       ],
-    }, { signal });
-
-  const content =
-    response.choices[0]
-      ?.message?.content;
-
-  if (!content) {
-    throw new Error(
-      "Architect Agent returned no content."
-    );
-  }
-
-  const parsed =
-  parseAiJson(content);
-
-return validateArchitectureAnalysis(
-  parsed
-);
+    }, { signal }),
+    parse: (content) => validateArchitectureAnalysis(parseAiJson(content)),
+  });
 }

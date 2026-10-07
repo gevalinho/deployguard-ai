@@ -21,7 +21,7 @@ export function getNebiusClient(timeoutMs: number): OpenAI {
   return new OpenAI({
     apiKey,
     baseURL:
-      "https://api.tokenfactory.us-central1.nebius.com/v1/",
+      "https://api.tokenfactory.nebius.com/v1/",
     timeout: timeoutMs,
     maxRetries: 0,
   });

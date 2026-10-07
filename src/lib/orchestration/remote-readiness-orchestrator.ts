@@ -1007,17 +1007,7 @@ export async function runRemoteReadinessAssessment(
           "AI architecture analysis completed and verified."
         );
       } else {
-        const diagnostic =
-          architectureOutcome.error instanceof
-          Error
-            ? architectureOutcome.error
-                .message
-            : "Unknown Nemotron analysis error.";
-
-        console.error(
-          "[DeployGuard Architect Agent]",
-          diagnostic
-        );
+        console.error("[DeployGuard Architect Agent] AI guidance unavailable.");
 
         architecture = undefined;
         verification = undefined;
@@ -1106,17 +1096,7 @@ export async function runRemoteReadinessAssessment(
         remediationOutcome.status ===
         "error"
       ) {
-        const diagnostic =
-          remediationOutcome.error instanceof
-          Error
-            ? remediationOutcome.error
-                .message
-            : "Unknown remediation error.";
-
-        console.error(
-          "[DeployGuard Remediation Agent]",
-          diagnostic
-        );
+        console.error("[DeployGuard Remediation Agent] AI guidance unavailable.");
 
         await emitProgress(
           "remediation",
