@@ -1,4 +1,5 @@
 import type { CheckResult } from "@/lib/checks/types";
+import { createRemediationCheckInputs } from "@/lib/ai/remediation-input";
 
 import type {
   RemediationAction,
@@ -36,6 +37,11 @@ export function verifyRemediationAnalysis(
   checks: CheckResult[],
   analysis: RemediationAnalysis
 ): RemediationVerificationResult {
+  const suppliedIndexes = new Map(
+    createRemediationCheckInputs(checks).map((check) => [
+      check.id, new Set(check.evidence.map((item) => item.originalIndex)),
+    ])
+  );
   const eligibleChecks = new Map(
     checks
       .filter(isEligibleCheck)
@@ -52,7 +58,7 @@ export function verifyRemediationAnalysis(
     const check =
       eligibleChecks.get(action.checkId);
 
-    if (!check) {
+    if (!check || !suppliedIndexes.has(action.checkId)) {
       rejectedActions.push(action);
       continue;
     }
@@ -69,7 +75,7 @@ export function verifyRemediationAnalysis(
         isValidEvidenceIndex(
           index,
           evidence.length
-        )
+        ) && suppliedIndexes.get(action.checkId)?.has(index) === true
       );
 
     if (!indexesAreValid) {

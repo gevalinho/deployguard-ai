@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RemediationDelivery } from "./remediation-delivery";
+import { getControlledRemediationCandidates, type ControlledRemediationCandidate } from "@/lib/remediation/controlled-candidates";
+import { currentAssessmentArtifact } from "@/lib/remediation/current-assessment-artifact";
 import type {
   PublicCheckResult,
   PublicProductionReadinessReport,
@@ -73,6 +75,7 @@ type ResearchSummary = {
 };
 
 type AssessmentResult = {
+  sourceCommitSha?: string;
   repository: {
     owner: string;
     name: string;
@@ -92,6 +95,7 @@ type RemediationProofCheck = {
 };
 
 type RemediationResult = {
+  sourceCommitSha?: string;
   repository: {
     owner: string;
     name: string;
@@ -1165,52 +1169,11 @@ function RemediationPlan({
 function AiRemediationGuidance({
   remediation,
   checks,
-  onExecute,
-  executing,
 }: {
   remediation: NonNullable<ReadinessReport["aiRemediation"]>;
-
   checks: CheckResult[];
-
-  onExecute: (
-    action: NonNullable<ReadinessReport["aiRemediation"]>["actions"][number],
-  ) => Promise<void>;
-
-  executing: boolean;
 }) {
   const checksById = new Map(checks.map((check) => [check.id, check]));
-
-  const executableActions = remediation.actions.filter((action) => {
-    const check = checksById.get(action.checkId);
-
-    if (!check || check.status !== "failed") {
-      return false;
-    }
-
-    const referencedEvidence = action.evidenceIndexes
-      .map((index) => check.evidence?.[index])
-      .filter((evidence): evidence is CheckEvidence => evidence !== undefined);
-
-    if (action.checkId === "security" && check.category === "security") {
-      return referencedEvidence.some(
-        (evidence) => evidence.kind === "security_finding",
-      );
-    }
-
-    if (action.checkId === "lint" && check.category === "lint") {
-      return referencedEvidence.some(
-        (evidence) => evidence.kind === "error" || evidence.kind === "warning",
-      );
-    }
-
-    return false;
-  });
-
-  const uniqueExecutableActions = Array.from(
-    new Map(
-      executableActions.map((action) => [action.checkId, action]),
-    ).values(),
-  );
 
   return (
     <section className="rounded-2xl border border-violet-500/20 bg-gradient-to-br from-violet-500/5 to-zinc-900 p-6">
@@ -1382,55 +1345,33 @@ function AiRemediationGuidance({
         })}
       </div>
 
-      {uniqueExecutableActions.length > 0 && (
-        <div className="mt-6 rounded-2xl border border-violet-500/30 bg-violet-500/5 p-5">
-          <p className="text-xs font-medium uppercase tracking-[0.16em] text-violet-300">
-            Controlled Remediation
-          </p>
-
-          <h3 className="mt-2 font-medium text-zinc-100">
-            Verified automated remediation available
-          </h3>
-
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
-            DeployGuard can apply deterministic remediation for the verified
-            checks below and independently re-run verification before claiming
-            success.
-          </p>
-
-          <div className="mt-4 flex flex-wrap gap-3">
-            {uniqueExecutableActions.map((action) => {
-              const check = checksById.get(action.checkId);
-
-              return (
-                <button
-                  key={action.checkId}
-                  type="button"
-                  disabled={executing}
-                  onClick={() => void onExecute(action)}
-                  className="rounded-xl border border-violet-500/40 bg-violet-500/10 px-4 py-2.5 text-sm font-medium text-violet-200 transition hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {executing
-                    ? "Running controlled remediation..."
-                    : `Remediate ${check?.name ?? action.checkId}`}
-                </button>
-              );
-            })}
-          </div>
-
-          <p className="mt-3 text-xs leading-5 text-zinc-500">
-            Remediation runs against a disposable DeployGuard workspace. Your
-            GitHub repository is not modified.
-          </p>
-        </div>
-      )}
-
       <p className="mt-5 border-t border-zinc-800 pt-4 text-xs leading-5 text-zinc-500">
         AI remediation is advisory. It does not modify the deterministic
         readiness score or claim that a suggested change has been executed.
       </p>
     </section>
   );
+}
+
+export function ControlledRemediation({ candidates, onExecute, executing }: {
+  candidates: ControlledRemediationCandidate[];
+  onExecute: (candidate: ControlledRemediationCandidate) => Promise<void>;
+  executing: boolean;
+}) {
+  if (candidates.length === 0) return null;
+  return <section className="rounded-2xl border border-violet-500/30 bg-violet-500/5 p-5">
+    <h2 className="text-xl font-semibold text-violet-200">Controlled Remediation</h2>
+    <p className="mt-2 text-sm text-zinc-400">
+      DeployGuard can apply a deterministic fix in a disposable workspace, then independently verify it. Your GitHub repository is not modified.
+    </p>
+    <div className="mt-4 flex flex-wrap gap-3">
+      {candidates.map((candidate) => <button key={candidate.checkId} type="button"
+        disabled={executing} onClick={() => void onExecute(candidate)}
+        className="rounded-xl border border-violet-500/40 bg-violet-500/10 px-4 py-2.5 text-sm font-medium text-violet-200 disabled:opacity-50">
+        {executing ? "Running controlled remediation..." : `Remediate ${candidate.checkName}`}
+      </button>)}
+    </div>
+  </section>;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1883,6 +1824,16 @@ export function ReadinessDashboard({
   >([]);
 
   const report = assessment?.report ?? null;
+  const currentArtifact = assessment ? currentAssessmentArtifact(
+    { repositoryIdentity: assessment.repository.fullName, sourceCommitSha: assessment.sourceCommitSha },
+    remediationResult ? {
+      repositoryIdentity: remediationResult.repository.fullName,
+      sourceCommitSha: remediationResult.sourceCommitSha,
+      proofStatus: remediationResult.remediation.proof?.status,
+      artifactId: remediationResult.remediation.verifiedArtifactReference?.artifactId,
+      deliveryEligible: remediationResult.remediation.verifiedArtifactReference?.deliveryEligible,
+    } : null,
+  ) : null;
   const research = assessment?.research ?? null;
 
   /*
@@ -2149,121 +2100,40 @@ export function ReadinessDashboard({
     return () => window.clearTimeout(restore);
   }, [runAssessment]);
 
-  async function runControlledRemediation(
-    action: NonNullable<ReadinessReport["aiRemediation"]>["actions"][number],
-  ) {
+  async function runControlledRemediation(candidate: ControlledRemediationCandidate) {
     setRemediationLoading(true);
     setRemediationError(null);
     setRemediationResult(null);
-
     try {
-      const check = report?.checks.find((item) => item.id === action.checkId);
-
-      if (!check) {
-        throw new Error("The remediation target check could not be found.");
-      }
-
-      const isDependencySecurity =
-        action.checkId === "security" && check.category === "security";
-
-      const isLintAutofix =
-        action.checkId === "lint" && check.category === "lint";
-
-      if (!isDependencySecurity && !isLintAutofix) {
-        throw new Error(
-          "No controlled remediation strategy is available for this check.",
-        );
-      }
-
-      const referencedEvidence = action.evidenceIndexes
-        .map((index) => check.evidence?.[index])
-        .filter(
-          (evidence): evidence is CheckEvidence => evidence !== undefined,
-        );
-
-      let proposal;
-
-      if (isDependencySecurity) {
-        const securityFinding = referencedEvidence.find(
-          (evidence) => evidence.kind === "security_finding",
-        );
-
-        if (!securityFinding) {
-          throw new Error(
-            "No verified dependency security finding was available for this remediation.",
-          );
-        }
-
-        const packageName = securityFinding.message.match(
-          /^(.+?) has a (?:high|critical)-severity dependency vulnerability\.$/i,
-        )?.[1];
-
-        if (!packageName) {
-          throw new Error(
-            "DeployGuard could not determine the affected package from verified evidence.",
-          );
-        }
-
-        proposal = {
-          id: `dependency-security-${packageName}`,
-          title: `Remediate ${packageName} vulnerability`,
-          description:
-            "Apply controlled dependency security remediation and verify the result.",
-          target: {
-            checkId: action.checkId,
-            category: check.category,
-            evidenceIndexes: action.evidenceIndexes,
-          },
-          strategy: "dependency_security" as const,
-          risk: "breaking_change_allowed" as const,
-          packageName,
-        };
-      } else {
-        if (referencedEvidence.length === 0) {
-          throw new Error(
-            "No verified lint evidence was available for this remediation.",
-          );
-        }
-
-        proposal = {
-          id: "lint-autofix",
-          title: "Apply controlled lint autofix",
-          description:
-            "Apply deterministic ESLint autofix and independently verify the result.",
-          target: {
-            checkId: action.checkId,
-            category: check.category,
-            evidenceIndexes: action.evidenceIndexes,
-          },
-          strategy: "lint_autofix" as const,
-          risk: "safe" as const,
-        };
-      }
-
+      const check = report?.checks.find((item) => item.id === candidate.checkId);
+      const current = getControlledRemediationCandidates(report?.checks ?? [])
+        .find((item) => item.checkId === candidate.checkId &&
+          item.evidenceIndexes[0] === candidate.evidenceIndexes[0] &&
+          item.packageName === candidate.packageName);
+      if (!check || !current) throw new Error("The controlled remediation candidate is no longer supported by verified evidence.");
+      const proposal = candidate.strategy === "dependency_security" ? {
+        id: `dependency-security-${candidate.packageName}`,
+        title: `Remediate ${candidate.packageName} vulnerability`,
+        description: "Apply controlled dependency security remediation and verify the result.",
+        target: { checkId: candidate.checkId, category: candidate.category, evidenceIndexes: candidate.evidenceIndexes },
+        strategy: "dependency_security" as const,
+        risk: "breaking_change_allowed" as const,
+        packageName: candidate.packageName,
+      } : {
+        id: "lint-autofix", title: "Apply controlled lint autofix",
+        description: "Apply deterministic ESLint autofix and independently verify the result.",
+        target: { checkId: candidate.checkId, category: candidate.category, evidenceIndexes: candidate.evidenceIndexes },
+        strategy: "lint_autofix" as const, risk: "safe" as const,
+      };
       const response = await fetch("/api/remediation", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          repositoryUrl,
-          proposal,
-        }),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repositoryUrl: assessment?.repository.url ?? repositoryUrl, proposal }),
       });
-
       const data = await response.json();
-
-      if (!response.ok || !data.ok) {
-        throw new Error(data.error ?? "Controlled remediation failed.");
-      }
-
+      if (!response.ok || !data.ok) throw new Error(data.error ?? "Controlled remediation failed.");
       setRemediationResult(data.remediation);
-    } catch (remediationError) {
-      setRemediationError(
-        remediationError instanceof Error
-          ? remediationError.message
-          : "Unknown remediation error.",
-      );
+    } catch (failure) {
+      setRemediationError(failure instanceof Error ? failure.message : "Unknown remediation error.");
     } finally {
       setRemediationLoading(false);
     }
@@ -2551,10 +2421,14 @@ export function ReadinessDashboard({
                 <AiRemediationGuidance
                   remediation={report.aiRemediation}
                   checks={report.checks}
-                  onExecute={runControlledRemediation}
-                  executing={remediationLoading}
                 />
               )}
+
+            <ControlledRemediation
+              candidates={getControlledRemediationCandidates(report.checks)}
+              onExecute={runControlledRemediation}
+              executing={remediationLoading}
+            />
 
             {remediationError && (
               <section className="rounded-2xl border border-red-500/30 bg-red-500/5 p-5">
@@ -2574,20 +2448,13 @@ export function ReadinessDashboard({
 
             {report && (
               <RemediationDelivery
-                key={
-                  remediationResult?.remediation.verifiedArtifactReference
-                    ?.artifactId ?? "remediation-delivery"
-                }
+                key={currentArtifact?.artifactId ?? `${assessment?.repository.fullName}-${assessment?.sourceCommitSha}-remediation-delivery`}
                 developer={sessionExpired ? null : developer}
-                generated={Boolean(
-                  remediationResult?.remediation.verifiedArtifactReference
-                    ?.artifactId,
-                )}
-                artifactId={
-                  remediationResult?.remediation.verifiedArtifactReference
-                    ?.artifactId
-                }
-                deliveryEligible={remediationResult?.remediation.verifiedArtifactReference?.deliveryEligible === true}
+                repositoryIdentity={assessment?.repository.fullName ?? ""}
+                sourceCommitSha={assessment?.sourceCommitSha}
+                generated={Boolean(currentArtifact)}
+                artifactId={currentArtifact?.artifactId}
+                deliveryEligible={currentArtifact?.deliveryEligible === true}
               />
             )}
           </div>

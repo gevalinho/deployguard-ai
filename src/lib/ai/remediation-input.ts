@@ -3,13 +3,17 @@ import type {
   CheckResult,
 } from "@/lib/checks/types";
 
+export interface RemediationEvidenceInput extends CheckEvidence {
+  originalIndex: number;
+}
+
 export interface RemediationCheckInput {
   id: string;
   category: CheckResult["category"];
   name: string;
   status: CheckResult["status"];
   summary: string;
-  evidence: CheckEvidence[];
+  evidence: RemediationEvidenceInput[];
 }
 
 export const MAX_REMEDIATION_INPUT_CHARS = 28_000;
@@ -65,7 +69,7 @@ export function createRemediationCheckInputs(
         check.summary,
         MAX_SUMMARY_LENGTH
       ),
-      evidence: [] as CheckEvidence[],
+      evidence: [] as RemediationEvidenceInput[],
     }));
 
   // Reserve each check's identity and summary before assigning evidence space.
@@ -83,7 +87,7 @@ export function createRemediationCheckInputs(
       })
       .slice(0, MAX_EVIDENCE_PER_CHECK);
     for (const item of ranked) {
-      const evidence = sanitizeEvidenceForAi(item.evidence);
+      const evidence = { ...sanitizeEvidenceForAi(item.evidence), originalIndex: item.index };
       const cost = JSON.stringify(evidence).length + 1;
       if (used + cost > MAX_REMEDIATION_INPUT_CHARS) continue;
       check.evidence.push(evidence);

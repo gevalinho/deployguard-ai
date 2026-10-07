@@ -81,6 +81,7 @@ import {
 } from "@/lib/remediation/verified-remediation-persistence";
 
 export interface RemoteRemediationResult {
+  sourceCommitSha?: string;
   repository: {
     owner: string;
     name: string;
@@ -529,6 +530,7 @@ remediation.proof =
   proof;
 
     return {
+      sourceCommitSha: ingested.provenance.commitSha,
       repository: {
         owner:
           repository.owner,

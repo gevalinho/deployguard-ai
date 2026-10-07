@@ -35,7 +35,8 @@ function text(value: unknown): string {
   if (value && typeof value === "object" && "props" in value) return text((value as Node).props.children);
   return "";
 }
-let props: Parameters<typeof RemediationDelivery>[0] = { developer: null, artifactId: "artifact123", generated: true, deliveryEligible: true };
+const source = { repositoryIdentity: "owner/repo", sourceCommitSha: "a".repeat(40) };
+let props: Parameters<typeof RemediationDelivery>[0] = { developer: null, artifactId: "artifact123", generated: true, deliveryEligible: true, ...source };
 function render() { cursor = 0; const tree = RemediationDelivery(props); mounted = true; return tree; }
 const button = (name: string) => nodes(render()).find(n => n.type === "button" && text(n) === name)!;
 const tick = async () => { await new Promise(resolve => setTimeout(resolve, 0)); };
@@ -46,18 +47,19 @@ globalThis.fetch = async (url, init) => { calls.push({ url: String(url), init })
 const delivery = { artifactId: "artifact123", deliveryId: "delivery123", repositoryIdentity: "owner/repo", status: "PUSHED",
   branchName: "deployguard/remediation-aaaaaaaaaaaa", commitSha: "c".repeat(40) };
 async function main() {
-  props = { developer: { login: "developer" }, artifactId: "artifact123", generated: true, deliveryEligible: false };
+  props = { developer: { login: "developer" }, artifactId: "artifact123", generated: true, deliveryEligible: false, ...source };
   assert(button("Confirm branch delivery").props.disabled);
-  assert(text(render()).includes("remote repository identity was not verified"));
+  assert(text(render()).includes("unavailable; source provenance was not verified"));
   values = []; mounted = false; effects = [];
-  props = { developer: null, artifactId: "artifact123", generated: true, deliveryEligible: true };
+  props = { developer: null, artifactId: "artifact123", generated: true, deliveryEligible: true, ...source };
   assert(button("Confirm branch delivery").props.disabled);
   nodes(render()).find(n => n.props.href === "/api/auth/github/start")!.props.onClick!();
-  assert.deepEqual(JSON.parse(storage.get("deployguard-delivery-workflow")!), { artifactId: "artifact123", deliveryEligible: true });
+  assert.deepEqual(JSON.parse(storage.get("deployguard-delivery-workflow")!), { artifactId: "artifact123", ...source });
   // Simulate OAuth remount: restoring state alone must not send any request.
-  values = []; mounted = false; effects = []; props = { developer: { login: "developer" }, generated: false };
+  values = []; mounted = false; effects = []; props = { developer: { login: "developer" }, generated: false, ...source };
   render(); effects.forEach(effect => effect()); await tick(); render();
-  assert.equal(calls.length, 0); assert(!button("Confirm branch delivery").props.disabled);
+  assert.equal(calls.length, 0); assert(button("Confirm branch delivery").props.disabled);
+  values = []; mounted = false; effects = []; props = { developer: { login: "developer" }, artifactId: "artifact123", generated: true, deliveryEligible: true, ...source };
   assert(button("Confirm pull request creation").props.disabled);
   let release: (value: Response) => void = () => {};
   response = () => new Promise(resolve => { release = resolve; });
@@ -97,7 +99,7 @@ async function main() {
   assert(nodes(render()).some(n => n.props.href === "https://github.com/owner/repo/pull/1"));
   response = async () => Response.json({ ok: false, error: "Sign-in required" }, { status: 401 });
   button("Refresh delivery status").props.onClick!(); await tick(); assert(text(render()).includes("Authorization"));
-  assert.deepEqual(JSON.parse(storage.get("deployguard-delivery-workflow")!), { artifactId: "artifact123", deliveryId: "delivery123", deliveryEligible: true });
+  assert.deepEqual(JSON.parse(storage.get("deployguard-delivery-workflow")!), { artifactId: "artifact123", deliveryId: "delivery123", ...source });
   console.log("Dashboard explicit intent, OAuth restoration, duplicate click, status and recovery tests passed (hook harness).");
 }
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => { globalThis.fetch = originalFetch; });

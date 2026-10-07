@@ -80,6 +80,7 @@ export interface RemoteReadinessAssessmentOptions {
 }
 
 export interface RemoteReadinessAssessment {
+  sourceCommitSha?: string;
   repository: {
     owner: string;
     name: string;
@@ -1142,6 +1143,7 @@ export async function runRemoteReadinessAssessment(
         );
 
       return {
+        sourceCommitSha: ingested.provenance.commitSha,
         repository: {
           owner: repository.owner,
           name: repository.name,

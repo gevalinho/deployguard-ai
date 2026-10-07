@@ -125,8 +125,9 @@ IMPORTANT REMEDIATION RULES:
 8. Every remediation action must reference exactly one supplied
    check using checkId.
 
-9. evidenceIndexes are zero-based indexes into that check's
-   supplied evidence array.
+9. evidenceIndexes must use the originalIndex values on that
+   check's supplied evidence. They refer to the original verified
+   check evidence, not positions in this compacted array.
 
 10. Only reference evidence indexes that actually support the
     remediation action.
