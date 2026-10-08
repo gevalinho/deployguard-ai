@@ -241,7 +241,7 @@ Create a local environment file:
 cp .env.example .env
 ```
 
-The repository currently provides a minimal `.env.example`. Full authenticated assessment and delivery require additional server-side configuration.
+Fill in the values needed for the workflows you intend to run. The example file lists the server-side configuration read by the application.
 
 Relevant configuration names include:
 
@@ -257,12 +257,10 @@ GITHUB_APP_CLIENT_SECRET=
 GITHUB_APP_ID=
 GITHUB_APP_OAUTH_REDIRECT_URI=
 GITHUB_APP_PRIVATE_KEY_PATH=
-
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+GITHUB_APP_SLUG=
 ```
 
-These are configuration names only. Supply your own credentials and service endpoints.
+These are configuration names only. Supply your own credentials and service endpoints. `GITHUB_APP_SLUG` is optional and enables the installation link in the UI. The session secret must be at least 32 bytes, and the OAuth redirect URI must point to `/api/auth/github/callback` over HTTPS outside local development.
 
 Keep `.env`, GitHub App private keys, database credentials, and API secrets out of version control.
 
@@ -421,7 +419,7 @@ Verified remediation delivery is deliberately separate from merge authorization.
 
 ## License
 
-An approved open-source license must be added to this repository before the hackathon submission is finalized. The license file will define the terms under which others may use, modify, and distribute the source code.
+DeployGuard AI is licensed under the [Apache License 2.0](LICENSE).
 
 ---
 
