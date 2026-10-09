@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, stat, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,97 +8,65 @@ vi.mock("@/lib/sandbox/docker-sandbox", () => ({
   runDockerSandboxCommand: runSandbox,
   SandboxContainerStateUnknownError: class extends Error {},
 }));
-
-import { SandboxContainerStateUnknownError } from "@/lib/sandbox/docker-sandbox";
 import { applyDependencySecurityFix } from "./dependency-security-fixer";
 
 const repositories: string[] = [];
 afterEach(async () => {
-  const { rm } = await import("node:fs/promises");
   for (const path of repositories) await rm(path, { recursive: true, force: true });
   repositories.length = 0;
   runSandbox.mockReset();
 });
-
 async function repository() {
   const path = await mkdtemp(join(tmpdir(), "deployguard-fixer-test-"));
   repositories.push(path);
   await writeFile(join(path, "package-lock.json"), "{}");
   return path;
 }
-
 const proposal = {
   id: "test", title: "test", description: "test",
   target: { checkId: "test", category: "security", evidenceIndexes: [] },
-  strategy: "dependency_security", risk: "safe",
+  strategy: "dependency_security", risk: "breaking_change_allowed",
 } as Parameters<typeof applyDependencySecurityFix>[1];
+const report = (value: object) => `DEPLOYGUARD_CACHE_PREFLIGHT:${JSON.stringify(value)}\n`;
 
-describe("dependency security cache", () => {
-  it.each(["passed", "failed", "timed_out"])("mounts a private writable cache and removes it after %s", async (status) => {
+describe("dependency cache preflight", () => {
+  it("uses the same private mount, user and limits as npm and cleans up", async () => {
     const path = await repository();
     let cachePath = "";
     runSandbox.mockImplementation(async (input) => {
       cachePath = input.mounts[0].source;
-      expect(input.mounts[0].target).toBe("/tmp/npm-cache");
-      expect(input.mounts[0].selinuxPrivate).toBe(true);
-      expect(input.environment.npm_config_cache).toBe("/tmp/npm-cache");
+      expect(input.mounts[0]).toMatchObject({ target: "/tmp/npm-cache", selinuxPrivate: true });
+      expect(input.command.slice(0, 2)).toEqual(["node", "-e"]);
+      expect(input.command.slice(5)).toEqual(["audit", "fix", "--force", "--ignore-scripts", "--no-audit", "--no-fund"]);
+      expect(input.command.slice(3, 5)).toEqual(input.user.split(":"));
+      expect(input.command[2]).toContain('cp.spawnSync("npm"');
       expect(input.user).toMatch(/^[1-9]\d*:\d+$/);
-      const metadata = await stat(cachePath);
-      expect(metadata.mode & 0o777).toBe(0o700);
-      expect(metadata.uid).toBe(Number(input.user.split(":")[0]));
-      await writeFile(join(cachePath, "probe"), "ok");
-      expect(await readFile(join(cachePath, "probe"), "utf8")).toBe("ok");
-      return { status, exitCode: status === "passed" ? 0 : 1, stdout: "", stderr: "", durationMs: 1 };
+      expect(input.limits).toEqual({ memoryMb: 2048, cpus: 1, timeoutMs: 120_000 });
+      expect((await stat(cachePath)).mode & 0o777).toBe(0o700);
+      return { status: "passed", exitCode: 0, stdout: report({ uid: 1000, gid: 1000, context: "container_t", ok: true }), stderr: "", durationMs: 1 };
     });
-    const result = await applyDependencySecurityFix(path, proposal);
-    expect(result.status).toBe(status === "passed" ? "applied" : "failed");
+    expect((await applyDependencySecurityFix(path, proposal)).status).toBe("applied");
+    expect(runSandbox).toHaveBeenCalledOnce();
     await expect(stat(cachePath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("cleans up after a sandbox exception", async () => {
-    const path = await repository();
-    let cachePath = "";
-    runSandbox.mockImplementation(async (input) => {
-      cachePath = input.mounts[0].source;
-      throw new Error("Docker unavailable");
-    });
-    await expect(applyDependencySecurityFix(path, proposal)).rejects.toThrow("Docker unavailable");
-    await expect(stat(cachePath)).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
-  it("records private cache metadata before and after npm creates its cache", async () => {
+  it("reports a precise safe cache failure and does not treat it as npm failure", async () => {
     const path = await repository();
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      runSandbox.mockImplementation(async (input) => {
-        const { mkdir } = await import("node:fs/promises");
-        await mkdir(join(input.mounts[0].source, "_cacache"), { mode: 0o700 });
-        return { status: "failed", exitCode: 1, stdout: "", stderr: "", durationMs: 1 };
-      });
-      await applyDependencySecurityFix(path, proposal);
-      const records = log.mock.calls
-        .filter(([message]) => message === "[DeployGuard Remediation Cache]")
-        .map(([, metadata]) => metadata as { stage: string; cache: { uid: number; mode: string }; cacache: { exists: boolean } });
-      expect(records.map((record) => record.stage)).toEqual(["before", "after"]);
-      expect(records[0].cache.mode).toBe("700");
-      expect(records[0].cacache.exists).toBe(false);
-      expect(records[1].cacache.exists).toBe(true);
-      expect(JSON.stringify(records)).not.toContain(path);
-    } finally {
-      log.mockRestore();
-    }
+      runSandbox.mockResolvedValue({ status: "failed", exitCode: 74,
+        stdout: report({ uid: 1000, gid: 1000, context: "container_t", stage: "mkdir", code: "EACCES", ok: false }),
+        stderr: "", durationMs: 1 });
+      const result = await applyDependencySecurityFix(path, proposal);
+      expect(result.summary).toBe("Dependency cache preflight failed at mkdir: EACCES.");
+      expect(log.mock.calls.some(([label]) => label === "[DeployGuard Cache Preflight]")).toBe(true);
+    } finally { log.mockRestore(); }
   });
 
-  it("retains the cache if Docker cannot confirm container termination", async () => {
+  it("fails closed when a failed container has no preflight report", async () => {
     const path = await repository();
-    let cachePath = "";
-    runSandbox.mockImplementation(async (input) => {
-      cachePath = input.mounts[0].source;
-      throw new SandboxContainerStateUnknownError("container still running");
-    });
-    await expect(applyDependencySecurityFix(path, proposal)).rejects.toThrow("container still running");
-    expect((await stat(cachePath)).isDirectory()).toBe(true);
-    const { rm } = await import("node:fs/promises");
-    await rm(cachePath, { recursive: true, force: true });
+    runSandbox.mockResolvedValue({ status: "failed", exitCode: 1, stdout: "", stderr: "", durationMs: 1 });
+    const result = await applyDependencySecurityFix(path, proposal);
+    expect(result.summary).toBe("Dependency cache preflight did not report a result.");
   });
 });
