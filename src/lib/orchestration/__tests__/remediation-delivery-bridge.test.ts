@@ -29,6 +29,16 @@ vi.mock("@/lib/remediation/lint-autofix-fixer", () => ({ applyLintAutofix: async
 vi.mock("@/lib/remediation/lint-autofix-verifier", () => ({ verifyLintAutofix: async () => ({
   status: "proven", summary: "Verified", comparisons: [], regressionChecks: [],
 }) }));
+vi.mock("@/lib/agents/sandbox-security-agent", () => ({ runSandboxSecurityAgent: async () => ({
+  id: "security", status: "failed", category: "security", name: "Security", summary: "Finding", evidence: [],
+}) }));
+vi.mock("@/lib/remediation/dependency-security-fixer", () => ({ applyDependencySecurityFix: async (path: string) => {
+  writeFileSync(join(path, "package-lock.json"), '{"changed":true}');
+  return { status: "applied", summary: "Attempted" };
+} }));
+vi.mock("@/lib/remediation/dependency-security-verifier", () => ({ verifyDependencySecurityFix: async () => ({
+  status: "proven", summary: "Verified", comparisons: [], regressionChecks: [],
+}) }));
 vi.mock("@/lib/remediation/trusted-artifact-repository", () => ({
   persistVerifiedArtifact: async (identity: string, artifact: { sha256: string; byteSize: number; format: string },
     provenance: typeof state.provenance) => {
@@ -56,6 +66,20 @@ afterEach(() => {
 });
 
 describe("proven remediation to immediate delivery lookup", () => {
+  it("does not persist a dependency security artifact during controlled production testing", async () => {
+    state.ingest.mockImplementation(async (repository: unknown) => {
+      state.path = mkdtempSync(join(tmpdir(), "dg-remediation-bridge-"));
+      writeFileSync(join(state.path, "package-lock.json"), "{}");
+      return { repository, repositoryPath: state.path, provenance: state.provenance,
+        cleanup() { rmSync(state.path, { recursive: true, force: true }); } };
+    });
+    const dependencyProposal: FixProposal = { ...proposal, strategy: "dependency_security",
+      target: { checkId: "security", category: "security", evidenceIndexes: [] } };
+    const result = await runRemoteRemediation("https://github.com/owner/repo", dependencyProposal);
+    expect(result.remediation.proof?.status).toBe("proven");
+    expect(result.remediation.verifiedArtifactReference).toBeUndefined();
+    expect(state.stored).toBeNull();
+  });
   for (const verified of [true, false]) {
     it(`${verified ? "accepts" : "rejects"} the exact persisted ID according to remote provenance`, async () => {
       state.provenance = { source: verified ? "verified-cache" : "fresh-ttl-cache",

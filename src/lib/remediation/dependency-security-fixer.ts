@@ -1,7 +1,7 @@
 import type { FixExecutionResult, FixProposal } from "@/lib/remediation/types";
 
 import { runDockerSandboxCommand, SandboxContainerStateUnknownError } from "@/lib/sandbox/docker-sandbox";
-import { chown, chmod, mkdtemp, realpath, rm } from "node:fs/promises";
+import { chown, chmod, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { isAbsolute, join, sep } from "node:path";
 
 import { detectPackageManager } from "@/lib/sandbox/package-manager";
@@ -9,6 +9,21 @@ import { detectPackageManager } from "@/lib/sandbox/package-manager";
 const FIX_TIMEOUT_MS = 120_000;
 const PREFLIGHT_PREFIX = "DEPLOYGUARD_CACHE_PREFLIGHT:";
 const DEFAULT_CACHE_ROOT = "/var/cache/deployguard";
+
+async function dependencyFiles(repositoryPath: string): Promise<string[]> {
+  return Promise.all(["package.json", "package-lock.json"].map((name) =>
+    readFile(join(repositoryPath, name), "utf8")));
+}
+
+function classifyNpmFailure(stdout: string, stderr: string) {
+  const output = `${stdout}\n${stderr}`;
+  if (/EACCES|EPERM/i.test(output)) return "permission_failure";
+  if (/ERESOLVE|EPEERINVALID/i.test(output)) return "dependency_conflict";
+  if (/ENOTFOUND|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ECONNREFUSED|fetch failed/i.test(output)) return "registry_failure";
+  if (/ENOTSUP|ETARGET|no fix available|not fixable/i.test(output)) return "unsupported_fix";
+  if (/vulnerabilit(?:y|ies)/i.test(output)) return "unresolved_vulnerabilities";
+  return "unclassified_failure";
+}
 
 async function remediationCacheRoot(): Promise<string> {
   const configured = process.env.DEPLOYGUARD_REMEDIATION_CACHE_ROOT ||
@@ -76,9 +91,11 @@ function parsePreflight(stdout: string) {
       context: typeof value.context === "string" &&
         /^[A-Za-z0-9_:., -]{1,160}$/.test(value.context) ? value.context : "unavailable",
       ok: value.ok as boolean,
-      stage: ["identity", "access", "mkdir", "write", "remove"].includes(value.stage) ? value.stage as string : "unknown",
-      code: typeof value.code === "string" && /^[A-Z0-9_]{1,32}$/.test(value.code)
-        ? value.code : "UNKNOWN",
+      ...(value.ok ? {} : {
+        stage: ["identity", "access", "mkdir", "write", "remove"].includes(value.stage) ? value.stage as string : "unknown",
+        code: typeof value.code === "string" && /^[A-Z0-9_]{1,32}$/.test(value.code)
+          ? value.code : "UNKNOWN",
+      }),
     };
   } catch { return null; }
 }
@@ -137,6 +154,7 @@ export async function applyDependencySecurityFix(
   const hostGid = typeof process.getgid === "function" ? process.getgid() : null;
   const uid = hostUid && hostUid > 0 ? hostUid : 1000;
   const gid = hostUid && hostUid > 0 ? (hostGid ?? 1000) : 1000;
+  const dependencyBefore = await dependencyFiles(repositoryPath);
   const cacheDirectory = await mkdtemp(join(await remediationCacheRoot(), "deployguard-npm-cache-"));
   let result: Awaited<ReturnType<typeof runDockerSandboxCommand>>;
   let containerStateUnknown = false;
@@ -166,6 +184,8 @@ export async function applyDependencySecurityFix(
   }
 
   const preflight = parsePreflight(result.stdout);
+  const dependencyChanged = (await dependencyFiles(repositoryPath))
+    .some((content, index) => content !== dependencyBefore[index]);
   if (preflight) console.error("[DeployGuard Cache Preflight]", preflight);
   if (preflight?.ok === false) {
     return {
@@ -202,6 +222,10 @@ export async function applyDependencySecurityFix(
   });
 
   if (result.status === "timed_out") {
+    console.error("[DeployGuard Remediation npm failure]", {
+      category: "timeout", exitCode: result.exitCode, dependencyChanged,
+      stdoutLength: result.stdout.length, stderrLength: result.stderr.length,
+    });
     return {
       status: "failed",
       summary: "Dependency remediation exceeded the configured timeout.",
@@ -212,9 +236,17 @@ export async function applyDependencySecurityFix(
   }
 
   if (result.status === "failed") {
+    console.error("[DeployGuard Remediation npm failure]", {
+      category: classifyNpmFailure(result.stdout, result.stderr),
+      exitCode: result.exitCode,
+      dependencyChanged,
+      stdoutLength: result.stdout.length,
+      stderrLength: result.stderr.length,
+    });
     console.error("[DeployGuard Remediation] npm audit fix failed", {
       exitCode: result.exitCode,
       durationMs: result.durationMs,
+      dependencyChanged,
       // Do not log raw stdout/stderr here:
       // npm output may contain credentials or private registry URLs.
       stdoutLength: result.stdout.length,
@@ -222,8 +254,10 @@ export async function applyDependencySecurityFix(
     });
 
     return {
-      status: "failed",
-      summary: "npm could not complete the dependency security remediation.",
+      status: dependencyChanged ? "applied" : "failed",
+      summary: dependencyChanged
+        ? "npm changed dependency files but exited nonzero; independent audit verification is required."
+        : "npm exited nonzero without changing dependency files.",
       command: "npm audit fix",
       exitCode: result.exitCode,
       durationMs: result.durationMs,

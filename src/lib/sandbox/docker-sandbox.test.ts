@@ -11,6 +11,22 @@ afterEach(() => {
 });
 
 describe("Docker sandbox timeout", () => {
+  it("provides a writable private tmpfs for nonroot npm cache writes", async () => {
+    runCommand.mockResolvedValue({ status: "passed", exitCode: 0, stdout: "", stderr: "" });
+    await runDockerSandboxCommand({
+      repositoryPath: "/repo", command: ["npm", "audit", "fix"],
+      user: "1000:1000", environment: { npm_config_cache: "/tmp/npm-cache" },
+    });
+    const args = runCommand.mock.calls[0][1] as string[];
+    expect(args.slice(args.indexOf("--tmpfs"), args.indexOf("--tmpfs") + 2))
+      .toEqual(["--tmpfs", "/tmp:rw,noexec,nosuid,size=256m,mode=1777"]);
+    expect(args).toContain("--read-only");
+    expect(args).toContain("no-new-privileges");
+    expect(args.slice(args.indexOf("--user"), args.indexOf("--user") + 2))
+      .toEqual(["--user", "1000:1000"]);
+    expect(args).not.toContain("--volume");
+  });
+
   it("waits for docker run to exit before reporting timeout", async () => {
     vi.useFakeTimers();
     let finishRun!: (result: object) => void;

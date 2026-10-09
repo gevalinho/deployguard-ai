@@ -2,6 +2,9 @@ import {
   readFileSync,
   readdirSync,
   statSync,
+  openSync,
+  readSync,
+  closeSync,
 } from "node:fs";
 
 import {
@@ -22,6 +25,7 @@ export interface WorkspaceFileSnapshot {
 export interface WorkspaceSnapshot {
   files:
     Map<string, WorkspaceFileSnapshot>;
+  dependencyHashes: Map<string, string>;
 }
 
 export interface VerifiedPatchFile {
@@ -55,6 +59,33 @@ const EXCLUDED_DIRECTORIES =
 const MAX_FILE_BYTES =
   512 * 1024;
 
+export function isDependencyFile(path: string): boolean {
+  const name = path.split("/").at(-1);
+  return name === "package.json" || name === "package-lock.json" ||
+    name === "npm-shrinkwrap.json" || name === "pnpm-lock.yaml" ||
+    name === "pnpm-workspace.yaml" || name === "yarn.lock";
+}
+
+function hashFile(path: string): string {
+  const hash = createHash("sha256");
+  const buffer = Buffer.alloc(64 * 1024);
+  const fd = openSync(path, "r");
+  try {
+    let bytes: number;
+    while ((bytes = readSync(fd, buffer, 0, buffer.length, null)) > 0) {
+      hash.update(buffer.subarray(0, bytes));
+    }
+    return hash.digest("hex");
+  } finally { closeSync(fd); }
+}
+
+export class IncompleteDependencyArtifactError extends Error {
+  constructor() {
+    super("A changed dependency file could not be captured within the verified artifact limits.");
+    this.name = "IncompleteDependencyArtifactError";
+  }
+}
+
 function hashContent(
   content: string
 ): string {
@@ -69,7 +100,8 @@ function collectFiles(
   files: Map<
     string,
     WorkspaceFileSnapshot
-  >
+  >,
+  dependencyHashes: Map<string, string>,
 ): void {
   const entries =
     readdirSync(
@@ -86,6 +118,14 @@ function collectFiles(
         entry.name
       );
 
+    if (entry.isSymbolicLink() && !EXCLUDED_DIRECTORIES.has(entry.name)) {
+      try {
+        if (statSync(absolutePath).isDirectory()) throw new IncompleteDependencyArtifactError();
+      } catch (error) {
+        if (error instanceof IncompleteDependencyArtifactError) throw error;
+      }
+    }
+
     if (entry.isDirectory()) {
       if (
         EXCLUDED_DIRECTORIES.has(
@@ -98,13 +138,16 @@ function collectFiles(
       collectFiles(
         repositoryPath,
         absolutePath,
-        files
+        files,
+        dependencyHashes,
       );
 
       continue;
     }
 
     if (!entry.isFile()) {
+      const path = relative(repositoryPath, absolutePath).replaceAll("\\", "/");
+      if (isDependencyFile(path)) throw new IncompleteDependencyArtifactError();
       continue;
     }
 
@@ -112,6 +155,12 @@ function collectFiles(
       statSync(
         absolutePath
       );
+
+    const path = relative(repositoryPath, absolutePath).replaceAll("\\", "/");
+    if (isDependencyFile(path)) {
+      try { dependencyHashes.set(path, hashFile(absolutePath)); }
+      catch { throw new IncompleteDependencyArtifactError(); }
+    }
 
     /*
      * v1 deliberately ignores large files.
@@ -129,24 +178,17 @@ function collectFiles(
     let content: string;
 
     try {
-      content =
-        readFileSync(
-          absolutePath,
-          "utf8"
-        );
+      content = isDependencyFile(path)
+        ? new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(absolutePath))
+        : readFileSync(absolutePath, "utf8");
     } catch {
+      if (isDependencyFile(path)) throw new IncompleteDependencyArtifactError();
       /*
        * Binary or unreadable files are excluded
        * from the text patch representation.
        */
       continue;
     }
-
-    const path =
-      relative(
-        repositoryPath,
-        absolutePath
-      ).replaceAll("\\", "/");
 
     files.set(
       path,
@@ -170,15 +212,13 @@ export function captureWorkspaceSnapshot(
       string,
       WorkspaceFileSnapshot
     >();
+  const dependencyHashes = new Map<string, string>();
 
-  collectFiles(
-    repositoryPath,
-    repositoryPath,
-    files
-  );
+  collectFiles(repositoryPath, repositoryPath, files, dependencyHashes);
 
   return {
     files,
+    dependencyHashes,
   };
 }
 
@@ -194,6 +234,9 @@ export function createVerifiedPatch(
 
   const files:
     VerifiedPatchFile[] = [];
+
+  const changedDependencies = new Set([...before.dependencyHashes.keys(), ...after.dependencyHashes.keys()]
+    .filter((path) => before.dependencyHashes.get(path) !== after.dependencyHashes.get(path)));
 
   for (
     const path of
@@ -255,6 +298,16 @@ export function createVerifiedPatch(
       after:
         afterFile.content,
     });
+  }
+
+  if ([...changedDependencies].some((path) => {
+    const beforeHash = before.dependencyHashes.get(path);
+    const afterHash = after.dependencyHashes.get(path);
+    return (beforeHash !== undefined && before.files.get(path)?.hash !== beforeHash) ||
+      (afterHash !== undefined && after.files.get(path)?.hash !== afterHash) ||
+      !files.some((file) => file.path === path);
+  })) {
+    throw new IncompleteDependencyArtifactError();
   }
 
   return {

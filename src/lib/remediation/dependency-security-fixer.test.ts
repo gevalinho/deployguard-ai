@@ -28,6 +28,7 @@ async function repository() {
   process.env.DEPLOYGUARD_REMEDIATION_CACHE_ROOT = cacheRoot;
   const path = await mkdtemp(join(tmpdir(), "deployguard-fixer-test-"));
   repositories.push(path);
+  await writeFile(join(path, "package.json"), "{}");
   await writeFile(join(path, "package-lock.json"), "{}");
   return path;
 }
@@ -86,5 +87,55 @@ describe("dependency cache preflight", () => {
     process.env.DEPLOYGUARD_REMEDIATION_CACHE_ROOT = tmpdir();
     await expect(applyDependencySecurityFix(path, proposal)).rejects.toThrow("outside /tmp and /var/tmp");
     expect(runSandbox).not.toHaveBeenCalled();
+  });
+
+  it("continues to independent verification when npm exits one after changing the lockfile", async () => {
+    const path = await repository();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      runSandbox.mockImplementation(async () => {
+        await writeFile(join(path, "package-lock.json"), '{"changed":true}');
+        return { status: "failed", exitCode: 1,
+          stdout: report({ uid: 1000, gid: 1000, context: "container_t", ok: true }) + "found 2 vulnerabilities\n",
+          stderr: "npm ERR! request https://user:secret@example.test/path token=abc123",
+          durationMs: 41_000 };
+      });
+      const result = await applyDependencySecurityFix(path, proposal);
+      expect(result.status).toBe("applied");
+      const diagnostic = log.mock.calls.find(([label]) => label === "[DeployGuard Remediation npm failure]")?.[1];
+      expect(diagnostic).toMatchObject({ category: "unresolved_vulnerabilities", dependencyChanged: true });
+      expect(JSON.stringify(log.mock.calls)).not.toContain("secret");
+      expect(JSON.stringify(log.mock.calls)).not.toContain("abc123");
+      expect(JSON.stringify(log.mock.calls)).not.toContain("example.test");
+      const preflight = log.mock.calls.find(([label]) => label === "[DeployGuard Cache Preflight]")?.[1];
+      expect(preflight).not.toHaveProperty("stage");
+      expect(preflight).not.toHaveProperty("code");
+    } finally { log.mockRestore(); }
+  });
+
+  it("reports execution failure when npm exits one without changing dependency files", async () => {
+    const path = await repository();
+    runSandbox.mockResolvedValue({ status: "failed", exitCode: 1,
+      stdout: report({ uid: 1000, gid: 1000, ok: true }), stderr: "npm ERR! failure", durationMs: 1 });
+    expect((await applyDependencySecurityFix(path, proposal)).status).toBe("failed");
+  });
+
+  it.each([
+    ["EACCES", "permission_failure"],
+    ["ERESOLVE", "dependency_conflict"],
+    ["ENOTFOUND", "registry_failure"],
+    ["ETARGET", "unsupported_fix"],
+  ])("logs only a safe %s classification", async (code, category) => {
+    const path = await repository();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      runSandbox.mockResolvedValue({ status: "failed", exitCode: 1,
+        stdout: report({ uid: 1000, gid: 1000, ok: true }),
+        stderr: `npm ERR! ${code} credential-value-that-must-not-log`, durationMs: 1 });
+      await applyDependencySecurityFix(path, proposal);
+      expect(log.mock.calls.find(([label]) => label === "[DeployGuard Remediation npm failure]")?.[1])
+        .toMatchObject({ category });
+      expect(JSON.stringify(log.mock.calls)).not.toContain("credential-value-that-must-not-log");
+    } finally { log.mockRestore(); }
   });
 });

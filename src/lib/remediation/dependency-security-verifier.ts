@@ -4,6 +4,7 @@ import type {
 
 import {
   runSandboxSecurityAgent,
+  parseNpmStyleAuditReport,
 } from "@/lib/agents/sandbox-security-agent";
 
 import type {
@@ -15,8 +16,7 @@ function hasRegression(
 ): boolean {
   return checks.some(
     (check) =>
-      check.status === "failed" ||
-      check.status === "error"
+      check.status === "failed"
   );
 }
 
@@ -25,14 +25,18 @@ function hasInconclusiveRegression(
 ): boolean {
   return checks.some(
     (check) =>
-      check.status === "blocked"
+      check.status === "blocked" || check.status === "error" ||
+      (check.status === "skipped" &&
+        check.skipReason !== "not_applicable" && check.skipReason !== "not_configured")
   );
 }
 
 export async function verifyDependencySecurityFix(
   repositoryPath: string,
   before: CheckResult,
-  regressionChecks: CheckResult[] = []
+  regressionChecks: CheckResult[] = [],
+  targetPackageName?: string,
+  requiredCheckIds: string[] = [],
 ): Promise<FixProof> {
   const after =
     await runSandboxSecurityAgent(
@@ -47,6 +51,27 @@ export async function verifyDependencySecurityFix(
       before.status === "failed" &&
       after.status === "passed",
   };
+
+  if (requiredCheckIds.some((id) =>
+    regressionChecks.filter((check) => check.id === id).length !== 1)) return {
+    status: "inconclusive",
+    summary: "Required regression-check results were missing or duplicated.",
+    comparisons: [comparison], regressionChecks,
+  };
+
+  const beforeFindings = parseNpmStyleAuditReport(before.stdout ?? "");
+  const afterFindings = parseNpmStyleAuditReport(after.stdout ?? "");
+  if (!beforeFindings || !afterFindings) return {
+    status: "inconclusive",
+    summary: "A complete before and after npm audit report is required to prove remediation.",
+    comparisons: [comparison], regressionChecks,
+  };
+  const targetWasPresent = !targetPackageName || beforeFindings.some(
+    (finding) => finding.packageName.toLowerCase() === targetPackageName.toLowerCase()
+  );
+  const targetRemains = !!targetPackageName && afterFindings.some(
+    (finding) => finding.packageName.toLowerCase() === targetPackageName.toLowerCase()
+  );
 
   if (
     after.status === "blocked" ||
@@ -64,10 +89,14 @@ export async function verifyDependencySecurityFix(
   }
 
   if (after.status !== "passed") {
+    const partial = beforeFindings.length > 0 &&
+      afterFindings.length > 0 && afterFindings.length < beforeFindings.length;
     return {
       status: "not_proven",
       summary:
-        "The dependency security finding remains after the remediation attempt.",
+        partial
+          ? `Partial remediation: audit findings decreased from ${beforeFindings.length} to ${afterFindings.length}, but vulnerabilities remain.`
+          : "The dependency security finding remains after the remediation attempt.",
       comparisons: [
         comparison,
       ],
@@ -75,19 +104,18 @@ export async function verifyDependencySecurityFix(
     };
   }
 
-  if (
-    hasRegression(
-      regressionChecks
-    )
-  ) {
+  if (!targetWasPresent || targetRemains) {
     return {
-      status: "not_proven",
-      summary:
-        "The security finding was removed, but regression checks reported a failure.",
-      comparisons: [
-        comparison,
-      ],
-      regressionChecks,
+      status: "inconclusive",
+      summary: "The targeted package finding could not be confirmed resolved from before and after audit results.",
+      comparisons: [comparison], regressionChecks,
+    };
+  }
+
+  if (afterFindings.some((finding) => finding.severity === "high" || finding.severity === "critical")) {
+    return {
+      status: "inconclusive", summary: "The after audit still contains high-risk findings.",
+      comparisons: [comparison], regressionChecks,
     };
   }
 
@@ -99,11 +127,19 @@ export async function verifyDependencySecurityFix(
     return {
       status: "inconclusive",
       summary:
-        "The security finding was removed, but one or more regression checks were blocked.",
+        "The security finding was removed, but required regression evidence was unavailable or incomplete.",
       comparisons: [
         comparison,
       ],
       regressionChecks,
+    };
+  }
+
+  if (hasRegression(regressionChecks)) {
+    return {
+      status: "not_proven",
+      summary: "The security finding was removed, but regression checks reported a failure.",
+      comparisons: [comparison], regressionChecks,
     };
   }
 

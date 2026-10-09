@@ -34,6 +34,7 @@ export interface CheckEvidence {
   line?: number;
   column?: number;
   code?: string;
+  advisoryIds?: string[];
 } 
 
 export interface CheckConfigurationRequirement {

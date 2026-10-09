@@ -33,6 +33,7 @@ type AuditSeverity =
 export interface AuditFinding {
   packageName: string;
   severity: AuditSeverity;
+  advisoryIds?: string[];
 }
 
 interface NpmStyleAuditReport {
@@ -41,6 +42,7 @@ interface NpmStyleAuditReport {
     {
       name?: string;
       severity?: AuditSeverity;
+      via?: unknown[];
     }
   >;
 
@@ -119,6 +121,56 @@ function parseJson(
   } catch {
     return null;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+export function parseNpmStyleAuditReport(stdout: string): AuditFinding[] | null {
+  const parsed = parseJson(stdout);
+  if (!isRecord(parsed) || !isRecord(parsed.vulnerabilities) ||
+      !isRecord(parsed.metadata) || !isRecord(parsed.metadata.vulnerabilities)) return null;
+  const counts = parsed.metadata.vulnerabilities;
+  if (!["info", "low", "moderate", "high", "critical", "total"].every(
+    (key) => Number.isSafeInteger(counts[key]) && Number(counts[key]) >= 0
+  )) return null;
+  const findings: AuditFinding[] = [];
+  for (const [key, raw] of Object.entries(parsed.vulnerabilities)) {
+    if (!isRecord(raw) || !isAuditSeverity(raw.severity) ||
+        (raw.name !== undefined && typeof raw.name !== "string")) return null;
+    const via = Array.isArray(raw.via) ? raw.via : [];
+    const advisoryIds = via.flatMap((item) => {
+      if (!isRecord(item)) return [];
+      return typeof item.source === "number" && Number.isSafeInteger(item.source) && item.source >= 0
+        ? [String(item.source)] : [];
+    });
+    findings.push({ packageName: typeof raw.name === "string" ? raw.name : key,
+      severity: raw.severity, ...(advisoryIds.length ? { advisoryIds } : {}) });
+  }
+  if (!["info", "low", "moderate", "high", "critical"].every((severity) =>
+    findings.filter((finding) => finding.severity === severity).length === counts[severity]
+  ) || findings.length !== counts.total) return null;
+  return findings;
+}
+
+function parseLegacyAuditReport(stdout: string): AuditFinding[] | null {
+  const parsed = parseJson(stdout);
+  if (!isRecord(parsed) || !isRecord(parsed.advisories) ||
+      !isRecord(parsed.metadata) || !isRecord(parsed.metadata.vulnerabilities)) return null;
+  const counts = parsed.metadata.vulnerabilities;
+  if (!["high", "critical"].every((key) =>
+    Number.isSafeInteger(counts[key]) && Number(counts[key]) >= 0)) return null;
+  const findings: AuditFinding[] = [];
+  for (const [id, raw] of Object.entries(parsed.advisories)) {
+    if (!isRecord(raw) || !isAuditSeverity(raw.severity) ||
+        typeof raw.module_name !== "string") return null;
+    findings.push({ packageName: raw.module_name, severity: raw.severity,
+      ...(/^[0-9]{1,20}$/.test(id) ? { advisoryIds: [id] } : {}) });
+  }
+  if (findings.filter((finding) => finding.severity === "high").length !== counts.high ||
+      findings.filter((finding) => finding.severity === "critical").length !== counts.critical) return null;
+  return findings;
 }
 
 function isAuditSeverity(
@@ -215,6 +267,7 @@ function extractYarnClassicFindings(
         advisory?: {
           module_name?: string;
           severity?: string;
+          id?: number | string;
         };
       };
     };
@@ -238,28 +291,33 @@ function extractYarnClassicFindings(
         "unknown package",
       severity:
         advisory.severity,
+      ...(typeof advisory.id === "number" && Number.isSafeInteger(advisory.id) && advisory.id >= 0
+        ? { advisoryIds: [String(advisory.id)] } : {}),
     });
   }
 
   return findings;
 }
 
-function extractAuditFindings(
-  packageManager: PackageManagerInfo,
-  stdout: string
-): AuditFinding[] {
-  if (
-    packageManager.name === "yarn" &&
-    packageManager.yarnMode === "classic"
-  ) {
-    return extractYarnClassicFindings(
-      stdout
-    );
+function parseYarnClassicAuditReport(stdout: string): AuditFinding[] | null {
+  const lines = stdout.trim().split("\n");
+  if (!stdout.trim()) return null;
+  let summary: Record<string, unknown> | null = null;
+  for (const line of lines) {
+    const event = parseJson(line);
+    if (!isRecord(event) || typeof event.type !== "string") return null;
+    if (event.type === "auditSummary") {
+      if (!isRecord(event.data) || !isRecord(event.data.vulnerabilities)) return null;
+      summary = event.data.vulnerabilities;
+    }
   }
-
-  return extractNpmStyleFindings(
-    stdout
-  );
+  if (!summary || !["high", "critical"].every(
+    (key) => Number.isSafeInteger(summary?.[key]) && Number(summary?.[key]) >= 0
+  )) return null;
+  const findings = extractYarnClassicFindings(stdout);
+  if (findings.filter((finding) => finding.severity === "high").length !== summary.high ||
+      findings.filter((finding) => finding.severity === "critical").length !== summary.critical) return null;
+  return findings;
 }
 
 function getHighRiskFindings(
@@ -280,8 +338,7 @@ export function createSecurityEvidence(
   const highRisk =
     getHighRiskFindings(findings);
 
-  const seen =
-    new Set<string>();
+  const seen = new Map<string, CheckEvidence>();
 
   const evidence:
     CheckEvidence[] = [];
@@ -291,17 +348,20 @@ export function createSecurityEvidence(
       `${finding.packageName}:${finding.severity}`;
 
     if (seen.has(identity)) {
+      const existing = seen.get(identity)!;
+      existing.advisoryIds = [...new Set([...(existing.advisoryIds ?? []), ...(finding.advisoryIds ?? [])])];
       continue;
     }
 
-    seen.add(identity);
-
-    evidence.push({
+    const item: CheckEvidence = {
       kind: "security_finding",
       message:
         `${finding.packageName} has a ${finding.severity}-severity dependency vulnerability.`,
       code: finding.severity,
-    });
+      ...(finding.advisoryIds?.length ? { advisoryIds: [...finding.advisoryIds] } : {}),
+    };
+    seen.set(identity, item);
+    evidence.push(item);
   }
 
   return evidence;
@@ -533,24 +593,52 @@ export async function runSandboxSecurityAgent(
     };
   }
 
+  const parsedFindings = packageManager.name === "yarn" && packageManager.yarnMode === "classic"
+    ? parseYarnClassicAuditReport(result.stdout)
+    : packageManager.name === "npm"
+      ? parseNpmStyleAuditReport(result.stdout)
+      : parseNpmStyleAuditReport(result.stdout) ?? parseLegacyAuditReport(result.stdout);
+  if (!parsedFindings) return {
+    id: "security", category: "security", name: "Dependency Security",
+    status: "error", command: auditCommand.display, exitCode: result.exitCode,
+    durationMs: result.durationMs,
+    summary: "Dependency audit output was missing, incomplete, or unsupported.",
+    stdout: result.stdout, stderr: result.stderr,
+  };
+
+  if (result.exitCode === null || result.exitCode === undefined ||
+      (result.status === "failed" && result.exitCode === 0)) return {
+    id: "security", category: "security", name: "Dependency Security",
+    status: "error", command: auditCommand.display, exitCode: result.exitCode,
+    durationMs: result.durationMs,
+    summary: "Dependency audit execution did not return a usable exit status.",
+    stdout: result.stdout, stderr: result.stderr,
+  };
+
   const highSeverityFinding =
     auditReportedHighSeverityFinding(
       packageManager,
       result.exitCode
     );
 
-  const findings =
-    extractAuditFindings(
-      packageManager,
-      result.stdout
-    );
+  const findings = parsedFindings;
+
+  if (highSeverityFinding && !findings.some((finding) =>
+    finding.severity === "high" || finding.severity === "critical")) return {
+    id: "security", category: "security", name: "Dependency Security",
+    status: "error", command: auditCommand.display, exitCode: result.exitCode,
+    durationMs: result.durationMs,
+    summary: "Dependency audit exited unsuccessfully without matching high-risk findings.",
+    stdout: result.stdout, stderr: result.stderr,
+  };
 
   const securityEvidence =
   createSecurityEvidence(
     findings
   );
 
-  if (highSeverityFinding) {
+  if (highSeverityFinding || findings.some((finding) =>
+    finding.severity === "high" || finding.severity === "critical")) {
   return {
     id: "security",
     category: "security",

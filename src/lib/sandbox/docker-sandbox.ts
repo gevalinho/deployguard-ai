@@ -140,7 +140,7 @@ const userArgs =
   "--read-only",
 
   "--tmpfs",
-  "/tmp:rw,noexec,nosuid,size=256m",
+  "/tmp:rw,noexec,nosuid,size=256m,mode=1777",
 
   // ...userArgs,
   // ...environmentArgs,

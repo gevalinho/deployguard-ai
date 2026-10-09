@@ -74,6 +74,7 @@ import {
 import {
   captureWorkspaceSnapshot,
   createVerifiedPatch,
+  isDependencyFile,
 } from "@/lib/remediation/verified-patch";
 
 import {
@@ -91,16 +92,6 @@ export interface RemoteRemediationResult {
 
   remediation:
     PublicRemediationRun;
-}
-
-function shouldRunRegressionCheck(
-  check: CheckResult
-): boolean {
-  return (
-    check.status !== "skipped" &&
-    check.status !== "blocked" &&
-    check.status !== "error"
-  );
 }
 
 async function runRegressionChecks(
@@ -125,9 +116,7 @@ async function runRegressionChecks(
       ),
     ]);
 
-  return checks.filter(
-    shouldRunRegressionCheck
-  );
+  return checks;
 }
 
 function createRemediationReadinessImpact(
@@ -395,6 +384,20 @@ if (
   };
 }
 
+let dependencyAfterFix: ReturnType<typeof captureWorkspaceSnapshot> | undefined;
+if (proposal.strategy === "dependency_security") {
+  try { dependencyAfterFix = captureWorkspaceSnapshot(ingested.repositoryPath); }
+  catch {
+    execution.status = "failed";
+    execution.summary = "Dependency files could not be safely captured after remediation.";
+    return {
+      repository: { owner: repository.owner, name: repository.name,
+        fullName: repository.fullName, url: repository.url },
+      remediation: sanitizeRemediationForPublic(remediation),
+    };
+  }
+}
+
 /*
  * Re-run deterministic application checks after
  * mutation.
@@ -429,7 +432,9 @@ const proof =
     ? await verifyDependencySecurityFix(
         ingested.repositoryPath,
         before,
-        regressionChecks
+        regressionChecks,
+        proposal.packageName,
+        ["types", "lint", "test", "build"],
       )
     : await verifyLintAutofix(
         ingested.repositoryPath,
@@ -461,16 +466,49 @@ if (targetComparison) {
  * produce a verified patch.
  */
 if (proof.status === "proven") {
-  const workspaceAfter =
-    captureWorkspaceSnapshot(
-      ingested.repositoryPath
-    );
+  let verifiedPatch: ReturnType<typeof createVerifiedPatch>;
+  try {
+    const workspaceAfter = captureWorkspaceSnapshot(ingested.repositoryPath);
+    if (proposal.strategy === "dependency_security") {
+      const paths = new Set([
+        ...dependencyAfterFix!.dependencyHashes.keys(),
+        ...workspaceAfter.dependencyHashes.keys(),
+      ]);
+      if ([...paths].some((path) =>
+        dependencyAfterFix!.dependencyHashes.get(path) !== workspaceAfter.dependencyHashes.get(path))) {
+        throw new Error("Dependency files changed during validation.");
+      }
+    }
+    verifiedPatch = createVerifiedPatch(workspaceBefore, workspaceAfter);
+    if (proposal.strategy === "dependency_security" &&
+        verifiedPatch.files.some((file) => !isDependencyFile(file.path))) {
+      throw new Error("Remediation changed files outside dependency manifests and lockfiles.");
+    }
+  } catch {
+    proof.status = "inconclusive";
+    proof.summary = "The audited dependency changes could not be captured completely and exclusively in a verified artifact.";
+    remediation.proof = proof;
+    return {
+      sourceCommitSha: ingested.provenance.commitSha,
+      repository: { owner: repository.owner, name: repository.name,
+        fullName: repository.fullName, url: repository.url },
+      remediation: sanitizeRemediationForPublic(remediation),
+    };
+  }
 
-  const verifiedPatch =
-    createVerifiedPatch(
-      workspaceBefore,
-      workspaceAfter
-    );
+  if (verifiedPatch.fileCount === 0) {
+    proof.status = "not_proven";
+    proof.summary = "The audit passed, but remediation produced no deliverable file changes.";
+    remediation.proof = proof;
+    return {
+      sourceCommitSha: ingested.provenance.commitSha,
+      repository: {
+        owner: repository.owner, name: repository.name,
+        fullName: repository.fullName, url: repository.url,
+      },
+      remediation: sanitizeRemediationForPublic(remediation),
+    };
+  }
 
   remediation.verifiedPatch =
     verifiedPatch;
@@ -483,6 +521,18 @@ const verifiedPatchArtifact =
 
 remediation.verifiedPatchArtifact =
   verifiedPatchArtifact;
+
+// Dependency remediation remains observation-only during controlled production
+// testing. Without a persisted artifact ID, the delivery API cannot create a PR.
+if (proposal.strategy === "dependency_security") {
+  remediation.proof = proof;
+  return {
+    sourceCommitSha: ingested.provenance.commitSha,
+    repository: { owner: repository.owner, name: repository.name,
+      fullName: repository.fullName, url: repository.url },
+    remediation: sanitizeRemediationForPublic(remediation),
+  };
+}
 
 /*
  * Persist source-bearing remediation evidence
