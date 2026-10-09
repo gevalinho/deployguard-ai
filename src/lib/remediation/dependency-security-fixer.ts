@@ -1,8 +1,12 @@
 import type { FixExecutionResult, FixProposal } from "@/lib/remediation/types";
 
-import { runDockerSandboxCommand } from "@/lib/sandbox/docker-sandbox";
+import { runDockerSandboxCommand, SandboxContainerStateUnknownError } from "@/lib/sandbox/docker-sandbox";
 
 import { detectPackageManager } from "@/lib/sandbox/package-manager";
+
+import { chown, chmod, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const FIX_TIMEOUT_MS = 120_000;
 
@@ -55,33 +59,70 @@ export async function applyDependencySecurityFix(
         ]
       : ["npm", "audit", "fix", "--ignore-scripts", "--no-audit", "--no-fund"];
 
-  const result = await runDockerSandboxCommand({
-    repositoryPath,
+  const hostUid = typeof process.getuid === "function" ? process.getuid() : null;
+  const hostGid = typeof process.getgid === "function" ? process.getgid() : null;
+  const uid = hostUid && hostUid > 0 ? hostUid : 1000;
+  const gid = hostUid && hostUid > 0 ? (hostGid ?? 1000) : 1000;
+  const cacheDirectory = await mkdtemp(
+    join(tmpdir(), "deployguard-npm-cache-"),
+  );
 
-    command,
+  let result: Awaited<ReturnType<typeof runDockerSandboxCommand>> | undefined;
+  let executionError: unknown;
+  try {
+    // mkdtemp creates a private directory. Align ownership with the Docker UID
+    // when the host process runs under a different account (for example root).
+    if (hostUid !== uid || hostGid !== gid) {
+      await chown(cacheDirectory, uid, gid);
+    }
+    await chmod(cacheDirectory, 0o700);
 
-    network: "bridge",
+    result = await runDockerSandboxCommand({
+      repositoryPath,
+      command,
+      network: "bridge",
+      environment: {
+        HOME: "/tmp/deployguard-home",
+        CI: "true",
+        npm_config_cache: "/tmp/npm-cache",
+      },
+      user: `${uid}:${gid}`,
+      mounts: [
+        {
+          source: cacheDirectory,
+          target: "/tmp/npm-cache",
+          selinuxPrivate: true,
+        },
+      ],
+      limits: {
+        memoryMb: 2048,
+        cpus: 1,
+        timeoutMs: FIX_TIMEOUT_MS,
+      },
+    });
 
-    environment: {
-      HOME: "/tmp/deployguard-home",
+  } catch (error) {
+    executionError = error;
+    throw error;
+  } finally {
+    if (executionError instanceof SandboxContainerStateUnknownError) {
+      console.error("[DeployGuard Remediation] Cache retained because container state is unknown", {
+        cacheDirectory,
+      });
+    } else {
+      try {
+        await rm(cacheDirectory, { recursive: true, force: true });
+      } catch (cleanupError) {
+        console.error("[DeployGuard Remediation] Cache cleanup failed", {
+          cacheDirectory,
+          errorCode: (cleanupError as NodeJS.ErrnoException).code ?? "UNKNOWN",
+        });
+        if (!executionError && result?.status === "passed") throw cleanupError;
+      }
+    }
+  }
 
-      CI: "true",
-
-      npm_config_cache: "/tmp/npm-cache",
-    },
-
-    user:
-      typeof process.getuid === "function" &&
-      typeof process.getgid === "function"
-        ? `${process.getuid()}:${process.getgid()}`
-        : "1000:1000",
-
-    limits: {
-      memoryMb: 2048,
-      cpus: 1,
-      timeoutMs: FIX_TIMEOUT_MS,
-    },
-  });
+  if (!result) throw new Error("Sandbox execution returned no result.");
 
   const sanitizedStderr = result.stderr
     .replace(/https?:\/\/[^\s"'<>]+/gi, "[REDACTED_URL]")

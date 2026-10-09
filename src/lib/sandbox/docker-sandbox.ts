@@ -18,6 +18,14 @@ export interface DockerSandboxMount {
   source: string;
   target: string;
   readOnly?: boolean;
+  selinuxPrivate?: boolean;
+}
+
+export class SandboxContainerStateUnknownError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SandboxContainerStateUnknownError";
+  }
 }
 
 // export interface DockerSandboxCommand {
@@ -87,9 +95,11 @@ const userArgs =
 
     const additionalMountArgs =
   (input.mounts ?? []).flatMap(
-    (mount) => [
-      "--mount",
-      [
+    (mount) => mount.selinuxPrivate
+      ? ["--volume", `${mount.source}:${mount.target}:${mount.readOnly ? "ro," : ""}Z`]
+      : [
+        "--mount",
+        [
         "type=bind",
         `source=${mount.source}`,
         `target=${mount.target}`,
@@ -179,27 +189,41 @@ const userArgs =
       }
     );
 
-  const outcome = await Promise.race([
-    executionPromise,
-    timeoutPromise,
-  ]);
+  let outcome: Awaited<typeof executionPromise> | "timeout";
+  try {
+    outcome = await Promise.race([
+      executionPromise,
+      timeoutPromise,
+    ]);
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
 
   if (outcome === "timeout") {
+  let killExitCode: number | null = null;
   try {
-    await runCommand(
+    const killResult = await runCommand(
       "docker",
       [
         "kill",
         containerName,
       ],
-      input.repositoryPath
+      input.repositoryPath,
+      { timeoutMs: 10_000 },
     );
+    killExitCode = killResult.exitCode;
   } catch {
-    /*
-     * The container may already have
-     * exited before Docker received
-     * the kill request.
-     */
+    // The run process and inspect check still determine cleanup safety.
+  }
+  if (killExitCode !== 0) {
+    try {
+      await runCommand(
+        "docker", ["rm", "--force", containerName], input.repositoryPath,
+        { timeoutMs: 10_000 },
+      );
+    } catch {
+      // Keep waiting for docker run; never release the cache on uncertainty.
+    }
   }
 
   let terminatedResult:
@@ -209,13 +233,33 @@ const userArgs =
     undefined;
 
   try {
-    terminatedResult =
-      await executionPromise;
+    terminatedResult = await executionPromise;
   } catch {
-    /*
-     * Docker itself may fail after
-     * forced container termination.
-     */
+    // Verify container state below even if the Docker client failed.
+  }
+
+  let inspectResult: Awaited<ReturnType<typeof runCommand>>;
+  try {
+    inspectResult = await runCommand(
+      "docker",
+      ["inspect", "--format", "{{.State.Running}}", containerName],
+      input.repositoryPath,
+      { timeoutMs: 10_000 },
+    );
+  } catch {
+    throw new SandboxContainerStateUnknownError(
+      `Docker container ${containerName} could not be inspected after timeout.`,
+    );
+  }
+  // --rm removes a stopped container; otherwise inspect must say false.
+  const gone = inspectResult.exitCode !== 0 &&
+    /no such (object|container)/i.test(inspectResult.stderr);
+  if (inspectResult.timedOut || (!gone &&
+      (inspectResult.exitCode !== 0 || inspectResult.stdout.trim() !== "false"))) {
+    throw new SandboxContainerStateUnknownError(
+      `Docker container ${containerName} could not be confirmed stopped after timeout. ` +
+      `Kill exit code: ${killExitCode}; inspect exit code: ${inspectResult.exitCode}.`,
+    );
   }
 
   return {
@@ -239,10 +283,6 @@ const userArgs =
       Date.now() - startedAt,
   };
 }
-
-  if (timeoutHandle) {
-    clearTimeout(timeoutHandle);
-  }
 
   return {
     status:
