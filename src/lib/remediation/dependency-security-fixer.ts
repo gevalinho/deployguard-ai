@@ -4,11 +4,51 @@ import { runDockerSandboxCommand, SandboxContainerStateUnknownError } from "@/li
 
 import { detectPackageManager } from "@/lib/sandbox/package-manager";
 
-import { chown, chmod, mkdtemp, rm } from "node:fs/promises";
+import { chown, chmod, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runCommand } from "@/lib/execution/command-runner";
 
 const FIX_TIMEOUT_MS = 120_000;
+
+async function cacheMetadata(path: string) {
+  try {
+    const details = await stat(path);
+    return {
+      exists: true,
+      uid: details.uid,
+      gid: details.gid,
+      mode: (details.mode & 0o777).toString(8).padStart(3, "0"),
+      isDirectory: details.isDirectory(),
+    };
+  } catch (error) {
+    return { exists: false, errorCode: (error as NodeJS.ErrnoException).code ?? "UNKNOWN" };
+  }
+}
+
+async function logCacheState(stage: "before" | "after", directory: string, uid: number, gid: number) {
+  const [cache, cacache] = await Promise.all([
+    cacheMetadata(directory),
+    cacheMetadata(join(directory, "_cacache")),
+  ]);
+  let selinuxLabel: string | undefined;
+  try {
+    const labelResult = await runCommand(
+      "ls", ["-Zd", "--", directory], directory,
+      { inheritProcessEnv: false, env: { PATH: "/usr/bin:/bin" }, timeoutMs: 2_000 },
+    );
+    const firstField = labelResult.stdout.trim().split(/\s+/)[0];
+    if (labelResult.status === "passed" && firstField?.includes(":")) {
+      selinuxLabel = firstField;
+    }
+  } catch {
+    // The metadata diagnostic must not change the remediation outcome.
+  }
+  console.error("[DeployGuard Remediation Cache]", {
+    stage, expectedUid: uid, expectedGid: gid, cache, cacache,
+    selinuxLabel: selinuxLabel ?? "unavailable",
+  });
+}
 
 export async function applyDependencySecurityFix(
   repositoryPath: string,
@@ -76,6 +116,7 @@ export async function applyDependencySecurityFix(
       await chown(cacheDirectory, uid, gid);
     }
     await chmod(cacheDirectory, 0o700);
+    await logCacheState("before", cacheDirectory, uid, gid);
 
     result = await runDockerSandboxCommand({
       repositoryPath,
@@ -105,6 +146,11 @@ export async function applyDependencySecurityFix(
     executionError = error;
     throw error;
   } finally {
+    try {
+      await logCacheState("after", cacheDirectory, uid, gid);
+    } catch {
+      // Diagnostics cannot replace the Docker result or cleanup.
+    }
     if (executionError instanceof SandboxContainerStateUnknownError) {
       console.error("[DeployGuard Remediation] Cache retained because container state is unknown", {
         cacheDirectory,

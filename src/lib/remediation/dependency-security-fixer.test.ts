@@ -66,6 +66,29 @@ describe("dependency security cache", () => {
     await expect(stat(cachePath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("records private cache metadata before and after npm creates its cache", async () => {
+    const path = await repository();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      runSandbox.mockImplementation(async (input) => {
+        const { mkdir } = await import("node:fs/promises");
+        await mkdir(join(input.mounts[0].source, "_cacache"), { mode: 0o700 });
+        return { status: "failed", exitCode: 1, stdout: "", stderr: "", durationMs: 1 };
+      });
+      await applyDependencySecurityFix(path, proposal);
+      const records = log.mock.calls
+        .filter(([message]) => message === "[DeployGuard Remediation Cache]")
+        .map(([, metadata]) => metadata as { stage: string; cache: { uid: number; mode: string }; cacache: { exists: boolean } });
+      expect(records.map((record) => record.stage)).toEqual(["before", "after"]);
+      expect(records[0].cache.mode).toBe("700");
+      expect(records[0].cacache.exists).toBe(false);
+      expect(records[1].cacache.exists).toBe(true);
+      expect(JSON.stringify(records)).not.toContain(path);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("retains the cache if Docker cannot confirm container termination", async () => {
     const path = await repository();
     let cachePath = "";
