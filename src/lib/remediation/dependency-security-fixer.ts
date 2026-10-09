@@ -83,6 +83,18 @@ export async function applyDependencySecurityFix(
     },
   });
 
+  const sanitizedStderr = result.stderr
+    .replace(/https?:\/\/[^\s"'<>]+/gi, "[REDACTED_URL]")
+    .replace(
+      /(?:token|password|authorization|_authToken)\s*[:=]\s*\S+/gi,
+      "[REDACTED_CREDENTIAL]",
+    )
+    .slice(0, 2000);
+
+  if (result.status === "failed") {
+    console.error("[DeployGuard Remediation stderr]", sanitizedStderr);
+  }
+
   console.error("[DeployGuard Remediation Diagnostic]", {
     status: result.status,
     exitCode: result.exitCode,
