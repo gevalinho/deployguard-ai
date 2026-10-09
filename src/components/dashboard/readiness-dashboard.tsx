@@ -119,6 +119,7 @@ type RemediationResult = {
       strategy: "dependency_security" | "lint_autofix";
       risk: "safe" | "breaking_change_allowed";
       packageName?: string;
+      advisoryId?: string;
     };
 
     execution: {
@@ -2109,16 +2110,17 @@ export function ReadinessDashboard({
       const current = getControlledRemediationCandidates(report?.checks ?? [])
         .find((item) => item.checkId === candidate.checkId &&
           item.evidenceIndexes[0] === candidate.evidenceIndexes[0] &&
-          item.packageName === candidate.packageName);
+          item.packageName === candidate.packageName && item.advisoryId === candidate.advisoryId);
       if (!check || !current) throw new Error("The controlled remediation candidate is no longer supported by verified evidence.");
       const proposal = candidate.strategy === "dependency_security" ? {
-        id: `dependency-security-${candidate.packageName}`,
-        title: `Remediate ${candidate.packageName} vulnerability`,
+        id: `dependency-security-${candidate.packageName}-${candidate.advisoryId}`,
+        title: `Remediate ${candidate.packageName} advisory ${candidate.advisoryId}`,
         description: "Apply controlled dependency security remediation and verify the result.",
         target: { checkId: candidate.checkId, category: candidate.category, evidenceIndexes: candidate.evidenceIndexes },
         strategy: "dependency_security" as const,
         risk: "breaking_change_allowed" as const,
         packageName: candidate.packageName,
+        advisoryId: candidate.advisoryId,
       } : {
         id: "lint-autofix", title: "Apply controlled lint autofix",
         description: "Apply deterministic ESLint autofix and independently verify the result.",

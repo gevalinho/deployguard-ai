@@ -45,6 +45,7 @@ export interface PublicVerificationComparison {
 export interface PublicFixProof {
   status: FixProof["status"];
   summary: string;
+  remainingVulnerabilities?: FixProof["remainingVulnerabilities"];
 
   comparisons:
     PublicVerificationComparison[];
@@ -116,6 +117,9 @@ export function sanitizeRemediationForPublic(
 
           summary:
             remediation.proof.summary,
+          ...(remediation.proof.remainingVulnerabilities
+            ? { remainingVulnerabilities: remediation.proof.remainingVulnerabilities }
+            : {}),
 
           comparisons:
             remediation.proof.comparisons.map(
@@ -209,6 +213,7 @@ export function sanitizeRemediationForPublic(
       evidenceIndexes: [...remediation.proposal.target.evidenceIndexes],
     },
     ...(remediation.proposal.packageName ? { packageName: remediation.proposal.packageName } : {}),
+    ...(remediation.proposal.advisoryId ? { advisoryId: remediation.proposal.advisoryId } : {}),
   },
   ...(remediation.proof?.status === "proven" && remediation.verifiedArtifactReference
     ? { verifiedArtifactReference: {

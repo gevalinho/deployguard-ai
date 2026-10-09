@@ -14,7 +14,9 @@ async function repository() {
   return root;
 }
 const report = (high: number) => JSON.stringify({
-  vulnerabilities: high ? { target: { name: "target", severity: "high", via: [{ source: 9876 }] } } : {},
+  auditReportVersion: 2,
+  vulnerabilities: high ? { target: { name: "target", severity: "high", isDirect: true,
+    via: [{ name: "target", severity: "high", source: 9876 }], effects: [], range: "<2", nodes: ["node_modules/target"], fixAvailable: true } } : {},
   metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high, critical: 0, total: high } },
 });
 describe("sandbox security audit result", () => {

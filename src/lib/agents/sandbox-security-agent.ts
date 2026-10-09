@@ -129,25 +129,70 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function parseNpmStyleAuditReport(stdout: string): AuditFinding[] | null {
   const parsed = parseJson(stdout);
-  if (!isRecord(parsed) || !isRecord(parsed.vulnerabilities) ||
+  if (!isRecord(parsed) || parsed.auditReportVersion !== 2 || !isRecord(parsed.vulnerabilities) ||
       !isRecord(parsed.metadata) || !isRecord(parsed.metadata.vulnerabilities)) return null;
   const counts = parsed.metadata.vulnerabilities;
   if (!["info", "low", "moderate", "high", "critical", "total"].every(
     (key) => Number.isSafeInteger(counts[key]) && Number(counts[key]) >= 0
   )) return null;
   const findings: AuditFinding[] = [];
+  const relations = new Map<string, { via: string[]; effects: string[]; direct: boolean }>();
+  const sourceOwners = new Map<string, string>();
+  const severityRank: Record<AuditSeverity, number> =
+    { info: 0, low: 1, moderate: 2, high: 3, critical: 4 };
   for (const [key, raw] of Object.entries(parsed.vulnerabilities)) {
-    if (!isRecord(raw) || !isAuditSeverity(raw.severity) ||
-        (raw.name !== undefined && typeof raw.name !== "string")) return null;
-    const via = Array.isArray(raw.via) ? raw.via : [];
+    if (!isRecord(raw) || raw.name !== key || !isAuditSeverity(raw.severity) ||
+        typeof raw.isDirect !== "boolean" || typeof raw.range !== "string" || !raw.range ||
+        !Array.isArray(raw.nodes) || raw.nodes.length === 0 ||
+        raw.nodes.some((node) => typeof node !== "string" || !node) ||
+        !Array.isArray(raw.effects) || raw.effects.some((effect) => typeof effect !== "string" || !effect) ||
+        !(typeof raw.fixAvailable === "boolean" ||
+          (isRecord(raw.fixAvailable) && typeof raw.fixAvailable.name === "string" &&
+            typeof raw.fixAvailable.version === "string"))) return null;
+    if (!Array.isArray(raw.via) || raw.via.length === 0) return null;
+    const via = raw.via;
+    if (via.some((item) => typeof item === "string" ? !item || item === key :
+        (!isRecord(item) || item.name !== key || !isAuditSeverity(item.severity) ||
+          severityRank[item.severity as AuditSeverity] > severityRank[raw.severity as AuditSeverity] ||
+          !Number.isSafeInteger(item.source) || Number(item.source) < 0))) return null;
     const advisoryIds = via.flatMap((item) => {
       if (!isRecord(item)) return [];
-      return typeof item.source === "number" && Number.isSafeInteger(item.source) && item.source >= 0
-        ? [String(item.source)] : [];
+      return [String(item.source)];
     });
-    findings.push({ packageName: typeof raw.name === "string" ? raw.name : key,
+    if (new Set(advisoryIds).size !== advisoryIds.length ||
+        new Set(raw.effects).size !== raw.effects.length ||
+        new Set(via.filter((item): item is string => typeof item === "string")).size !==
+          via.filter((item) => typeof item === "string").length) return null;
+    for (const id of advisoryIds) {
+      if (sourceOwners.has(id) && sourceOwners.get(id) !== key) return null;
+      sourceOwners.set(id, key);
+    }
+    relations.set(key, { via: via.filter((item): item is string => typeof item === "string"),
+      effects: raw.effects as string[], direct: advisoryIds.length > 0 });
+    findings.push({ packageName: key,
       severity: raw.severity, ...(advisoryIds.length ? { advisoryIds } : {}) });
   }
+  for (const [key, { via, effects }] of relations) {
+    if (via.some((dependency) => !relations.get(dependency)?.effects.includes(key)) ||
+        effects.some((dependent) => !relations.get(dependent)?.via.includes(key))) return null;
+    const finding = findings.find((item) => item.packageName === key)!;
+    if (via.some((dependency) => severityRank[findings.find((item) =>
+      item.packageName === dependency)!.severity] > severityRank[finding.severity])) return null;
+  }
+  const reachable = new Set<string>();
+  const visiting = new Set<string>();
+  const reachesDirectAdvisory = (key: string): boolean => {
+    if (reachable.has(key)) return true;
+    if (visiting.has(key)) return false;
+    visiting.add(key);
+    const relation = relations.get(key)!;
+    const dependenciesValid = relation.via.every(reachesDirectAdvisory);
+    const valid = dependenciesValid && (relation.direct || relation.via.length > 0);
+    visiting.delete(key);
+    if (valid) reachable.add(key);
+    return valid;
+  };
+  if ([...relations.keys()].some((key) => !reachesDirectAdvisory(key))) return null;
   if (!["info", "low", "moderate", "high", "critical"].every((severity) =>
     findings.filter((finding) => finding.severity === severity).length === counts[severity]
   ) || findings.length !== counts.total) return null;

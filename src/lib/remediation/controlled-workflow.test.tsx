@@ -12,7 +12,7 @@ import type { PublicCheckResult } from "@/lib/reporting/types";
 const security: PublicCheckResult = {
   id: "security", category: "security", name: "Dependency Security", status: "failed",
   summary: "10 high-severity vulnerabilities",
-  evidence: [{ kind: "security_finding", message: "lodash has a high-severity dependency vulnerability.", code: "high" }],
+  evidence: [{ kind: "security_finding", message: "lodash has a high-severity dependency vulnerability.", code: "high", advisoryIds: ["123"] }],
 };
 const sha = "a".repeat(40);
 
@@ -41,13 +41,15 @@ describe("deterministic controlled remediation eligibility", () => {
     expect(controlled([{ ...security, id: "test", category: "test" }])).toBe("");
     expect(controlled([{ ...security, evidence: [{ kind: "diagnostic", message: "No detailed finding" }] }])).toBe("");
     expect(controlled([{ ...security, status: "blocked" }])).toBe("");
+    expect(controlled([{ ...security, evidence: [{ kind: "security_finding",
+      message: "lodash has a high-severity dependency vulnerability.", code: "high" }] }])).toBe("");
   });
 
   it("keeps original indexes when AI evidence is reordered", () => {
     const mixed: PublicCheckResult = { ...security, evidence: [
       { kind: "diagnostic", message: "General context" },
-      { kind: "security_finding", message: "lodash has a high-severity dependency vulnerability.", code: "high" },
-      { kind: "security_finding", message: "react has a high-severity dependency vulnerability.", code: "high", file: "package.json", line: 3 },
+      { kind: "security_finding", message: "lodash has a high-severity dependency vulnerability.", code: "high", advisoryIds: ["123"] },
+      { kind: "security_finding", message: "react has a high-severity dependency vulnerability.", code: "high", advisoryIds: ["456"], file: "package.json", line: 3 },
     ] };
     const sent = createRemediationCheckInputs([mixed])[0].evidence;
     expect(sent[0].originalIndex).toBe(2);

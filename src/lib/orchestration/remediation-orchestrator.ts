@@ -8,6 +8,7 @@ import {
 
 import {
   runSandboxSecurityAgent,
+  parseNpmStyleAuditReport,
 } from "@/lib/agents/sandbox-security-agent";
 
 import {
@@ -303,23 +304,27 @@ if (
  * by verified security evidence before mutation.
  */
 
-if (
-  proposal.strategy ===
-    "dependency_security" &&
-  proposal.packageName
-) {
-  const packageStillPresent =
-    currentEvidence.some(
-      (evidence) =>
-        evidence.kind ===
-          "security_finding" &&
-        evidence.message
-          .toLowerCase()
-          .includes(
-            proposal.packageName!
-              .toLowerCase()
-          )
-    );
+if (proposal.strategy === "dependency_security") {
+  if (!proposal.packageName || !proposal.advisoryId ||
+      !/^[0-9]{1,20}$/.test(proposal.advisoryId)) {
+    throw new Error("A package and stable advisory identity are required for dependency remediation.");
+  }
+  const baselineFindings = parseNpmStyleAuditReport(before.stdout ?? "");
+  if (!proposal.advisoryId || !/^[0-9]{1,20}$/.test(proposal.advisoryId) ||
+      !baselineFindings || baselineFindings.filter((finding) =>
+        finding.packageName.toLowerCase() === proposal.packageName!.toLowerCase() &&
+        finding.advisoryIds?.includes(proposal.advisoryId!)).length !== 1) {
+    throw new Error("The targeted advisory could not be uniquely confirmed in the fresh baseline audit.");
+  }
+  const selected = referencedEvidence[0];
+  const packageStillPresent = referencedEvidence.length === 1 &&
+    selected.kind === "security_finding" &&
+    selected.message.toLowerCase() ===
+      `${proposal.packageName.toLowerCase()} has a ${selected.code}-severity dependency vulnerability.` &&
+    (selected.code === "high" || selected.code === "critical") &&
+    Array.isArray(selected.advisoryIds) &&
+    selected.advisoryIds.filter((id) => id === proposal.advisoryId).length === 1 &&
+    selected.advisoryIds.every((id) => /^[0-9]{1,20}$/.test(id));
 
   if (!packageStillPresent) {
     throw new Error(
@@ -435,6 +440,7 @@ const proof =
         regressionChecks,
         proposal.packageName,
         ["types", "lint", "test", "build"],
+        proposal.advisoryId,
       )
     : await verifyLintAutofix(
         ingested.repositoryPath,
@@ -487,6 +493,9 @@ if (proof.status === "proven") {
   } catch {
     proof.status = "inconclusive";
     proof.summary = "The audited dependency changes could not be captured completely and exclusively in a verified artifact.";
+    if (proposal.strategy === "dependency_security") console.error("[DeployGuard Remediation Approval]", {
+      overallRemediationApprovalStatus: "rejected_patch_checks",
+    });
     remediation.proof = proof;
     return {
       sourceCommitSha: ingested.provenance.commitSha,
@@ -525,6 +534,9 @@ remediation.verifiedPatchArtifact =
 // Dependency remediation remains observation-only during controlled production
 // testing. Without a persisted artifact ID, the delivery API cannot create a PR.
 if (proposal.strategy === "dependency_security") {
+  console.error("[DeployGuard Remediation Approval]", {
+    overallRemediationApprovalStatus: "verified_observation_only",
+  });
   remediation.proof = proof;
   return {
     sourceCommitSha: ingested.provenance.commitSha,

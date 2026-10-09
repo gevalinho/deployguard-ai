@@ -26,8 +26,7 @@ function hasInconclusiveRegression(
   return checks.some(
     (check) =>
       check.status === "blocked" || check.status === "error" ||
-      (check.status === "skipped" &&
-        check.skipReason !== "not_applicable" && check.skipReason !== "not_configured")
+      check.status === "skipped"
   );
 }
 
@@ -37,6 +36,7 @@ export async function verifyDependencySecurityFix(
   regressionChecks: CheckResult[] = [],
   targetPackageName?: string,
   requiredCheckIds: string[] = [],
+  targetAdvisoryId?: string,
 ): Promise<FixProof> {
   const after =
     await runSandboxSecurityAgent(
@@ -52,106 +52,65 @@ export async function verifyDependencySecurityFix(
       after.status === "passed",
   };
 
-  if (requiredCheckIds.some((id) =>
-    regressionChecks.filter((check) => check.id === id).length !== 1)) return {
-    status: "inconclusive",
-    summary: "Required regression-check results were missing or duplicated.",
-    comparisons: [comparison], regressionChecks,
-  };
-
   const beforeFindings = parseNpmStyleAuditReport(before.stdout ?? "");
   const afterFindings = parseNpmStyleAuditReport(after.stdout ?? "");
-  if (!beforeFindings || !afterFindings) return {
-    status: "inconclusive",
-    summary: "A complete before and after npm audit report is required to prove remediation.",
-    comparisons: [comparison], regressionChecks,
+  const counts = afterFindings && {
+    info: afterFindings.filter((finding) => finding.severity === "info").length,
+    low: afterFindings.filter((finding) => finding.severity === "low").length,
+    moderate: afterFindings.filter((finding) => finding.severity === "moderate").length,
+    high: afterFindings.filter((finding) => finding.severity === "high").length,
+    critical: afterFindings.filter((finding) => finding.severity === "critical").length,
   };
-  const targetWasPresent = !targetPackageName || beforeFindings.some(
-    (finding) => finding.packageName.toLowerCase() === targetPackageName.toLowerCase()
+  const targetMatches = (findings: NonNullable<typeof beforeFindings>) => findings.filter(
+    (finding) => finding.packageName.toLowerCase() === targetPackageName?.toLowerCase() &&
+      finding.advisoryIds?.includes(targetAdvisoryId ?? ""),
   );
-  const targetRemains = !!targetPackageName && afterFindings.some(
-    (finding) => finding.packageName.toLowerCase() === targetPackageName.toLowerCase()
-  );
-
-  if (
-    after.status === "blocked" ||
-    after.status === "error"
-  ) {
-    return {
-      status: "inconclusive",
-      summary:
-        "DeployGuard could not obtain sufficient security evidence to prove the remediation.",
-      comparisons: [
-        comparison,
-      ],
-      regressionChecks,
-    };
+  const beforeMatches = beforeFindings ? targetMatches(beforeFindings) : [];
+  const afterMatches = afterFindings ? targetMatches(afterFindings) : [];
+  let status: FixProof["status"] = "inconclusive";
+  let summary = "A complete before and after npm audit report is required to prove remediation.";
+  const trustworthy = before.status === "failed" && before.exitCode !== null &&
+    before.exitCode !== undefined && before.exitCode !== 0 &&
+    ["passed", "failed"].includes(after.status) &&
+    after.exitCode !== null && after.exitCode !== undefined &&
+    ((after.status === "passed" && after.exitCode === 0) ||
+      (after.status === "failed" && after.exitCode !== 0));
+  const statusConsistent = !!afterFindings &&
+    (after.status === "failed" ? afterFindings.some((finding) =>
+      finding.severity === "high" || finding.severity === "critical") :
+      !afterFindings.some((finding) => finding.severity === "high" || finding.severity === "critical"));
+  if (beforeFindings && afterFindings && trustworthy && statusConsistent && targetPackageName &&
+      targetAdvisoryId && /^[0-9]{1,20}$/.test(targetAdvisoryId)) {
+    if (beforeMatches.length !== 1 || beforeFindings.some((finding) =>
+      finding.packageName.toLowerCase() !== targetPackageName.toLowerCase() &&
+      finding.advisoryIds?.includes(targetAdvisoryId))) {
+      summary = "The targeted advisory identity was absent or ambiguous in the baseline audit.";
+    } else if (afterMatches.length > 0 || afterFindings.some((finding) =>
+      finding.packageName.toLowerCase() !== targetPackageName.toLowerCase() &&
+      finding.advisoryIds?.includes(targetAdvisoryId))) {
+      status = "not_proven";
+      summary = "The targeted advisory remains in the post-remediation audit.";
+    } else if (requiredCheckIds.some((id) =>
+      regressionChecks.filter((check) => check.id === id).length !== 1) ||
+      hasInconclusiveRegression(regressionChecks)) {
+      summary = "Required regression evidence was unavailable or incomplete.";
+    } else if (hasRegression(regressionChecks)) {
+      status = "not_proven";
+      summary = "The targeted advisory was removed, but regression checks failed.";
+    } else {
+      status = "proven";
+      summary = `The targeted advisory was absent after remediation. Other audit findings remain: ${afterFindings.length} total, ${counts!.high} high, ${counts!.critical} critical.`;
+    }
   }
-
-  if (after.status !== "passed") {
-    const partial = beforeFindings.length > 0 &&
-      afterFindings.length > 0 && afterFindings.length < beforeFindings.length;
-    return {
-      status: "not_proven",
-      summary:
-        partial
-          ? `Partial remediation: audit findings decreased from ${beforeFindings.length} to ${afterFindings.length}, but vulnerabilities remain.`
-          : "The dependency security finding remains after the remediation attempt.",
-      comparisons: [
-        comparison,
-      ],
-      regressionChecks,
-    };
-  }
-
-  if (!targetWasPresent || targetRemains) {
-    return {
-      status: "inconclusive",
-      summary: "The targeted package finding could not be confirmed resolved from before and after audit results.",
-      comparisons: [comparison], regressionChecks,
-    };
-  }
-
-  if (afterFindings.some((finding) => finding.severity === "high" || finding.severity === "critical")) {
-    return {
-      status: "inconclusive", summary: "The after audit still contains high-risk findings.",
-      comparisons: [comparison], regressionChecks,
-    };
-  }
-
-  if (
-    hasInconclusiveRegression(
-      regressionChecks
-    )
-  ) {
-    return {
-      status: "inconclusive",
-      summary:
-        "The security finding was removed, but required regression evidence was unavailable or incomplete.",
-      comparisons: [
-        comparison,
-      ],
-      regressionChecks,
-    };
-  }
-
-  if (hasRegression(regressionChecks)) {
-    return {
-      status: "not_proven",
-      summary: "The security finding was removed, but regression checks reported a failure.",
-      comparisons: [comparison], regressionChecks,
-    };
-  }
-
-  return {
-    status: "proven",
-    summary:
-      regressionChecks.length > 0
-        ? "The original dependency security failure was removed and the supplied regression checks remained acceptable."
-        : "The original dependency security failure was removed and no supplied regression check reported a failure.",
-    comparisons: [
-      comparison,
-    ],
-    regressionChecks,
-  };
+  console.error("[DeployGuard Remediation Verification]", {
+    targetPackage: /^[a-zA-Z0-9@/._-]{1,214}$/.test(targetPackageName ?? "") ? targetPackageName : "invalid",
+    targetAdvisoryId: /^[0-9]{1,20}$/.test(targetAdvisoryId ?? "") ? targetAdvisoryId : "invalid",
+    baselineAuditValid: !!beforeFindings && before.status === "failed",
+    postRemediationAuditValid: !!afterFindings && trustworthy && statusConsistent,
+    targetVerificationResult: status,
+    remainingVulnerabilities: counts,
+    overallRemediationApprovalStatus: status === "proven" ? "pending_patch_checks" : "rejected",
+  });
+  return { status, summary, comparisons: [comparison], regressionChecks,
+    ...(counts ? { remainingVulnerabilities: counts } : {}) };
 }

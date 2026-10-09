@@ -80,6 +80,8 @@ function isFixProposal(
   ) {
     return false;
   }
+  if (proposal.advisoryId !== undefined &&
+      (typeof proposal.advisoryId !== "string" || !/^[0-9]{1,20}$/.test(proposal.advisoryId))) return false;
 
   if (
     !proposal.target ||
@@ -118,6 +120,9 @@ function isFixProposal(
       return false;
     }
 
+    if (!isString(proposal.packageName) || !/^[0-9]{1,20}$/.test(String(proposal.advisoryId)) ||
+        target.evidenceIndexes.length !== 1) return false;
+
     return true;
   }
 
@@ -135,7 +140,7 @@ function isFixProposal(
      * packageName has meaning only for
      * dependency-security remediation.
      */
-    if (proposal.packageName !== undefined) {
+    if (proposal.packageName !== undefined || proposal.advisoryId !== undefined) {
       return false;
     }
 
@@ -251,6 +256,7 @@ export async function POST(
             evidenceIndexes: [...body.proposal.target.evidenceIndexes],
           },
           ...(body.proposal.packageName ? { packageName: body.proposal.packageName } : {}),
+          ...(body.proposal.advisoryId ? { advisoryId: body.proposal.advisoryId } : {}),
         },
         openGitHubAppReadTransport,
       );

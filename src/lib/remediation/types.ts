@@ -54,6 +54,7 @@ risk:
 
 
   packageName?: string;
+  advisoryId?: string;
 }
 
 
@@ -82,6 +83,9 @@ export interface FixProof {
   status: ProofStatus;
 
   summary: string;
+  remainingVulnerabilities?: {
+    info: number; low: number; moderate: number; high: number; critical: number;
+  };
 
   comparisons:
     VerificationComparison[];
