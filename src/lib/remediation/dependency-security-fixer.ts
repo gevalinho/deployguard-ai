@@ -1,27 +1,16 @@
-import type {
-  FixExecutionResult,
-  FixProposal,
-} from "@/lib/remediation/types";
+import type { FixExecutionResult, FixProposal } from "@/lib/remediation/types";
 
-import {
-  runDockerSandboxCommand,
-} from "@/lib/sandbox/docker-sandbox";
+import { runDockerSandboxCommand } from "@/lib/sandbox/docker-sandbox";
 
-import {
-  detectPackageManager,
-} from "@/lib/sandbox/package-manager";
-
+import { detectPackageManager } from "@/lib/sandbox/package-manager";
 
 const FIX_TIMEOUT_MS = 120_000;
 
 export async function applyDependencySecurityFix(
   repositoryPath: string,
-  proposal: FixProposal
+  proposal: FixProposal,
 ): Promise<FixExecutionResult> {
-  if (
-    proposal.strategy !==
-    "dependency_security"
-  ) {
+  if (proposal.strategy !== "dependency_security") {
     return {
       status: "unsupported",
       summary:
@@ -29,16 +18,12 @@ export async function applyDependencySecurityFix(
     };
   }
 
-  const packageManager =
-    detectPackageManager(
-      repositoryPath
-    );
+  const packageManager = detectPackageManager(repositoryPath);
 
   if (!packageManager) {
     return {
       status: "unsupported",
-      summary:
-        "No supported package manager lockfile was detected.",
+      summary: "No supported package manager lockfile was detected.",
     };
   }
 
@@ -53,105 +38,103 @@ export async function applyDependencySecurityFix(
   if (packageManager.name !== "npm") {
     return {
       status: "unsupported",
-      summary:
-        `Automatic dependency remediation is not yet supported for ${packageManager.name}.`,
+      summary: `Automatic dependency remediation is not yet supported for ${packageManager.name}.`,
     };
   }
 
   const command =
-  proposal.risk ===
-  "breaking_change_allowed"
-    ? [
-        "npm",
-        "audit",
-        "fix",
-        "--force",
-        "--ignore-scripts",
-        "--no-audit",
-        "--no-fund",
-      ]
-    : [
-        "npm",
-        "audit",
-        "fix",
-        "--ignore-scripts",
-        "--no-audit",
-        "--no-fund",
-      ];
+    proposal.risk === "breaking_change_allowed"
+      ? [
+          "npm",
+          "audit",
+          "fix",
+          "--force",
+          "--ignore-scripts",
+          "--no-audit",
+          "--no-fund",
+        ]
+      : ["npm", "audit", "fix", "--ignore-scripts", "--no-audit", "--no-fund"];
 
-
-  const result =
-  await runDockerSandboxCommand({
+  const result = await runDockerSandboxCommand({
     repositoryPath,
 
-   command,
+    command,
 
     network: "bridge",
 
     environment: {
-      HOME:
-        "/tmp/deployguard-home",
+      HOME: "/tmp/deployguard-home",
 
       CI: "true",
 
-      npm_config_cache:
-        "/tmp/npm-cache",
+      npm_config_cache: "/tmp/npm-cache",
     },
 
     user:
-      typeof process.getuid ===
-        "function" &&
-      typeof process.getgid ===
-        "function"
+      typeof process.getuid === "function" &&
+      typeof process.getgid === "function"
         ? `${process.getuid()}:${process.getgid()}`
         : "1000:1000",
 
     limits: {
       memoryMb: 2048,
       cpus: 1,
-      timeoutMs:
-        FIX_TIMEOUT_MS,
+      timeoutMs: FIX_TIMEOUT_MS,
     },
   });
 
+  console.error("[DeployGuard Remediation Diagnostic]", {
+    status: result.status,
+    exitCode: result.exitCode,
+    durationMs: result.durationMs,
+    stdoutLength: result.stdout.length,
+    stderrLength: result.stderr.length,
+    stdoutHasERESOLVE: result.stdout.includes("ERESOLVE"),
+    stderrHasERESOLVE: result.stderr.includes("ERESOLVE"),
+    stdoutHasEACCES: result.stdout.includes("EACCES"),
+    stderrHasEACCES: result.stderr.includes("EACCES"),
+    hasRegistryError: /ENOTFOUND|ETIMEDOUT|ECONNRESET|EAI_AGAIN/.test(
+      result.stdout + result.stderr,
+    ),
+    hasAuditError: /audit endpoint|audit error|EAUDIT/i.test(
+      result.stdout + result.stderr,
+    ),
+  });
 
   if (result.status === "timed_out") {
     return {
       status: "failed",
-      summary:
-        "Dependency remediation exceeded the configured timeout.",
-      command:
-        "npm audit fix",
-      exitCode:
-        result.exitCode,
-      durationMs:
-        result.durationMs,
+      summary: "Dependency remediation exceeded the configured timeout.",
+      command: "npm audit fix",
+      exitCode: result.exitCode,
+      durationMs: result.durationMs,
     };
   }
 
   if (result.status === "failed") {
+    console.error("[DeployGuard Remediation] npm audit fix failed", {
+      exitCode: result.exitCode,
+      durationMs: result.durationMs,
+      // Do not log raw stdout/stderr here:
+      // npm output may contain credentials or private registry URLs.
+      stdoutLength: result.stdout.length,
+      stderrLength: result.stderr.length,
+    });
+
     return {
       status: "failed",
-      summary:
-        "npm could not complete the dependency security remediation.",
-      command:
-        "npm audit fix",
-      exitCode:
-        result.exitCode,
-      durationMs:
-        result.durationMs,
+      summary: "npm could not complete the dependency security remediation.",
+      command: "npm audit fix",
+      exitCode: result.exitCode,
+      durationMs: result.durationMs,
     };
   }
 
   return {
     status: "applied",
-    summary:
-      "npm completed the dependency security remediation attempt.",
-    command:
-      "npm audit fix",
-    exitCode:
-      result.exitCode,
-    durationMs:
-      result.durationMs,
+    summary: "npm completed the dependency security remediation attempt.",
+    command: "npm audit fix",
+    exitCode: result.exitCode,
+    durationMs: result.durationMs,
   };
 }
