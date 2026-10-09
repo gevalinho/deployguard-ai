@@ -1,14 +1,28 @@
 import type { FixExecutionResult, FixProposal } from "@/lib/remediation/types";
 
 import { runDockerSandboxCommand, SandboxContainerStateUnknownError } from "@/lib/sandbox/docker-sandbox";
-import { chown, chmod, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { chown, chmod, mkdtemp, realpath, rm } from "node:fs/promises";
+import { isAbsolute, join, sep } from "node:path";
 
 import { detectPackageManager } from "@/lib/sandbox/package-manager";
 
 const FIX_TIMEOUT_MS = 120_000;
 const PREFLIGHT_PREFIX = "DEPLOYGUARD_CACHE_PREFLIGHT:";
+const DEFAULT_CACHE_ROOT = "/var/cache/deployguard";
+
+async function remediationCacheRoot(): Promise<string> {
+  const configured = process.env.DEPLOYGUARD_REMEDIATION_CACHE_ROOT ||
+    process.env.CACHE_DIRECTORY || DEFAULT_CACHE_ROOT;
+  if (!isAbsolute(configured) || configured.includes(":")) {
+    throw new Error("Remediation cache root must be a single absolute directory.");
+  }
+  // Resolve links so a configured path cannot point back into PrivateTmp.
+  const root = await realpath(configured);
+  if (["/tmp", "/var/tmp"].some((base) => root === base || root.startsWith(base + sep))) {
+    throw new Error("Remediation cache root must be outside /tmp and /var/tmp.");
+  }
+  return root;
+}
 
 // This script runs in the npm container, before npm, with the same user and mount.
 const preflightScript = `
@@ -123,7 +137,7 @@ export async function applyDependencySecurityFix(
   const hostGid = typeof process.getgid === "function" ? process.getgid() : null;
   const uid = hostUid && hostUid > 0 ? hostUid : 1000;
   const gid = hostUid && hostUid > 0 ? (hostGid ?? 1000) : 1000;
-  const cacheDirectory = await mkdtemp(join(tmpdir(), "deployguard-npm-cache-"));
+  const cacheDirectory = await mkdtemp(join(await remediationCacheRoot(), "deployguard-npm-cache-"));
   let result: Awaited<ReturnType<typeof runDockerSandboxCommand>>;
   let containerStateUnknown = false;
   try {
