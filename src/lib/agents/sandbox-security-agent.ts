@@ -147,18 +147,24 @@ function auditFieldType(value: unknown): AuditFieldType {
 
 const auditCountKeys = ["info", "low", "moderate", "high", "critical", "total"] as const;
 
+interface NpmAuditDiagnostic {
+  reason: AuditDiagnosticReason | null;
+  relationshipSubreason: AuditRelationshipSubreason | null;
+  stdoutBytes: number;
+  jsonParsed: boolean;
+  auditReportVersion: number | "missing" | "invalid";
+  fields: { vulnerabilities: AuditFieldType; metadata: AuditFieldType;
+    metadataVulnerabilities: AuditFieldType };
+  counts?: Record<(typeof auditCountKeys)[number], number>;
+  missingReverseEffectsCount?: number;
+  missingReverseStringViaCount?: number;
+  absentViaReferenceCount?: number;
+  absentEffectReferenceCount?: number;
+}
+
 export function inspectNpmStyleAuditReport(stdout: string | undefined): {
   findings: AuditFinding[] | null;
-  diagnostic: {
-    reason: AuditDiagnosticReason | null;
-    relationshipSubreason: AuditRelationshipSubreason | null;
-    stdoutBytes: number;
-    jsonParsed: boolean;
-    auditReportVersion: number | "missing" | "invalid";
-    fields: { vulnerabilities: AuditFieldType; metadata: AuditFieldType;
-      metadataVulnerabilities: AuditFieldType };
-    counts?: Record<(typeof auditCountKeys)[number], number>;
-  };
+  diagnostic: NpmAuditDiagnostic;
 } {
   let parsedJson: unknown;
   let jsonParsed = false;
@@ -176,9 +182,9 @@ export function inspectNpmStyleAuditReport(stdout: string | undefined): {
   const countsValid = rawCounts !== null && auditCountKeys.every(
     (key) => Number.isSafeInteger(rawCounts[key]) && Number(rawCounts[key]) >= 0
   );
-  const diagnostic = {
-    reason: null as AuditDiagnosticReason | null,
-    relationshipSubreason: null as AuditRelationshipSubreason | null,
+  const diagnostic: NpmAuditDiagnostic = {
+    reason: null,
+    relationshipSubreason: null,
     stdoutBytes: typeof stdout === "string" ? Buffer.byteLength(stdout, "utf8") : 0,
     jsonParsed,
     auditReportVersion: typeof root?.auditReportVersion === "number" &&
@@ -247,11 +253,27 @@ export function inspectNpmStyleAuditReport(stdout: string | undefined): {
     findings.push({ packageName: key,
       severity: raw.severity, ...(advisoryIds.length ? { advisoryIds } : {}) });
   }
+  const relationshipCounts = {
+    missingReverseEffectsCount: 0,
+    missingReverseStringViaCount: 0,
+    absentViaReferenceCount: 0,
+    absentEffectReferenceCount: 0,
+  };
   for (const [key, { via, effects }] of relations) {
-    if (via.some((dependency) => !relations.get(dependency)?.effects.includes(key)) ||
-        effects.some((dependent) => !relations.get(dependent)?.via.includes(key)))
-      return reject("inconsistent_vulnerability_relationships", "reciprocal_link_failure");
+    for (const dependency of via) {
+      const referenced = relations.get(dependency);
+      if (!referenced) relationshipCounts.absentViaReferenceCount++;
+      else if (!referenced.effects.includes(key)) relationshipCounts.missingReverseEffectsCount++;
+    }
+    for (const dependent of effects) {
+      const referenced = relations.get(dependent);
+      if (!referenced) relationshipCounts.absentEffectReferenceCount++;
+      else if (!referenced.via.includes(key)) relationshipCounts.missingReverseStringViaCount++;
+    }
   }
+  Object.assign(diagnostic, relationshipCounts);
+  if (Object.values(relationshipCounts).some((count) => count > 0))
+    return reject("inconsistent_vulnerability_relationships", "reciprocal_link_failure");
   const reachable = new Set<string>();
   const visiting = new Set<string>();
   const reachesDirectAdvisory = (key: string): boolean => {

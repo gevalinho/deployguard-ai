@@ -47,7 +47,9 @@ describe("npm audit v2 evidence", () => {
       stdoutBytes: Buffer.byteLength(report({ braces: direct("braces", 1) })),
       jsonParsed: true, auditReportVersion: 2,
       fields: { vulnerabilities: "object", metadata: "object", metadataVulnerabilities: "object" },
-      counts: { info: 0, low: 0, moderate: 0, high: 1, critical: 0, total: 1 } });
+      counts: { info: 0, low: 0, moderate: 0, high: 1, critical: 0, total: 1 },
+      missingReverseEffectsCount: 0, missingReverseStringViaCount: 0,
+      absentViaReferenceCount: 0, absentEffectReferenceCount: 0 });
     const invalid = inspectNpmStyleAuditReport(JSON.stringify({ auditReportVersion: 2,
       vulnerabilities: {}, metadata: { vulnerabilities: { high: "secret" } } }));
     expect(invalid.diagnostic.counts).toBeUndefined();
@@ -106,6 +108,48 @@ describe("npm audit v2 evidence", () => {
     expect(missingReciprocal.diagnostic).toMatchObject({ reason: "inconsistent_vulnerability_relationships",
       relationshipSubreason: "reciprocal_link_failure" });
     expect(JSON.stringify(missingReciprocal.diagnostic)).not.toMatch(/braces|parent/);
+  });
+  it("counts the npm 10 same-range metavulnerability pattern without accepting it", () => {
+    // npm 10 can retain both via advisories after deduplicating traversal by name and range.
+    const inspection = inspectNpmStyleAuditReport(report({
+      firstSource: direct("firstSource", 101, ["parent"]),
+      secondSource: direct("secondSource", 202),
+      parent: dependent("parent", ["firstSource", "secondSource"]),
+    }));
+    expect(inspection.findings).toBeNull();
+    expect(inspection.diagnostic).toMatchObject({ reason: "inconsistent_vulnerability_relationships",
+      relationshipSubreason: "reciprocal_link_failure", missingReverseEffectsCount: 1,
+      missingReverseStringViaCount: 0, absentViaReferenceCount: 0, absentEffectReferenceCount: 0 });
+  });
+  it("counts a reverse effect without a string via separately", () => {
+    const inspection = inspectNpmStyleAuditReport(report({
+      source: direct("source", 101, ["parent"]),
+      parent: direct("parent", 202),
+    }));
+    expect(inspection.findings).toBeNull();
+    expect(inspection.diagnostic).toMatchObject({ missingReverseEffectsCount: 0,
+      missingReverseStringViaCount: 1, absentViaReferenceCount: 0, absentEffectReferenceCount: 0 });
+  });
+  it("distinguishes absent records from missing reverse relationships", () => {
+    const inspection = inspectNpmStyleAuditReport(report({
+      source: direct("source", 101, ["absentEffect"]),
+      parent: dependent("parent", ["absentVia"]),
+    }));
+    expect(inspection.findings).toBeNull();
+    expect(inspection.diagnostic).toMatchObject({ missingReverseEffectsCount: 0,
+      missingReverseStringViaCount: 0, absentViaReferenceCount: 1, absentEffectReferenceCount: 1 });
+  });
+  it("counts every mismatch in a complete graph without counting a directed relationship twice", () => {
+    const inspection = inspectNpmStyleAuditReport(report({
+      firstSource: direct("firstSource", 101),
+      secondSource: direct("secondSource", 202, ["parent", "absentEffect"]),
+      parent: dependent("parent", ["firstSource", "absentVia"]),
+    }));
+    expect(inspection.findings).toBeNull();
+    expect(inspection.diagnostic).toMatchObject({ reason: "inconsistent_vulnerability_relationships",
+      relationshipSubreason: "reciprocal_link_failure", missingReverseEffectsCount: 1,
+      missingReverseStringViaCount: 1, absentViaReferenceCount: 1, absentEffectReferenceCount: 1 });
+    expect(JSON.stringify(inspection.diagnostic)).not.toMatch(/"(firstSource|secondSource|parent|absentVia|absentEffect)"/);
   });
   it("rejects reciprocal but unanchored chains with a fixed reachability subreason", () => {
     const first = { ...dependent("first", ["second"]), effects: ["second"] };

@@ -61,7 +61,8 @@ describe("sandbox security audit result", () => {
     expect((await runSandboxSecurityAgent(await repository())).status).toBe("error");
     expect(warning).toHaveBeenCalledWith("[DeployGuard Dependency Audit Diagnostic]",
       expect.objectContaining({ reason: "inconsistent_vulnerability_relationships",
-        relationshipSubreason: "reciprocal_link_failure" }));
+        relationshipSubreason: "reciprocal_link_failure", missingReverseEffectsCount: 1,
+        missingReverseStringViaCount: 0, absentViaReferenceCount: 0, absentEffectReferenceCount: 0 }));
     expect(JSON.stringify(warning.mock.calls)).not.toMatch(/dependency|dependent|node_modules/);
   });
   it("classifies unusable sandbox execution status", async () => {
