@@ -127,20 +127,89 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-export function parseNpmStyleAuditReport(stdout: string): AuditFinding[] | null {
-  const parsed = parseJson(stdout);
-  if (!isRecord(parsed) || parsed.auditReportVersion !== 2 || !isRecord(parsed.vulnerabilities) ||
-      !isRecord(parsed.metadata) || !isRecord(parsed.metadata.vulnerabilities)) return null;
-  const counts = parsed.metadata.vulnerabilities;
-  if (!["info", "low", "moderate", "high", "critical", "total"].every(
-    (key) => Number.isSafeInteger(counts[key]) && Number(counts[key]) >= 0
-  )) return null;
+type AuditDiagnosticReason = "missing_stdout" | "empty_stdout" | "invalid_json" |
+  "unsupported_report_version" | "missing_required_top_level_fields" |
+  "invalid_vulnerability_records" | "invalid_metadata_counts" |
+  "inconsistent_advisory_identifiers" | "inconsistent_vulnerability_relationships" |
+  "sandbox_execution_failure" | "audit_service_unavailable" |
+  "audit_exit_without_high_severity";
+
+type AuditFieldType = "missing" | "null" | "object" | "array" | "string" | "number" | "boolean";
+
+function auditFieldType(value: unknown): AuditFieldType {
+  if (value === undefined) return "missing";
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value as AuditFieldType;
+}
+
+const auditCountKeys = ["info", "low", "moderate", "high", "critical", "total"] as const;
+
+export function inspectNpmStyleAuditReport(stdout: string | undefined): {
+  findings: AuditFinding[] | null;
+  diagnostic: {
+    reason: AuditDiagnosticReason | null;
+    stdoutBytes: number;
+    jsonParsed: boolean;
+    auditReportVersion: number | "missing" | "invalid";
+    fields: { vulnerabilities: AuditFieldType; metadata: AuditFieldType;
+      metadataVulnerabilities: AuditFieldType };
+    counts?: Record<(typeof auditCountKeys)[number], number>;
+  };
+} {
+  let parsedJson: unknown;
+  let jsonParsed = false;
+  if (typeof stdout === "string" && stdout.trim()) {
+    try {
+      parsedJson = JSON.parse(stdout);
+      jsonParsed = true;
+    } catch {
+      // A parse failure is recorded as a code; never log the input or parser exception.
+    }
+  }
+  const root = isRecord(parsedJson) ? parsedJson : null;
+  const metadata = isRecord(root?.metadata) ? root.metadata : null;
+  const rawCounts = isRecord(metadata?.vulnerabilities) ? metadata.vulnerabilities : null;
+  const countsValid = rawCounts !== null && auditCountKeys.every(
+    (key) => Number.isSafeInteger(rawCounts[key]) && Number(rawCounts[key]) >= 0
+  );
+  const diagnostic = {
+    reason: null as AuditDiagnosticReason | null,
+    stdoutBytes: typeof stdout === "string" ? Buffer.byteLength(stdout, "utf8") : 0,
+    jsonParsed,
+    auditReportVersion: typeof root?.auditReportVersion === "number" &&
+      Number.isSafeInteger(root.auditReportVersion)
+      ? root.auditReportVersion : root?.auditReportVersion === undefined ? "missing" as const : "invalid" as const,
+    fields: {
+      vulnerabilities: auditFieldType(root?.vulnerabilities),
+      metadata: auditFieldType(root?.metadata),
+      metadataVulnerabilities: auditFieldType(metadata?.vulnerabilities),
+    },
+    ...(countsValid ? { counts: Object.fromEntries(auditCountKeys.map(
+      (key) => [key, rawCounts[key]]
+    )) as Record<(typeof auditCountKeys)[number], number> } : {}),
+  };
+  const reject = (reason: AuditDiagnosticReason) => {
+    diagnostic.reason = reason;
+    return { findings: null, diagnostic };
+  };
+  if (stdout === undefined) return reject("missing_stdout");
+  if (!stdout.trim()) return reject("empty_stdout");
+  if (!jsonParsed) return reject("invalid_json");
+  if (!root) return reject("missing_required_top_level_fields");
+  if (root.auditReportVersion === undefined) return reject("missing_required_top_level_fields");
+  if (root.auditReportVersion !== 2) return reject("unsupported_report_version");
+  if (!isRecord(root.vulnerabilities) || !metadata || !rawCounts)
+    return reject("missing_required_top_level_fields");
+  const vulnerabilities = root.vulnerabilities as Record<string, unknown>;
+  const counts = rawCounts;
+  if (!countsValid) return reject("invalid_metadata_counts");
   const findings: AuditFinding[] = [];
   const relations = new Map<string, { via: string[]; effects: string[]; direct: boolean }>();
   const sourceOwners = new Map<string, string>();
   const severityRank: Record<AuditSeverity, number> =
     { info: 0, low: 1, moderate: 2, high: 3, critical: 4 };
-  for (const [key, raw] of Object.entries(parsed.vulnerabilities)) {
+  for (const [key, raw] of Object.entries(vulnerabilities)) {
     if (!isRecord(raw) || raw.name !== key || !isAuditSeverity(raw.severity) ||
         typeof raw.isDirect !== "boolean" || typeof raw.range !== "string" || !raw.range ||
         !Array.isArray(raw.nodes) || raw.nodes.length === 0 ||
@@ -148,13 +217,13 @@ export function parseNpmStyleAuditReport(stdout: string): AuditFinding[] | null 
         !Array.isArray(raw.effects) || raw.effects.some((effect) => typeof effect !== "string" || !effect) ||
         !(typeof raw.fixAvailable === "boolean" ||
           (isRecord(raw.fixAvailable) && typeof raw.fixAvailable.name === "string" &&
-            typeof raw.fixAvailable.version === "string"))) return null;
-    if (!Array.isArray(raw.via) || raw.via.length === 0) return null;
+            typeof raw.fixAvailable.version === "string"))) return reject("invalid_vulnerability_records");
+    if (!Array.isArray(raw.via) || raw.via.length === 0) return reject("invalid_vulnerability_records");
     const via = raw.via;
     if (via.some((item) => typeof item === "string" ? !item || item === key :
         (!isRecord(item) || item.name !== key || !isAuditSeverity(item.severity) ||
           severityRank[item.severity as AuditSeverity] > severityRank[raw.severity as AuditSeverity] ||
-          !Number.isSafeInteger(item.source) || Number(item.source) < 0))) return null;
+          !Number.isSafeInteger(item.source) || Number(item.source) < 0))) return reject("invalid_vulnerability_records");
     const advisoryIds = via.flatMap((item) => {
       if (!isRecord(item)) return [];
       return [String(item.source)];
@@ -162,9 +231,9 @@ export function parseNpmStyleAuditReport(stdout: string): AuditFinding[] | null 
     if (new Set(advisoryIds).size !== advisoryIds.length ||
         new Set(raw.effects).size !== raw.effects.length ||
         new Set(via.filter((item): item is string => typeof item === "string")).size !==
-          via.filter((item) => typeof item === "string").length) return null;
+          via.filter((item) => typeof item === "string").length) return reject("inconsistent_advisory_identifiers");
     for (const id of advisoryIds) {
-      if (sourceOwners.has(id) && sourceOwners.get(id) !== key) return null;
+      if (sourceOwners.has(id) && sourceOwners.get(id) !== key) return reject("inconsistent_advisory_identifiers");
       sourceOwners.set(id, key);
     }
     relations.set(key, { via: via.filter((item): item is string => typeof item === "string"),
@@ -174,10 +243,10 @@ export function parseNpmStyleAuditReport(stdout: string): AuditFinding[] | null 
   }
   for (const [key, { via, effects }] of relations) {
     if (via.some((dependency) => !relations.get(dependency)?.effects.includes(key)) ||
-        effects.some((dependent) => !relations.get(dependent)?.via.includes(key))) return null;
+        effects.some((dependent) => !relations.get(dependent)?.via.includes(key))) return reject("inconsistent_vulnerability_relationships");
     const finding = findings.find((item) => item.packageName === key)!;
     if (via.some((dependency) => severityRank[findings.find((item) =>
-      item.packageName === dependency)!.severity] > severityRank[finding.severity])) return null;
+      item.packageName === dependency)!.severity] > severityRank[finding.severity])) return reject("inconsistent_vulnerability_relationships");
   }
   const reachable = new Set<string>();
   const visiting = new Set<string>();
@@ -192,11 +261,28 @@ export function parseNpmStyleAuditReport(stdout: string): AuditFinding[] | null 
     if (valid) reachable.add(key);
     return valid;
   };
-  if ([...relations.keys()].some((key) => !reachesDirectAdvisory(key))) return null;
+  if ([...relations.keys()].some((key) => !reachesDirectAdvisory(key))) return reject("inconsistent_vulnerability_relationships");
   if (!["info", "low", "moderate", "high", "critical"].every((severity) =>
     findings.filter((finding) => finding.severity === severity).length === counts[severity]
-  ) || findings.length !== counts.total) return null;
-  return findings;
+  ) || findings.length !== counts.total) return reject("invalid_metadata_counts");
+  return { findings, diagnostic };
+}
+
+export function parseNpmStyleAuditReport(stdout: string): AuditFinding[] | null {
+  return inspectNpmStyleAuditReport(stdout).findings;
+}
+
+function logAuditDiagnostic(
+  diagnostic: ReturnType<typeof inspectNpmStyleAuditReport>["diagnostic"],
+  execution: { status: string; exitCode: number | null }
+): void {
+  // Server logs are operational only. Keep this object restricted to fixed codes,
+  // primitive shape data, and validated counts; never include audit content.
+  console.warn("[DeployGuard Dependency Audit Diagnostic]", {
+    ...diagnostic,
+    sandboxStatus: execution.status,
+    exitCode: execution.exitCode,
+  });
 }
 
 function parseLegacyAuditReport(stdout: string): AuditFinding[] | null {
@@ -572,12 +658,24 @@ export async function runSandboxSecurityAgent(
         timeoutMs:
           SECURITY_AUDIT_TIMEOUT_MS,
       },
+    }).catch((error: unknown) => {
+      if (packageManager.name === "npm") {
+        logAuditDiagnostic(
+          { ...inspectNpmStyleAuditReport(undefined).diagnostic, reason: "sandbox_execution_failure" },
+          { status: "threw", exitCode: null }
+        );
+      }
+      throw error;
     });
 
   if (
     result.status ===
     "timed_out"
   ) {
+    if (packageManager.name === "npm") {
+      const diagnostic = inspectNpmStyleAuditReport(result.stdout).diagnostic;
+      logAuditDiagnostic({ ...diagnostic, reason: "sandbox_execution_failure" }, result);
+    }
     return {
       id: "security",
       category: "security",
@@ -611,6 +709,12 @@ export async function runSandboxSecurityAgent(
       result.stderr
     )
   ) {
+    if (packageManager.name === "npm") {
+      logAuditDiagnostic(
+        { ...inspectNpmStyleAuditReport(result.stdout).diagnostic, reason: "audit_service_unavailable" },
+        result
+      );
+    }
     return {
       id: "security",
       category: "security",
@@ -638,11 +742,17 @@ export async function runSandboxSecurityAgent(
     };
   }
 
+  const npmInspection = packageManager.name === "npm"
+    ? inspectNpmStyleAuditReport(result.stdout)
+    : null;
   const parsedFindings = packageManager.name === "yarn" && packageManager.yarnMode === "classic"
     ? parseYarnClassicAuditReport(result.stdout)
     : packageManager.name === "npm"
-      ? parseNpmStyleAuditReport(result.stdout)
+      ? npmInspection!.findings
       : parseNpmStyleAuditReport(result.stdout) ?? parseLegacyAuditReport(result.stdout);
+  if (!parsedFindings && npmInspection) {
+    logAuditDiagnostic(npmInspection.diagnostic, result);
+  }
   if (!parsedFindings) return {
     id: "security", category: "security", name: "Dependency Security",
     status: "error", command: auditCommand.display, exitCode: result.exitCode,
@@ -652,13 +762,18 @@ export async function runSandboxSecurityAgent(
   };
 
   if (result.exitCode === null || result.exitCode === undefined ||
-      (result.status === "failed" && result.exitCode === 0)) return {
+      (result.status === "failed" && result.exitCode === 0)) {
+    if (npmInspection) logAuditDiagnostic(
+      { ...npmInspection.diagnostic, reason: "sandbox_execution_failure" }, result
+    );
+    return {
     id: "security", category: "security", name: "Dependency Security",
     status: "error", command: auditCommand.display, exitCode: result.exitCode,
     durationMs: result.durationMs,
     summary: "Dependency audit execution did not return a usable exit status.",
     stdout: result.stdout, stderr: result.stderr,
   };
+  }
 
   const highSeverityFinding =
     auditReportedHighSeverityFinding(
@@ -669,13 +784,18 @@ export async function runSandboxSecurityAgent(
   const findings = parsedFindings;
 
   if (highSeverityFinding && !findings.some((finding) =>
-    finding.severity === "high" || finding.severity === "critical")) return {
+    finding.severity === "high" || finding.severity === "critical")) {
+    if (npmInspection) logAuditDiagnostic(
+      { ...npmInspection.diagnostic, reason: "audit_exit_without_high_severity" }, result
+    );
+    return {
     id: "security", category: "security", name: "Dependency Security",
     status: "error", command: auditCommand.display, exitCode: result.exitCode,
     durationMs: result.durationMs,
     summary: "Dependency audit exited unsuccessfully without matching high-risk findings.",
     stdout: result.stdout, stderr: result.stderr,
   };
+  }
 
   const securityEvidence =
   createSecurityEvidence(

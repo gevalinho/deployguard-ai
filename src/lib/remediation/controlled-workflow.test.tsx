@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => {} }) }));
 import { ControlledRemediation } from "@/components/dashboard/readiness-dashboard";
 import { RemediationDelivery, restoreWorkflowForSource } from "@/components/dashboard/remediation-delivery";
-import { getControlledRemediationCandidates } from "./controlled-candidates";
+import { controlledRemediationCandidateKey, getControlledRemediationCandidates } from "./controlled-candidates";
 import { currentAssessmentArtifact } from "./current-assessment-artifact";
 import { createRemediationCheckInputs } from "@/lib/ai/remediation-input";
 import { verifyRemediationAnalysis } from "@/lib/agents/remediation-verifier";
@@ -24,8 +24,21 @@ function controlled(checks: PublicCheckResult[]) {
 describe("deterministic controlled remediation eligibility", () => {
   it("shows the action for WellCare-style security evidence without AI guidance", () => {
     expect(controlled([security])).toContain("Controlled Remediation");
-    expect(controlled([security])).toContain("Remediate Dependency Security");
+    expect(controlled([security])).toContain("Remediate lodash advisory 123");
     expect(getControlledRemediationCandidates([security])[0].evidenceIndexes).toEqual([0]);
+  });
+
+  it("renders separate, stable actions for two advisories on one package", () => {
+    const check: PublicCheckResult = { ...security, evidence: [{
+      kind: "security_finding", message: "braces has a high-severity dependency vulnerability.",
+      code: "high", advisoryIds: ["1098094", "1240992"],
+    }] };
+    const candidates = getControlledRemediationCandidates([check]);
+    expect(candidates.map((item) => item.advisoryId)).toEqual(["1098094", "1240992"]);
+    expect(new Set(candidates.map(controlledRemediationCandidateKey)).size).toBe(2);
+    const html = controlled([check]);
+    expect(html).toContain("Remediate braces advisory 1098094");
+    expect(html).toContain("Remediate braces advisory 1240992");
   });
 
   it("remains available after AI timeout or rejection", () => {

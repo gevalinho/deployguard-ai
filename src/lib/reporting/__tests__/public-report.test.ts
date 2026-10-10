@@ -20,6 +20,19 @@ import {
 describe(
   "sanitizeCheckForPublic",
   () => {
+    it("preserves numeric security advisory evidence without raw audit output", () => {
+      const check: CheckResult = {
+        id: "security", category: "security", name: "Dependency Security", status: "failed",
+        summary: "High-risk findings", stdout: "private audit output", stderr: "private registry detail",
+        evidence: [{ kind: "security_finding", code: "high",
+          message: "braces has a high-severity dependency vulnerability.",
+          advisoryIds: ["1098094", "1240992"] }],
+      };
+      const sanitized = sanitizeCheckForPublic(check);
+      expect(sanitized.evidence?.[0].advisoryIds).toEqual(["1098094", "1240992"]);
+      expect(sanitized).not.toHaveProperty("stdout");
+      expect(sanitized).not.toHaveProperty("stderr");
+    });
     it(
       "exposes configuration requirements without leaking execution values",
       () => {

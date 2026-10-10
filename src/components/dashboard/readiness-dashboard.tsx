@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RemediationDelivery } from "./remediation-delivery";
-import { getControlledRemediationCandidates, type ControlledRemediationCandidate } from "@/lib/remediation/controlled-candidates";
+import { controlledRemediationCandidateKey, getControlledRemediationCandidates, type ControlledRemediationCandidate } from "@/lib/remediation/controlled-candidates";
 import { currentAssessmentArtifact } from "@/lib/remediation/current-assessment-artifact";
 import type {
   PublicCheckResult,
@@ -1366,10 +1366,12 @@ export function ControlledRemediation({ candidates, onExecute, executing }: {
       DeployGuard can apply a deterministic fix in a disposable workspace, then independently verify it. Your GitHub repository is not modified.
     </p>
     <div className="mt-4 flex flex-wrap gap-3">
-      {candidates.map((candidate) => <button key={candidate.checkId} type="button"
+      {candidates.map((candidate) => <button key={controlledRemediationCandidateKey(candidate)} type="button"
         disabled={executing} onClick={() => void onExecute(candidate)}
         className="rounded-xl border border-violet-500/40 bg-violet-500/10 px-4 py-2.5 text-sm font-medium text-violet-200 disabled:opacity-50">
-        {executing ? "Running controlled remediation..." : `Remediate ${candidate.checkName}`}
+        {executing ? "Running controlled remediation..." : candidate.strategy === "dependency_security"
+          ? `Remediate ${candidate.packageName} advisory ${candidate.advisoryId}`
+          : `Remediate ${candidate.checkName}`}
       </button>)}
     </div>
   </section>;

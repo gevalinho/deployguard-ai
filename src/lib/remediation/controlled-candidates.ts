@@ -10,6 +10,12 @@ export type ControlledRemediationCandidate = {
   advisoryId?: string;
 };
 
+export function controlledRemediationCandidateKey(candidate: ControlledRemediationCandidate): string {
+  return candidate.strategy === "dependency_security"
+    ? `${candidate.strategy}:${candidate.packageName}:${candidate.advisoryId}:${candidate.evidenceIndexes.join(",")}`
+    : `${candidate.strategy}:${candidate.checkId}:${candidate.evidenceIndexes.join(",")}`;
+}
+
 /** Only strategies already supported by the controlled remediation server. */
 export function getControlledRemediationCandidates(checks: PublicCheckResult[]): ControlledRemediationCandidate[] {
   const candidates: ControlledRemediationCandidate[] = [];
