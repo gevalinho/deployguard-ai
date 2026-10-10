@@ -52,18 +52,41 @@ describe("sandbox security audit result", () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     const stdout = JSON.stringify({ auditReportVersion: 2, vulnerabilities: {
       dependency: { name: "dependency", severity: "high", isDirect: false,
-        via: [{ name: "dependency", severity: "high", source: 9876 }], effects: [],
+        via: [{ name: "dependency", severity: "high", source: 9876 }], effects: ["dependent"],
         range: "<2", nodes: ["node_modules/dependency"], fixAvailable: true },
-      dependent: { name: "dependent", severity: "high", isDirect: true, via: ["dependency"],
+      dependent: { name: "dependent", severity: "high", isDirect: true,
+        via: [{ name: "dependent", severity: "high", source: 9877 }],
         effects: [], range: "<2", nodes: ["node_modules/dependent"], fixAvailable: true },
     }, metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 2, critical: 0, total: 2 } } });
     runSandbox.mockResolvedValue({ status: "failed", exitCode: 1, stdout, stderr: "", durationMs: 1 });
     expect((await runSandboxSecurityAgent(await repository())).status).toBe("error");
     expect(warning).toHaveBeenCalledWith("[DeployGuard Dependency Audit Diagnostic]",
       expect.objectContaining({ reason: "inconsistent_vulnerability_relationships",
-        relationshipSubreason: "reciprocal_link_failure", missingReverseEffectsCount: 1,
-        missingReverseStringViaCount: 0, absentViaReferenceCount: 0, absentEffectReferenceCount: 0 }));
+        relationshipSubreason: "reciprocal_link_failure", missingReverseEffectsCount: 0,
+        missingReverseStringViaCount: 1, absentViaReferenceCount: 0, absentEffectReferenceCount: 0 }));
     expect(JSON.stringify(warning.mock.calls)).not.toMatch(/dependency|dependent|node_modules/);
+  });
+  it("logs safe counters when a one-sided npm relationship is accepted", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const stdout = JSON.stringify({ auditReportVersion: 2, vulnerabilities: {
+      source: { name: "source", severity: "high", isDirect: true,
+        via: [{ name: "source", severity: "high", source: 9876 }], effects: [],
+        range: "<2", nodes: ["node_modules/source"], fixAvailable: true },
+      dependent: { name: "dependent", severity: "high", isDirect: false,
+        via: ["source"], effects: [], range: "<2",
+        nodes: ["node_modules/dependent"], fixAvailable: true },
+    }, metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 2,
+      critical: 0, total: 2 } } });
+    runSandbox.mockResolvedValue({ status: "failed", exitCode: 1, stdout, stderr: "", durationMs: 1 });
+    const result = await runSandboxSecurityAgent(await repository());
+    expect(result.status).toBe("failed");
+    expect(result.evidence).toBeDefined();
+    expect(warning).toHaveBeenCalledWith("[DeployGuard Dependency Audit Diagnostic]",
+      expect.objectContaining({ reason: null, missingReverseEffectsCount: 1,
+        missingReverseStringViaCount: 0, absentViaReferenceCount: 0,
+        absentEffectReferenceCount: 0 }));
+    expect(JSON.stringify(warning.mock.calls)).not.toMatch(/"source"|"dependent"|node_modules/);
+    expect(JSON.stringify(sanitizeCheckForPublic(result))).not.toContain("missingReverseEffectsCount");
   });
   it("classifies unusable sandbox execution status", async () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});

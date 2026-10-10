@@ -272,7 +272,11 @@ export function inspectNpmStyleAuditReport(stdout: string | undefined): {
     }
   }
   Object.assign(diagnostic, relationshipCounts);
-  if (Object.values(relationshipCounts).some((count) => count > 0))
+  // npm can omit reverse effects for an existing string-via relationship.
+  // Missing records and effects without a matching via remain invalid.
+  if (relationshipCounts.missingReverseStringViaCount > 0 ||
+      relationshipCounts.absentViaReferenceCount > 0 ||
+      relationshipCounts.absentEffectReferenceCount > 0)
     return reject("inconsistent_vulnerability_relationships", "reciprocal_link_failure");
   const reachable = new Set<string>();
   const visiting = new Set<string>();
@@ -822,6 +826,10 @@ export async function runSandboxSecurityAgent(
     summary: "Dependency audit exited unsuccessfully without matching high-risk findings.",
     stdout: result.stdout, stderr: result.stderr,
   };
+  }
+
+  if (npmInspection && npmInspection.diagnostic.missingReverseEffectsCount) {
+    logAuditDiagnostic(npmInspection.diagnostic, result);
   }
 
   const securityEvidence =
