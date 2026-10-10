@@ -13,9 +13,12 @@ const dependent = (name: string, via: string[]) => ({
 function report(vulnerabilities: Record<string, unknown>) {
   const values = Object.values(vulnerabilities) as Array<{ severity?: string }>;
   return JSON.stringify({ auditReportVersion: 2, vulnerabilities, metadata: { vulnerabilities: {
-    info: 0, low: 0, moderate: 0,
+    info: values.filter((item) => item.severity === "info").length,
+    low: values.filter((item) => item.severity === "low").length,
+    moderate: values.filter((item) => item.severity === "moderate").length,
     high: values.filter((item) => item.severity === "high").length,
-    critical: 0, total: values.length,
+    critical: values.filter((item) => item.severity === "critical").length,
+    total: values.length,
   } } });
 }
 
@@ -40,7 +43,8 @@ describe("npm audit v2 evidence", () => {
   });
   it("reports only validated counts and structural field types", () => {
     const result = inspectNpmStyleAuditReport(report({ braces: direct("braces", 1) }));
-    expect(result.diagnostic).toEqual({ reason: null, stdoutBytes: Buffer.byteLength(report({ braces: direct("braces", 1) })),
+    expect(result.diagnostic).toEqual({ reason: null, relationshipSubreason: null,
+      stdoutBytes: Buffer.byteLength(report({ braces: direct("braces", 1) })),
       jsonParsed: true, auditReportVersion: 2,
       fields: { vulnerabilities: "object", metadata: "object", metadataVulnerabilities: "object" },
       counts: { info: 0, low: 0, moderate: 0, high: 1, critical: 0, total: 1 } });
@@ -78,19 +82,46 @@ describe("npm audit v2 evidence", () => {
       { packageName: "parent", severity: "high", advisoryIds: ["456"] },
     ]);
   });
+  it("accepts a propagated moderate advisory when its dependency also has an unrelated critical advisory", () => {
+    const braces = { ...direct("braces", 123, ["parent"]), severity: "critical",
+      via: [{ name: "braces", severity: "moderate", source: 123 },
+        { name: "braces", severity: "critical", source: 456 }] };
+    const parent = { ...dependent("parent", ["braces"]), severity: "moderate" };
+    const inspection = inspectNpmStyleAuditReport(report({ braces, parent }));
+    expect(inspection.diagnostic.reason).toBeNull();
+    expect(inspection.findings).toEqual([
+      { packageName: "braces", severity: "critical", advisoryIds: ["123", "456"] },
+      { packageName: "parent", severity: "moderate" },
+    ]);
+  });
   it("rejects missing and inconsistent string via relationships", () => {
     expect(parseNpmStyleAuditReport(report({ parent: dependent("parent", ["missing"]) }))).toBeNull();
     expect(parseNpmStyleAuditReport(report({ braces: direct("braces", 123),
       parent: dependent("parent", ["braces"]) }))).toBeNull();
     expect(parseNpmStyleAuditReport(report({ braces: direct("braces", 123, ["parent"]),
       parent: dependent("parent", ["other"]) }))).toBeNull();
-    expect(parseNpmStyleAuditReport(report({ braces: direct("braces", 123, ["parent"]),
-      parent: { ...dependent("parent", ["braces"]), severity: "low" } }))).toBeNull();
+    const missingReciprocal = inspectNpmStyleAuditReport(report({ braces: direct("braces", 123),
+      parent: dependent("parent", ["braces"]) }));
+    expect(missingReciprocal.findings).toBeNull();
+    expect(missingReciprocal.diagnostic).toMatchObject({ reason: "inconsistent_vulnerability_relationships",
+      relationshipSubreason: "reciprocal_link_failure" });
+    expect(JSON.stringify(missingReciprocal.diagnostic)).not.toMatch(/braces|parent/);
+  });
+  it("rejects reciprocal but unanchored chains with a fixed reachability subreason", () => {
+    const first = { ...dependent("first", ["second"]), effects: ["second"] };
+    const second = { ...dependent("second", ["first"]), effects: ["first"] };
+    const inspection = inspectNpmStyleAuditReport(report({ first, second }));
+    expect(inspection.findings).toBeNull();
+    expect(inspection.diagnostic).toMatchObject({ reason: "inconsistent_vulnerability_relationships",
+      relationshipSubreason: "reachability_failure" });
+    expect(JSON.stringify(inspection.diagnostic)).not.toMatch(/first|second/);
   });
   it("rejects malformed or incomplete vulnerability records", () => {
     expect(parseNpmStyleAuditReport(report({ braces: { name: "braces", severity: "high",
       via: [{ source: 123 }] } }))).toBeNull();
     expect(parseNpmStyleAuditReport(report({ braces: { ...direct("braces", 123), nodes: [] } }))).toBeNull();
+    expect(parseNpmStyleAuditReport(report({ braces: { ...direct("braces", 123), range: "" } }))).toBeNull();
+    expect(parseNpmStyleAuditReport(report({ braces: { ...direct("braces", 123), fixAvailable: null } }))).toBeNull();
     expect(parseNpmStyleAuditReport(report({ braces: { ...direct("braces", 123), name: "other" } }))).toBeNull();
     expect(parseNpmStyleAuditReport(report({ braces: { ...direct("braces", 123), via: [{}] } }))).toBeNull();
   });

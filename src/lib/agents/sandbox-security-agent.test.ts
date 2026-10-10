@@ -48,6 +48,22 @@ describe("sandbox security audit result", () => {
     const logged = JSON.stringify(warning.mock.calls);
     expect(logged).not.toMatch(/secret|private|https:|stderr|stdout\":/);
   });
+  it("logs a fixed reciprocal-link subreason without package names", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const stdout = JSON.stringify({ auditReportVersion: 2, vulnerabilities: {
+      dependency: { name: "dependency", severity: "high", isDirect: false,
+        via: [{ name: "dependency", severity: "high", source: 9876 }], effects: [],
+        range: "<2", nodes: ["node_modules/dependency"], fixAvailable: true },
+      dependent: { name: "dependent", severity: "high", isDirect: true, via: ["dependency"],
+        effects: [], range: "<2", nodes: ["node_modules/dependent"], fixAvailable: true },
+    }, metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 2, critical: 0, total: 2 } } });
+    runSandbox.mockResolvedValue({ status: "failed", exitCode: 1, stdout, stderr: "", durationMs: 1 });
+    expect((await runSandboxSecurityAgent(await repository())).status).toBe("error");
+    expect(warning).toHaveBeenCalledWith("[DeployGuard Dependency Audit Diagnostic]",
+      expect.objectContaining({ reason: "inconsistent_vulnerability_relationships",
+        relationshipSubreason: "reciprocal_link_failure" }));
+    expect(JSON.stringify(warning.mock.calls)).not.toMatch(/dependency|dependent|node_modules/);
+  });
   it("classifies unusable sandbox execution status", async () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     runSandbox.mockResolvedValue({ status: "failed", exitCode: null, stdout: report(0), stderr: "", durationMs: 1 });

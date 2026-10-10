@@ -134,6 +134,8 @@ type AuditDiagnosticReason = "missing_stdout" | "empty_stdout" | "invalid_json" 
   "sandbox_execution_failure" | "audit_service_unavailable" |
   "audit_exit_without_high_severity";
 
+type AuditRelationshipSubreason = "reciprocal_link_failure" | "reachability_failure";
+
 type AuditFieldType = "missing" | "null" | "object" | "array" | "string" | "number" | "boolean";
 
 function auditFieldType(value: unknown): AuditFieldType {
@@ -149,6 +151,7 @@ export function inspectNpmStyleAuditReport(stdout: string | undefined): {
   findings: AuditFinding[] | null;
   diagnostic: {
     reason: AuditDiagnosticReason | null;
+    relationshipSubreason: AuditRelationshipSubreason | null;
     stdoutBytes: number;
     jsonParsed: boolean;
     auditReportVersion: number | "missing" | "invalid";
@@ -175,6 +178,7 @@ export function inspectNpmStyleAuditReport(stdout: string | undefined): {
   );
   const diagnostic = {
     reason: null as AuditDiagnosticReason | null,
+    relationshipSubreason: null as AuditRelationshipSubreason | null,
     stdoutBytes: typeof stdout === "string" ? Buffer.byteLength(stdout, "utf8") : 0,
     jsonParsed,
     auditReportVersion: typeof root?.auditReportVersion === "number" &&
@@ -189,8 +193,10 @@ export function inspectNpmStyleAuditReport(stdout: string | undefined): {
       (key) => [key, rawCounts[key]]
     )) as Record<(typeof auditCountKeys)[number], number> } : {}),
   };
-  const reject = (reason: AuditDiagnosticReason) => {
+  const reject = (reason: AuditDiagnosticReason,
+    relationshipSubreason: AuditRelationshipSubreason | null = null) => {
     diagnostic.reason = reason;
+    diagnostic.relationshipSubreason = relationshipSubreason;
     return { findings: null, diagnostic };
   };
   if (stdout === undefined) return reject("missing_stdout");
@@ -243,10 +249,8 @@ export function inspectNpmStyleAuditReport(stdout: string | undefined): {
   }
   for (const [key, { via, effects }] of relations) {
     if (via.some((dependency) => !relations.get(dependency)?.effects.includes(key)) ||
-        effects.some((dependent) => !relations.get(dependent)?.via.includes(key))) return reject("inconsistent_vulnerability_relationships");
-    const finding = findings.find((item) => item.packageName === key)!;
-    if (via.some((dependency) => severityRank[findings.find((item) =>
-      item.packageName === dependency)!.severity] > severityRank[finding.severity])) return reject("inconsistent_vulnerability_relationships");
+        effects.some((dependent) => !relations.get(dependent)?.via.includes(key)))
+      return reject("inconsistent_vulnerability_relationships", "reciprocal_link_failure");
   }
   const reachable = new Set<string>();
   const visiting = new Set<string>();
@@ -261,7 +265,8 @@ export function inspectNpmStyleAuditReport(stdout: string | undefined): {
     if (valid) reachable.add(key);
     return valid;
   };
-  if ([...relations.keys()].some((key) => !reachesDirectAdvisory(key))) return reject("inconsistent_vulnerability_relationships");
+  if ([...relations.keys()].some((key) => !reachesDirectAdvisory(key)))
+    return reject("inconsistent_vulnerability_relationships", "reachability_failure");
   if (!["info", "low", "moderate", "high", "critical"].every((severity) =>
     findings.filter((finding) => finding.severity === severity).length === counts[severity]
   ) || findings.length !== counts.total) return reject("invalid_metadata_counts");
