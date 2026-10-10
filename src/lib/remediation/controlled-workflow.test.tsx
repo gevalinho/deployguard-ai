@@ -28,17 +28,40 @@ describe("deterministic controlled remediation eligibility", () => {
     expect(getControlledRemediationCandidates([security])[0].evidenceIndexes).toEqual([0]);
   });
 
-  it("renders separate, stable actions for two advisories on one package", () => {
-    const check: PublicCheckResult = { ...security, evidence: [{
-      kind: "security_finding", message: "braces has a high-severity dependency vulnerability.",
-      code: "high", advisoryIds: ["1098094", "1240992"],
-    }] };
+  it("groups multiple advisories under one package while preserving actions", () => {
+    const check: PublicCheckResult = {
+      ...security,
+      evidence: [
+        {
+          kind: "security_finding",
+          message: "braces has a high-severity dependency vulnerability.",
+          code: "high",
+          advisoryIds: ["1098094", "1240992"],
+        },
+      ],
+    };
+
     const candidates = getControlledRemediationCandidates([check]);
-    expect(candidates.map((item) => item.advisoryId)).toEqual(["1098094", "1240992"]);
-    expect(new Set(candidates.map(controlledRemediationCandidateKey)).size).toBe(2);
+
+    expect(candidates.map((item) => item.advisoryId)).toEqual([
+      "1098094",
+      "1240992",
+    ]);
+
+    expect(
+      new Set(candidates.map(controlledRemediationCandidateKey)).size,
+    ).toBe(2);
+
     const html = controlled([check]);
-    expect(html).toContain("Remediate braces advisory 1098094");
-    expect(html).toContain("Remediate braces advisory 1240992");
+
+    expect(html.match(/<details/g)).toHaveLength(1);
+    expect(html).toContain("braces");
+    expect(html).toContain("2 advisories");
+    expect(html).toContain("Advisory 1098094");
+    expect(html).toContain("Advisory 1240992");
+
+    expect(html).toContain('aria-label="Remediate braces advisory 1098094"');
+    expect(html).toContain('aria-label="Remediate braces advisory 1240992"');
   });
 
   it("remains available after AI timeout or rejection", () => {

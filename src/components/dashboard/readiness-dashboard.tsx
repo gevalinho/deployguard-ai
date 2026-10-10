@@ -1354,27 +1354,132 @@ function AiRemediationGuidance({
   );
 }
 
-export function ControlledRemediation({ candidates, onExecute, executing }: {
+export function ControlledRemediation({
+  candidates,
+  onExecute,
+  executing,
+}: {
   candidates: ControlledRemediationCandidate[];
   onExecute: (candidate: ControlledRemediationCandidate) => Promise<void>;
   executing: boolean;
 }) {
   if (candidates.length === 0) return null;
-  return <section className="rounded-2xl border border-violet-500/30 bg-violet-500/5 p-5">
-    <h2 className="text-xl font-semibold text-violet-200">Controlled Remediation</h2>
-    <p className="mt-2 text-sm text-zinc-400">
-      DeployGuard can apply a deterministic fix in a disposable workspace, then independently verify it. Your GitHub repository is not modified.
-    </p>
-    <div className="mt-4 flex flex-wrap gap-3">
-      {candidates.map((candidate) => <button key={controlledRemediationCandidateKey(candidate)} type="button"
-        disabled={executing} onClick={() => void onExecute(candidate)}
-        className="rounded-xl border border-violet-500/40 bg-violet-500/10 px-4 py-2.5 text-sm font-medium text-violet-200 disabled:opacity-50">
-        {executing ? "Running controlled remediation..." : candidate.strategy === "dependency_security"
-          ? `Remediate ${candidate.packageName} advisory ${candidate.advisoryId}`
-          : `Remediate ${candidate.checkName}`}
-      </button>)}
-    </div>
-  </section>;
+
+  const packageGroups = new Map<string, ControlledRemediationCandidate[]>();
+
+  const otherCandidates: ControlledRemediationCandidate[] = [];
+
+  for (const candidate of candidates) {
+    if (candidate.strategy === "dependency_security" && candidate.packageName) {
+      const group = packageGroups.get(candidate.packageName) ?? [];
+      group.push(candidate);
+      packageGroups.set(candidate.packageName, group);
+    } else {
+      otherCandidates.push(candidate);
+    }
+  }
+
+  const groups = [...packageGroups.entries()].sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
+
+  return (
+    <section className="rounded-2xl border border-violet-500/30 bg-violet-500/5 p-5">
+      <h2 className="text-xl font-semibold text-violet-200">
+        Controlled Remediation
+      </h2>
+
+      <p className="mt-2 text-sm text-zinc-400">
+        DeployGuard can apply a deterministic fix in a disposable workspace,
+        then independently verify it. Your GitHub repository is not modified.
+      </p>
+
+      {groups.length > 0 && (
+        <>
+          <p className="mt-4 text-sm text-zinc-400">
+            {groups.length} affected{" "}
+            {groups.length === 1 ? "package" : "packages"} ·{" "}
+            {groups.reduce((total, [, items]) => total + items.length, 0)}{" "}
+            security advisories
+          </p>
+
+          <div className="mt-4 space-y-3">
+            {groups.map(([packageName, items]) => (
+              <details
+                key={packageName}
+                className="group rounded-xl border border-violet-500/30 bg-zinc-950/60"
+              >
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4 marker:hidden [&::-webkit-details-marker]:hidden">
+                  <span className="min-w-0">
+                    <span className="block break-all font-medium text-violet-200">
+                      {packageName}
+                    </span>
+                    <span className="mt-1 block text-xs text-zinc-400">
+                      {items.length}{" "}
+                      {items.length === 1 ? "advisory" : "advisories"}
+                    </span>
+                  </span>
+
+                  <span
+                    aria-hidden="true"
+                    className="shrink-0 text-sm text-violet-300 transition-transform group-open:rotate-180"
+                  >
+                    ▼
+                  </span>
+                </summary>
+
+                <div className="space-y-2 border-t border-violet-500/20 p-4">
+                  <p className="mb-3 text-xs text-zinc-500">
+                    Select an individual advisory to run its independently
+                    verified remediation.
+                  </p>
+
+                  {items.map((candidate) => (
+                    <div
+                      key={controlledRemediationCandidateKey(candidate)}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3"
+                    >
+                      <span className="break-all text-sm text-zinc-300">
+                        Advisory {candidate.advisoryId}
+                      </span>
+
+                      <button
+                        type="button"
+                        disabled={executing}
+                        onClick={() => void onExecute(candidate)}
+                        aria-label={`Remediate ${packageName} advisory ${candidate.advisoryId}`}
+                        className="rounded-lg border border-violet-500/40 bg-violet-500/10 px-3 py-2 text-sm font-medium text-violet-200 hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {executing ? "Running..." : "Remediate"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            ))}
+          </div>
+        </>
+      )}
+
+      {otherCandidates.length > 0 && (
+        <div className="mt-4 flex flex-wrap gap-3">
+          {otherCandidates.map((candidate) => (
+            <button
+              key={controlledRemediationCandidateKey(candidate)}
+              type="button"
+              disabled={executing}
+              onClick={() => void onExecute(candidate)}
+              className="rounded-xl border border-violet-500/40 bg-violet-500/10 px-4 py-2.5 text-sm font-medium text-violet-200 hover:bg-violet-500/20 disabled:opacity-50"
+            >
+              {executing
+                ? "Running controlled remediation..."
+                : `Remediate ${candidate.checkName}`}
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }
 
 /* -------------------------------------------------------------------------- */
