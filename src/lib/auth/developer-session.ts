@@ -50,56 +50,38 @@ export function sameOrigin(request: Request): boolean {
   }
 
   try {
-    const suppliedOrigin = new URL(origin);
-    const target = new URL(request.url);
+    const supplied = new URL(origin);
 
-    /*
-     * Direct requests can be validated against request.url.
-     */
-    if (suppliedOrigin.origin === target.origin) {
+    if (
+      supplied.origin !== origin ||
+      supplied.username ||
+      supplied.password
+    ) {
+      return false;
+    }
+
+    const configured = process.env.DEPLOYGUARD_PUBLIC_ORIGIN;
+
+    if (configured !== undefined) {
+      const trusted = new URL(configured);
+
       return (
-        target.protocol === "https:" ||
-        (target.protocol === "http:" &&
-          ["localhost", "127.0.0.1"].includes(target.hostname))
+        trusted.protocol === "https:" &&
+        trusted.origin === configured &&
+        supplied.origin === trusted.origin
       );
     }
 
-    /*
- * Behind an HTTPS reverse proxy, the application server may
- * construct request.url using its internal host while preserving
- * the externally visible host in the forwarded headers.
- *
- * Require the browser Origin to exactly match the externally
- * visible HTTPS host.
- */
-    const forwardedHost =
-      request.headers.get("x-forwarded-host");
-
-    const forwardedProto =
-      request.headers.get("x-forwarded-proto");
-
-    if (
-      !forwardedHost ||
-      forwardedProto !== "https"
-    ) {
+    if (process.env.NODE_ENV === "production") {
       return false;
     }
 
-    /*
-     * Reject malformed/multi-valued forwarded hosts.
-     */
-    if (
-      forwardedHost.includes(",") ||
-      forwardedHost.includes("/") ||
-      forwardedHost.includes("\\") ||
-      forwardedHost.includes("@")
-    ) {
-      return false;
-    }
+    const target = new URL(request.url);
 
     return (
-      suppliedOrigin.protocol === "https:" &&
-      suppliedOrigin.host === forwardedHost
+      target.protocol === "http:" &&
+      ["localhost", "127.0.0.1"].includes(target.hostname) &&
+      supplied.origin === target.origin
     );
   } catch {
     return false;

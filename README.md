@@ -424,3 +424,23 @@ DeployGuard AI is licensed under the [Apache License 2.0](LICENSE).
 ---
 
 **DeployGuard AI — Production readiness, backed by evidence.**
+
+## Production Origin Security
+
+DeployGuard AI requires `DEPLOYGUARD_PUBLIC_ORIGIN` for
+authenticated production API requests.
+
+Set it to the exact public HTTPS origin, without a trailing slash.
+
+Example:
+
+    DEPLOYGUARD_PUBLIC_ORIGIN=https://deployguard.example.com
+
+The application validates browser origins against this trusted
+configuration rather than client-supplied forwarded host headers.
+
+Local development supports matching requests from localhost
+and 127.0.0.1 when this setting is not configured.
+
+In production, configure the HTTPS reverse proxy to overwrite
+forwarded headers and prevent direct public access to the app server.
