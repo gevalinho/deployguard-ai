@@ -67,6 +67,12 @@ export interface FixExecutionResult {
   exitCode?: number | null;
   durationMs?: number;
 
+  /** Authorized by the repair planner, not inferred from mutated files. */
+  authorizedDependency?: {
+    packageName: string;
+    version: string;
+  };
+
   evidence?: CheckEvidence[];
 }
 

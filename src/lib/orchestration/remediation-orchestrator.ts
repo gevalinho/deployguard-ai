@@ -1,3 +1,4 @@
+import { verifyDependencyApproval } from "@/lib/remediation/dependency-approval-verifier";
 import {
   runSandboxBuildAgent,
 } from "@/lib/agents/sandbox-build-agent";
@@ -359,7 +360,8 @@ const execution =
   "dependency_security"
     ? await applyDependencySecurityFix(
         ingested.repositoryPath,
-        proposal
+        proposal,
+        before.stdout ?? ""
       )
     : await applyLintAutofix(
         ingested.repositoryPath,
@@ -486,6 +488,27 @@ if (proof.status === "proven") {
       }
     }
     verifiedPatch = createVerifiedPatch(workspaceBefore, workspaceAfter);
+
+    if (proposal.strategy === "dependency_security") {
+      const authorized = execution.authorizedDependency;
+
+      if (
+        !authorized ||
+        authorized.packageName !== proposal.packageName
+      ) {
+        throw new Error("Missing or mismatched dependency authorization.");
+      }
+
+      const approval = await verifyDependencyApproval(
+        verifiedPatch,
+        authorized.packageName,
+        authorized.version,
+      );
+
+      if (!approval.valid) {
+        throw new Error("Dependency approval verification failed.");
+      }
+    }
     if (proposal.strategy === "dependency_security" &&
         verifiedPatch.files.some((file) => !isDependencyFile(file.path))) {
       throw new Error("Remediation changed files outside dependency manifests and lockfiles.");

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TrustedArtifactMetadata } from "@/lib/remediation/trusted-artifact-repository";
@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
   dispose: vi.fn(),
   ingest: vi.fn(),
   mutateDuringVerification: false,
+  validDependencyFixture: false,
   twoAdvisories: false,
   duplicateEvidenceIdentity: false,
   invalidFindingType: false,
@@ -48,6 +49,32 @@ vi.mock("@/lib/agents/sandbox-security-agent", () => ({
   }),
 }));
 vi.mock("@/lib/remediation/dependency-security-fixer", () => ({ applyDependencySecurityFix: async (path: string) => {
+  if (state.validDependencyFixture) {
+    const fixture = join(
+      process.cwd(),
+      "src/lib/remediation/__fixtures__/npm-braces-upgrade",
+    );
+
+    writeFileSync(
+      join(path, "package.json"),
+      readFileSync(join(fixture, "package-after.json")),
+    );
+
+    writeFileSync(
+      join(path, "package-lock.json"),
+      readFileSync(join(fixture, "package-lock-after.json")),
+    );
+
+    return {
+      status: "applied",
+      summary: "Applied authorized dependency upgrade",
+      authorizedDependency: {
+        packageName: "braces",
+        version: "3.0.3",
+      },
+    };
+  }
+
   writeFileSync(join(path, "package-lock.json"), '{"changed":true}');
   return { status: "applied", summary: "Attempted" };
 } }));
@@ -80,6 +107,8 @@ afterEach(() => {
   state.dispose.mockReset();
   state.ingest.mockReset();
   state.mutateDuringVerification = false;
+  state.validDependencyFixture = false;
+  vi.unstubAllGlobals();
   state.twoAdvisories = false;
   state.duplicateEvidenceIdentity = false;
   state.invalidFindingType = false;
@@ -97,7 +126,7 @@ describe("proven remediation to immediate delivery lookup", () => {
     });
     const base: FixProposal = { ...proposal, strategy: "dependency_security", packageName: "braces", advisoryId: "456",
       target: { checkId: "security", category: "security", evidenceIndexes: [0] } };
-    expect((await runRemoteRemediation("https://github.com/owner/repo", base)).remediation.proof?.status).toBe("proven");
+    expect((await runRemoteRemediation("https://github.com/owner/repo", base)).remediation.proof?.status).toBe("inconclusive");
     for (const mismatch of [
       { ...base, target: { ...base.target, evidenceIndexes: [1] } },
       { ...base, target: { ...base.target, evidenceIndexes: [2] } },
@@ -130,10 +159,159 @@ describe("proven remediation to immediate delivery lookup", () => {
       packageName: "braces", advisoryId: "123",
       target: { checkId: "security", category: "security", evidenceIndexes: [0] } };
     const result = await runRemoteRemediation("https://github.com/owner/repo", dependencyProposal);
-    expect(result.remediation.proof?.status).toBe("proven");
+    expect(result.remediation.proof?.status).toBe("inconclusive");
     expect(result.remediation.verifiedArtifactReference).toBeUndefined();
     expect(state.stored).toBeNull();
   });
+  it("verifies an authorized dependency upgrade without persisting a delivery artifact", async () => {
+    state.validDependencyFixture = true;
+
+    const fixture = join(
+      process.cwd(),
+      "src/lib/remediation/__fixtures__/npm-braces-upgrade",
+    );
+
+    state.ingest.mockImplementation(async (repository: unknown) => {
+      state.path = mkdtempSync(join(tmpdir(), "dg-remediation-bridge-"));
+
+      writeFileSync(
+        join(state.path, "package.json"),
+        readFileSync(join(fixture, "package-before.json")),
+      );
+
+      writeFileSync(
+        join(state.path, "package-lock.json"),
+        readFileSync(join(fixture, "package-lock-before.json")),
+      );
+
+      return {
+        repository,
+        repositoryPath: state.path,
+        provenance: state.provenance,
+        cleanup() {
+          rmSync(state.path, { recursive: true, force: true });
+        },
+      };
+    });
+
+    const updatedLock = JSON.parse(
+      readFileSync(join(fixture, "package-lock-after.json"), "utf8"),
+    );
+
+    const target = updatedLock.packages["node_modules/braces"];
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        name: "braces",
+        version: "3.0.3",
+        dist: {
+          tarball: target.resolved,
+          integrity: target.integrity,
+        },
+      }),
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const dependencyProposal: FixProposal = {
+      ...proposal,
+      strategy: "dependency_security",
+      packageName: "braces",
+      advisoryId: "123",
+      target: {
+        checkId: "security",
+        category: "security",
+        evidenceIndexes: [0],
+      },
+    };
+
+    const result = await runRemoteRemediation(
+      "https://github.com/owner/repo",
+      dependencyProposal,
+    );
+
+    expect(result.remediation.proof?.status).toBe("proven");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(result.remediation.verifiedArtifactReference).toBeUndefined();
+    expect(state.stored).toBeNull();
+  });
+
+  it("rejects an authorized dependency upgrade when registry integrity mismatches", async () => {
+    state.validDependencyFixture = true;
+
+    const fixture = join(
+      process.cwd(),
+      "src/lib/remediation/__fixtures__/npm-braces-upgrade",
+    );
+
+    state.ingest.mockImplementation(async (repository: unknown) => {
+      state.path = mkdtempSync(join(tmpdir(), "dg-remediation-bridge-"));
+
+      writeFileSync(
+        join(state.path, "package.json"),
+        readFileSync(join(fixture, "package-before.json")),
+      );
+
+      writeFileSync(
+        join(state.path, "package-lock.json"),
+        readFileSync(join(fixture, "package-lock-before.json")),
+      );
+
+      return {
+        repository,
+        repositoryPath: state.path,
+        provenance: state.provenance,
+        cleanup() {
+          rmSync(state.path, { recursive: true, force: true });
+        },
+      };
+    });
+
+    const updatedLock = JSON.parse(
+      readFileSync(join(fixture, "package-lock-after.json"), "utf8"),
+    );
+
+    const target = updatedLock.packages["node_modules/braces"];
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        name: "braces",
+        version: "3.0.3",
+        dist: {
+          tarball: target.resolved,
+          integrity: "sha512-" + "A".repeat(86) + "==",
+        },
+      }),
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const dependencyProposal: FixProposal = {
+      ...proposal,
+      strategy: "dependency_security",
+      packageName: "braces",
+      advisoryId: "123",
+      target: {
+        checkId: "security",
+        category: "security",
+        evidenceIndexes: [0],
+      },
+    };
+
+    const result = await runRemoteRemediation(
+      "https://github.com/owner/repo",
+      dependencyProposal,
+    );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(result.remediation.proof?.status).toBe("inconclusive");
+    expect(result.remediation.verifiedArtifactReference).toBeUndefined();
+    expect(result.remediation.verifiedPatch).toBeUndefined();
+    expect(state.stored).toBeNull();
+  });
+
   it("rejects dependency files changed during verification", async () => {
     state.mutateDuringVerification = true;
     state.ingest.mockImplementation(async (repository: unknown) => {

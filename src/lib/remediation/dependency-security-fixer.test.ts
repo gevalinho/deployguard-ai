@@ -14,50 +14,162 @@ const repositories: string[] = [];
 const cacheRoots: string[] = [];
 const originalCacheRoot = process.env.DEPLOYGUARD_REMEDIATION_CACHE_ROOT;
 afterEach(async () => {
-  for (const path of repositories) await rm(path, { recursive: true, force: true });
-  for (const path of cacheRoots) await rm(path, { recursive: true, force: true });
+  for (const path of repositories)
+    await rm(path, { recursive: true, force: true });
+  for (const path of cacheRoots)
+    await rm(path, { recursive: true, force: true });
   repositories.length = 0;
   cacheRoots.length = 0;
-  if (originalCacheRoot === undefined) delete process.env.DEPLOYGUARD_REMEDIATION_CACHE_ROOT;
+  if (originalCacheRoot === undefined)
+    delete process.env.DEPLOYGUARD_REMEDIATION_CACHE_ROOT;
   else process.env.DEPLOYGUARD_REMEDIATION_CACHE_ROOT = originalCacheRoot;
   runSandbox.mockReset();
 });
 async function repository() {
-  const cacheRoot = await mkdtemp(join(process.cwd(), ".deployguard-cache-test-"));
+  const cacheRoot = await mkdtemp(
+    join(process.cwd(), ".deployguard-cache-test-"),
+  );
   cacheRoots.push(cacheRoot);
   process.env.DEPLOYGUARD_REMEDIATION_CACHE_ROOT = cacheRoot;
   const path = await mkdtemp(join(tmpdir(), "deployguard-fixer-test-"));
   repositories.push(path);
-  await writeFile(join(path, "package.json"), "{}");
-  await writeFile(join(path, "package-lock.json"), "{}");
+  await writeFile(
+    join(path, "package.json"),
+    JSON.stringify({
+      name: "deployguard-remediation-test",
+      version: "1.0.0",
+      dependencies: {
+        braces: "3.0.2",
+      },
+    }),
+  );
+
+  await writeFile(
+    join(path, "package-lock.json"),
+    JSON.stringify({
+      name: "deployguard-remediation-test",
+      version: "1.0.0",
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": {
+          name: "deployguard-remediation-test",
+          version: "1.0.0",
+          dependencies: {
+            braces: "3.0.2",
+          },
+        },
+        "node_modules/braces": {
+          version: "3.0.2",
+        },
+      },
+    }),
+  );
   return path;
 }
 const proposal = {
-  id: "test", title: "test", description: "test",
+  id: "test",
+  title: "test",
+  description: "test",
   target: { checkId: "test", category: "security", evidenceIndexes: [] },
-  strategy: "dependency_security", risk: "breaking_change_allowed",
+  strategy: "dependency_security",
+  risk: "breaking_change_allowed",
+  packageName: "braces",
+  advisoryId: "12345",
 } as Parameters<typeof applyDependencySecurityFix>[1];
-const report = (value: object) => `DEPLOYGUARD_CACHE_PREFLIGHT:${JSON.stringify(value)}\n`;
+
+const validBaselineAudit = JSON.stringify({
+  auditReportVersion: 2,
+  vulnerabilities: {
+    braces: {
+      name: "braces",
+      severity: "high",
+      isDirect: true,
+      via: [{ name: "braces", severity: "high", source: 12345 }],
+      effects: [],
+      range: "<3.0.3",
+      nodes: ["node_modules/braces"],
+      fixAvailable: {
+        name: "braces",
+        version: "3.0.3",
+        isSemVerMajor: false,
+      },
+    },
+  },
+  metadata: {
+    vulnerabilities: {
+      info: 0,
+      low: 0,
+      moderate: 0,
+      high: 1,
+      critical: 0,
+      total: 1,
+    },
+  },
+});
+const report = (value: object) =>
+  `DEPLOYGUARD_CACHE_PREFLIGHT:${JSON.stringify(value)}\n`;
 
 describe("dependency cache preflight", () => {
+  it("rejects missing baseline audit without executing Docker", async () => {
+    const path = await repository();
+
+    const result = await applyDependencySecurityFix(path, proposal, "");
+
+    expect(result.status).toBe("unsupported");
+    expect(result.summary).toContain("valid baseline audit");
+    expect(runSandbox).not.toHaveBeenCalled();
+  });
+
   it("uses the same private mount, user and limits as npm and cleans up", async () => {
     const path = await repository();
     let cachePath = "";
     runSandbox.mockImplementation(async (input) => {
       cachePath = input.mounts[0].source;
-      expect(cachePath.startsWith(cacheRoots[0] + "/deployguard-npm-cache-")).toBe(true);
+      expect(
+        cachePath.startsWith(cacheRoots[0] + "/deployguard-npm-cache-"),
+      ).toBe(true);
       expect(cachePath.startsWith("/tmp/")).toBe(false);
-      expect(input.mounts[0]).toMatchObject({ target: "/tmp/npm-cache", selinuxPrivate: true });
-      expect(input.command.slice(0, 2)).toEqual(["node", "-e"]);
-      expect(input.command.slice(5)).toEqual(["audit", "fix", "--force", "--ignore-scripts", "--no-audit", "--no-fund"]);
+      expect(input.mounts[0]).toMatchObject({
+        target: "/tmp/npm-cache",
+        selinuxPrivate: true,
+      });
+      expect(input.command.slice(5)).toEqual([
+        "install",
+        "braces@3.0.3",
+        "--package-lock-only",
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+        "--save-exact",
+        "--save-prod",
+      ]);
       expect(input.command.slice(3, 5)).toEqual(input.user.split(":"));
       expect(input.command[2]).toContain('cp.spawnSync("npm"');
       expect(input.user).toMatch(/^[1-9]\d*:\d+$/);
-      expect(input.limits).toEqual({ memoryMb: 2048, cpus: 1, timeoutMs: 120_000 });
+      expect(input.limits).toEqual({
+        memoryMb: 2048,
+        cpus: 1,
+        timeoutMs: 120_000,
+      });
       expect((await stat(cachePath)).mode & 0o777).toBe(0o700);
-      return { status: "passed", exitCode: 0, stdout: report({ uid: 1000, gid: 1000, context: "container_t", ok: true }), stderr: "", durationMs: 1 };
+      return {
+        status: "passed",
+        exitCode: 0,
+        stdout: report({
+          uid: 1000,
+          gid: 1000,
+          context: "container_t",
+          ok: true,
+        }),
+        stderr: "",
+        durationMs: 1,
+      };
     });
-    expect((await applyDependencySecurityFix(path, proposal)).status).toBe("applied");
+    expect(
+      (await applyDependencySecurityFix(path, proposal, validBaselineAudit))
+        .status,
+    ).toBe("applied");
     expect(runSandbox).toHaveBeenCalledOnce();
     await expect(stat(cachePath)).rejects.toMatchObject({ code: "ENOENT" });
   });
@@ -66,58 +178,122 @@ describe("dependency cache preflight", () => {
     const path = await repository();
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      runSandbox.mockResolvedValue({ status: "failed", exitCode: 74,
-        stdout: report({ uid: 1000, gid: 1000, context: "container_t", stage: "mkdir", code: "EACCES", ok: false }),
-        stderr: "", durationMs: 1 });
-      const result = await applyDependencySecurityFix(path, proposal);
-      expect(result.summary).toBe("Dependency cache preflight failed at mkdir: EACCES.");
-      expect(log.mock.calls.some(([label]) => label === "[DeployGuard Cache Preflight]")).toBe(true);
-    } finally { log.mockRestore(); }
+      runSandbox.mockResolvedValue({
+        status: "failed",
+        exitCode: 74,
+        stdout: report({
+          uid: 1000,
+          gid: 1000,
+          context: "container_t",
+          stage: "mkdir",
+          code: "EACCES",
+          ok: false,
+        }),
+        stderr: "",
+        durationMs: 1,
+      });
+      const result = await applyDependencySecurityFix(
+        path,
+        proposal,
+        validBaselineAudit,
+      );
+      expect(result.summary).toBe(
+        "Dependency cache preflight failed at mkdir: EACCES.",
+      );
+      expect(
+        log.mock.calls.some(
+          ([label]) => label === "[DeployGuard Cache Preflight]",
+        ),
+      ).toBe(true);
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("fails closed when a failed container has no preflight report", async () => {
     const path = await repository();
-    runSandbox.mockResolvedValue({ status: "failed", exitCode: 1, stdout: "", stderr: "", durationMs: 1 });
-    const result = await applyDependencySecurityFix(path, proposal);
-    expect(result.summary).toBe("Dependency cache preflight did not report a result.");
+    runSandbox.mockResolvedValue({
+      status: "failed",
+      exitCode: 1,
+      stdout: "",
+      stderr: "",
+      durationMs: 1,
+    });
+    const result = await applyDependencySecurityFix(
+      path,
+      proposal,
+      validBaselineAudit,
+    );
+    expect(result.summary).toBe(
+      "Dependency cache preflight did not report a result.",
+    );
   });
 
   it("rejects a cache root inside the service-private /tmp", async () => {
     const path = await repository();
     process.env.DEPLOYGUARD_REMEDIATION_CACHE_ROOT = tmpdir();
-    await expect(applyDependencySecurityFix(path, proposal)).rejects.toThrow("outside /tmp and /var/tmp");
+    await expect(
+      applyDependencySecurityFix(path, proposal, validBaselineAudit),
+    ).rejects.toThrow("outside /tmp and /var/tmp");
     expect(runSandbox).not.toHaveBeenCalled();
   });
 
-  it("continues to independent verification when npm exits one after changing the lockfile", async () => {
+  it("fails closed when npm exits one after changing the lockfile", async () => {
     const path = await repository();
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       runSandbox.mockImplementation(async () => {
         await writeFile(join(path, "package-lock.json"), '{"changed":true}');
-        return { status: "failed", exitCode: 1,
-          stdout: report({ uid: 1000, gid: 1000, context: "container_t", ok: true }) + "found 2 vulnerabilities\n",
-          stderr: "npm ERR! request https://user:secret@example.test/path token=abc123",
-          durationMs: 41_000 };
+        return {
+          status: "failed",
+          exitCode: 1,
+          stdout:
+            report({ uid: 1000, gid: 1000, context: "container_t", ok: true }) +
+            "found 2 vulnerabilities\n",
+          stderr:
+            "npm ERR! request https://user:secret@example.test/path token=abc123",
+          durationMs: 41_000,
+        };
       });
-      const result = await applyDependencySecurityFix(path, proposal);
-      expect(result.status).toBe("applied");
-      const diagnostic = log.mock.calls.find(([label]) => label === "[DeployGuard Remediation npm failure]")?.[1];
-      expect(diagnostic).toMatchObject({ category: "unresolved_vulnerabilities", dependencyChanged: true });
+      const result = await applyDependencySecurityFix(
+        path,
+        proposal,
+        validBaselineAudit,
+      );
+      expect(result.status).toBe("failed");
+      const diagnostic = log.mock.calls.find(
+        ([label]) => label === "[DeployGuard Remediation npm failure]",
+      )?.[1];
+      expect(diagnostic).toMatchObject({
+        category: "unresolved_vulnerabilities",
+        dependencyChanged: true,
+      });
       expect(JSON.stringify(log.mock.calls)).not.toContain("secret");
       expect(JSON.stringify(log.mock.calls)).not.toContain("abc123");
       expect(JSON.stringify(log.mock.calls)).not.toContain("example.test");
-      const preflight = log.mock.calls.find(([label]) => label === "[DeployGuard Cache Preflight]")?.[1];
+      const preflight = log.mock.calls.find(
+        ([label]) => label === "[DeployGuard Cache Preflight]",
+      )?.[1];
       expect(preflight).not.toHaveProperty("stage");
       expect(preflight).not.toHaveProperty("code");
-    } finally { log.mockRestore(); }
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("reports execution failure when npm exits one without changing dependency files", async () => {
     const path = await repository();
-    runSandbox.mockResolvedValue({ status: "failed", exitCode: 1,
-      stdout: report({ uid: 1000, gid: 1000, ok: true }), stderr: "npm ERR! failure", durationMs: 1 });
-    expect((await applyDependencySecurityFix(path, proposal)).status).toBe("failed");
+    runSandbox.mockResolvedValue({
+      status: "failed",
+      exitCode: 1,
+      stdout: report({ uid: 1000, gid: 1000, ok: true }),
+      stderr: "npm ERR! failure",
+      durationMs: 1,
+    });
+    expect(
+      (await applyDependencySecurityFix(path, proposal, validBaselineAudit))
+        .status,
+    ).toBe("failed");
   });
 
   it.each([
@@ -129,13 +305,24 @@ describe("dependency cache preflight", () => {
     const path = await repository();
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      runSandbox.mockResolvedValue({ status: "failed", exitCode: 1,
+      runSandbox.mockResolvedValue({
+        status: "failed",
+        exitCode: 1,
         stdout: report({ uid: 1000, gid: 1000, ok: true }),
-        stderr: `npm ERR! ${code} credential-value-that-must-not-log`, durationMs: 1 });
-      await applyDependencySecurityFix(path, proposal);
-      expect(log.mock.calls.find(([label]) => label === "[DeployGuard Remediation npm failure]")?.[1])
-        .toMatchObject({ category });
-      expect(JSON.stringify(log.mock.calls)).not.toContain("credential-value-that-must-not-log");
-    } finally { log.mockRestore(); }
+        stderr: `npm ERR! ${code} credential-value-that-must-not-log`,
+        durationMs: 1,
+      });
+      await applyDependencySecurityFix(path, proposal, validBaselineAudit);
+      expect(
+        log.mock.calls.find(
+          ([label]) => label === "[DeployGuard Remediation npm failure]",
+        )?.[1],
+      ).toMatchObject({ category });
+      expect(JSON.stringify(log.mock.calls)).not.toContain(
+        "credential-value-that-must-not-log",
+      );
+    } finally {
+      log.mockRestore();
+    }
   });
 });

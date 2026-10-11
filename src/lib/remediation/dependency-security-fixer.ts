@@ -1,3 +1,5 @@
+import { planDependencyRepair } from "@/lib/remediation/dependency-repair-planner";
+import { parseNpmStyleAuditReport } from "@/lib/agents/sandbox-security-agent";
 import type { FixExecutionResult, FixProposal } from "@/lib/remediation/types";
 
 import { runDockerSandboxCommand, SandboxContainerStateUnknownError } from "@/lib/sandbox/docker-sandbox";
@@ -104,12 +106,36 @@ function parsePreflight(stdout: string) {
 export async function applyDependencySecurityFix(
   repositoryPath: string,
   proposal: FixProposal,
+  baselineAuditStdout: string,
 ): Promise<FixExecutionResult> {
   if (proposal.strategy !== "dependency_security") {
     return {
       status: "unsupported",
       summary:
         "This remediation strategy is not supported by the dependency security fixer.",
+    };
+  }
+
+  const findings = parseNpmStyleAuditReport(baselineAuditStdout);
+
+  const targetMatches = findings?.filter(
+    (finding) =>
+      finding.packageName.toLowerCase() ===
+        proposal.packageName?.toLowerCase() &&
+      finding.advisoryIds?.includes(proposal.advisoryId ?? "")
+  );
+
+  if (
+    !proposal.packageName ||
+    !proposal.advisoryId ||
+    !/^[0-9]{1,20}$/.test(proposal.advisoryId) ||
+    !findings ||
+    targetMatches?.length !== 1
+  ) {
+    return {
+      status: "unsupported",
+      summary:
+        "Targeted remediation requires a valid baseline audit containing exactly one matching package advisory.",
     };
   }
 
@@ -137,18 +163,20 @@ export async function applyDependencySecurityFix(
     };
   }
 
-  const command =
-    proposal.risk === "breaking_change_allowed"
-      ? [
-          "npm",
-          "audit",
-          "fix",
-          "--force",
-          "--ignore-scripts",
-          "--no-audit",
-          "--no-fund",
-        ]
-      : ["npm", "audit", "fix", "--ignore-scripts", "--no-audit", "--no-fund"];
+  const plan = await planDependencyRepair(
+    repositoryPath,
+    proposal,
+    baselineAuditStdout,
+  );
+
+  if (!plan.supported) {
+    return {
+      status: "unsupported",
+      summary: plan.reason,
+    };
+  }
+
+  const command = plan.command;
 
   const hostUid = typeof process.getuid === "function" ? process.getuid() : null;
   const hostGid = typeof process.getgid === "function" ? process.getgid() : null;
@@ -191,7 +219,7 @@ export async function applyDependencySecurityFix(
     return {
       status: "failed",
       summary: `Dependency cache preflight failed at ${preflight.stage}: ${preflight.code}.`,
-      command: "npm audit fix",
+      command: command.join(" "),
       exitCode: result.exitCode,
       durationMs: result.durationMs,
     };
@@ -199,7 +227,7 @@ export async function applyDependencySecurityFix(
   if (!preflight && result.status !== "timed_out") {
     return {
       status: "failed", summary: "Dependency cache preflight did not report a result.",
-      command: "npm audit fix", exitCode: result.exitCode, durationMs: result.durationMs,
+      command: command.join(" "), exitCode: result.exitCode, durationMs: result.durationMs,
     };
   }
 
@@ -229,7 +257,7 @@ export async function applyDependencySecurityFix(
     return {
       status: "failed",
       summary: "Dependency remediation exceeded the configured timeout.",
-      command: "npm audit fix",
+      command: command.join(" "),
       exitCode: result.exitCode,
       durationMs: result.durationMs,
     };
@@ -243,7 +271,7 @@ export async function applyDependencySecurityFix(
       stdoutLength: result.stdout.length,
       stderrLength: result.stderr.length,
     });
-    console.error("[DeployGuard Remediation] npm audit fix failed", {
+    console.error("[DeployGuard Remediation] targeted npm install failed", {
       exitCode: result.exitCode,
       durationMs: result.durationMs,
       dependencyChanged,
@@ -254,11 +282,11 @@ export async function applyDependencySecurityFix(
     });
 
     return {
-      status: dependencyChanged ? "applied" : "failed",
+      status: "failed",
       summary: dependencyChanged
         ? "npm changed dependency files but exited nonzero; independent audit verification is required."
         : "npm exited nonzero without changing dependency files.",
-      command: "npm audit fix",
+      command: command.join(" "),
       exitCode: result.exitCode,
       durationMs: result.durationMs,
     };
@@ -267,8 +295,12 @@ export async function applyDependencySecurityFix(
   return {
     status: "applied",
     summary: "npm completed the dependency security remediation attempt.",
-    command: "npm audit fix",
+    command: command.join(" "),
     exitCode: result.exitCode,
     durationMs: result.durationMs,
+    authorizedDependency: {
+      packageName: plan.packageName,
+      version: plan.version,
+    },
   };
 }
