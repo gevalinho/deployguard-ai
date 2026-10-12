@@ -3,6 +3,7 @@ import {
   describe,
   expect,
   it,
+  vi,
 } from "vitest";
 
 import {
@@ -16,6 +17,12 @@ import {
   join,
 } from "node:path";
 
+const dockerMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/sandbox/docker-sandbox", () => ({
+  runDockerSandboxCommand: dockerMock,
+}));
+
 import {
   runSandboxBuildAgent,
 } from "../sandbox-build-agent";
@@ -23,6 +30,8 @@ import {
 let repositoryPath: string | undefined;
 
 afterEach(() => {
+  dockerMock.mockReset();
+
   if (repositoryPath) {
     rmSync(
       repositoryPath,
@@ -146,6 +155,8 @@ throw new Error(
         expect(result.status).toBe(
           "blocked"
         );
+
+        expect(dockerMock).not.toHaveBeenCalled();
 
         expect(result.command).toBe(
           "npm run build"
@@ -296,6 +307,14 @@ console.log(
 `
         );
 
+        dockerMock.mockResolvedValue({
+          status: "passed",
+          exitCode: 0,
+          durationMs: 10,
+          stdout: "Repository-scoped environment value received.",
+          stderr: "",
+        });
+
         const result =
           await runSandboxBuildAgent(
             repositoryPath,
@@ -317,6 +336,16 @@ console.log(
 
         expect(result.status).toBe(
           "passed"
+        );
+
+        expect(dockerMock).toHaveBeenCalledOnce();
+        expect(dockerMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            network: "none",
+            environment: expect.objectContaining({
+              BUILD_SECRET: "repository-scoped-secret",
+            }),
+          })
         );
 
         expect(result.stdout).toContain(
