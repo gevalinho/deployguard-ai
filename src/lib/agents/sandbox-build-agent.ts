@@ -10,6 +10,7 @@ import { runDockerSandboxCommand } from "@/lib/sandbox/docker-sandbox";
 import { detectPackageManager } from "@/lib/sandbox/package-manager";
 import { createRunScriptCommand } from "@/lib/sandbox/package-manager-command";
 import { getCorepackSandboxConfig } from "@/lib/sandbox/corepack-cache";
+import { prepareNextGoogleFonts } from "@/lib/sandbox/next-google-font-assets";
 import { hasDirectNodeApiRuntime } from "@/lib/capabilities/build-applicability";
 import { scanRepository } from "@/lib/scanner/repository-scanner";
 import type { RepositoryFact } from "@/lib/evidence/types";
@@ -446,8 +447,17 @@ export async function runSandboxBuildAgent(
       {}
     );
 
-  const result =
-    await runDockerSandboxCommand({
+  const googleFonts = await prepareNextGoogleFonts(repositoryPath);
+  if (googleFonts.status === "blocked") {
+    return {
+      id: "build", category: "build", name: "Production Build", status: "blocked",
+      command: buildCommand.display, summary: googleFonts.reason,
+    };
+  }
+
+  let result;
+  try {
+    result = await runDockerSandboxCommand({
       repositoryPath,
       command: buildCommand.command,
       network: "none",
@@ -458,10 +468,12 @@ export async function runSandboxBuildAgent(
         HOME: "/tmp/deployguard-home",
         ...corepackConfig.environment,
         ...buildEnvironment,
+        ...(googleFonts.status === "ready" ? googleFonts.environment : {}),
       },
 
       mounts: [
         ...corepackConfig.mounts,
+        ...(googleFonts.status === "ready" ? [googleFonts.mount] : []),
       ],
 
       user:
@@ -476,6 +488,9 @@ export async function runSandboxBuildAgent(
         timeoutMs: 5 * 60 * 1000,
       },
     });
+  } finally {
+    if (googleFonts.status === "ready") await googleFonts.cleanup();
+  }
 
   if (result.status === "infrastructure_error") {
     return {
@@ -521,18 +536,20 @@ export async function runSandboxBuildAgent(
     /Failed to fetch|fonts\.googleapis\.com|ENOTFOUND|ENETUNREACH|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|fetch failed|network is unreachable|network unreachable|getaddrinfo/i.test(
       combinedOutput
     );
+  const fontMappingFailure = googleFonts.status === "ready" &&
+    /Missing mocked response for URL/i.test(combinedOutput);
 
   const status =
     result.status === "passed"
       ? "passed"
-      : networkDependencyFailure
+      : fontMappingFailure || networkDependencyFailure
         ? "blocked"
         : "failed";
 
   const evidence =
     status === "passed"
       ? []
-      : status === "blocked"
+      : status === "blocked" && !fontMappingFailure
         ? extractNetworkEvidence(
             result.stdout,
             result.stderr
@@ -555,6 +572,8 @@ export async function runSandboxBuildAgent(
     summary:
       status === "passed"
         ? "Production build passed inside the sandbox."
+        : fontMappingFailure
+          ? "Production build required a Google Font variant that could not be safely prepared."
         : status === "blocked"
           ? (
               "Production build could not be fully verified because " +
