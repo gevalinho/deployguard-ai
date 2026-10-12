@@ -33,6 +33,8 @@ import type {
   PreparationPlan,
 } from "@/lib/sandbox/preparation-planner";
 
+export const DEPENDENCY_PREPARATION_TIMEOUT_MS = 5 * 60 * 1000;
+
 export interface SandboxPreparationResult {
   status:
     | "passed"
@@ -521,10 +523,7 @@ const result =
       cpus:
         1,
 
-      timeoutMs:
-        2 *
-        60 *
-        1000,
+      timeoutMs: DEPENDENCY_PREPARATION_TIMEOUT_MS,
     },
   });
 
@@ -630,7 +629,7 @@ const result =
       result.status === "passed"
         ? `Sandbox workspace prepared successfully using ${packageManager.name}.`
         : result.status === "timed_out"
-          ? `Sandbox workspace preparation timed out after 120 seconds while installing dependencies with ${packageManager.name}.`
+          ? `Sandbox workspace preparation timed out after ${DEPENDENCY_PREPARATION_TIMEOUT_MS / 1000} seconds while installing dependencies with ${packageManager.name}.`
           : result.status === "infrastructure_error"
             ? "Sandbox workspace preparation could not complete because Docker infrastructure was unavailable."
             : networkFailure
