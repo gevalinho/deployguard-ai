@@ -413,6 +413,19 @@ export async function runSandboxTestAgent(
       },
     });
 
+  if (result.status === "infrastructure_error") {
+    return {
+      id: "test",
+      category: "test",
+      name: "Tests",
+      status: "error",
+      command: testCommand.display,
+      exitCode: result.exitCode,
+      durationMs: result.durationMs,
+      summary: "Docker infrastructure failed before the repository check could complete.",
+    };
+  }
+
   if (
     result.status ===
     "timed_out"

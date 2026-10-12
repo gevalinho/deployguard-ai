@@ -231,6 +231,19 @@ export async function runSandboxLintAgent(
     },
   });
 
+  if (result.status === "infrastructure_error") {
+    return {
+      id: "lint",
+      category: "lint",
+      name: "Lint",
+      status: "error",
+      command: lintCommand.display,
+      exitCode: result.exitCode,
+      durationMs: result.durationMs,
+      summary: "Docker infrastructure failed before the repository check could complete.",
+    };
+  }
+
   if (result.status === "timed_out") {
     return {
       id: "lint",

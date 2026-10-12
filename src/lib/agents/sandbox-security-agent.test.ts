@@ -140,6 +140,37 @@ describe("sandbox security audit result", () => {
         exitCode: null, stdoutBytes: 0 }));
     expect(JSON.stringify(warning.mock.calls)).not.toMatch(/private|token=|repository path/);
   });
+  it("blocks security verification when Docker infrastructure fails", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    runSandbox.mockResolvedValue({
+      status: "infrastructure_error",
+      exitCode: 125,
+      stdout: "",
+      stderr: "private repository path token=private-secret",
+      durationMs: 1,
+    });
+
+    const result = await runSandboxSecurityAgent(await repository());
+
+    expect(result.status).toBe("blocked");
+    expect(result.summary).toContain("Docker infrastructure failure");
+    expect(result.stdout).toBeUndefined();
+    expect(result.stderr).toBeUndefined();
+
+    expect(warning).toHaveBeenCalledWith(
+      "[DeployGuard Dependency Audit Diagnostic]",
+      expect.objectContaining({
+        reason: "sandbox_execution_failure",
+        sandboxStatus: "infrastructure_error",
+        exitCode: 125,
+      })
+    );
+
+    expect(JSON.stringify(result)).not.toContain("private-secret");
+    expect(JSON.stringify(warning.mock.calls)).not.toContain("private-secret");
+  });
+
   it("accepts a complete zero-vulnerability report", async () => {
     runSandbox.mockResolvedValue({ status: "passed", exitCode: 0, stdout: report(0), stderr: "", durationMs: 1 });
     expect((await runSandboxSecurityAgent(await repository())).status).toBe("passed");
