@@ -699,6 +699,32 @@ export async function runSandboxSecurityAgent(
       throw error;
     });
 
+  if (result.status === "infrastructure_error") {
+    if (packageManager.name === "npm") {
+      logAuditDiagnostic(
+        {
+          ...inspectNpmStyleAuditReport(undefined).diagnostic,
+          reason: "sandbox_execution_failure",
+        },
+        {
+          status: result.status,
+          exitCode: result.exitCode,
+        }
+      );
+    }
+
+    return {
+      id: "security",
+      category: "security",
+      name: "Dependency Security",
+      status: "blocked",
+      command: auditCommand.display,
+      exitCode: result.exitCode,
+      durationMs: result.durationMs,
+      summary: "Dependency security verification was blocked by a Docker infrastructure failure.",
+    };
+  }
+
   if (
     result.status ===
     "timed_out"

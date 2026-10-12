@@ -37,11 +37,13 @@ export interface SandboxPreparationResult {
   status:
     | "passed"
     | "failed"
-    | "timed_out";
+    | "timed_out"
+    | "infrastructure_error";
 
   failureKind?:
     | "network"
     | "timeout"
+    | "infrastructure"
     | "repository";
 
   packageManager?: SandboxPackageManager;
@@ -618,7 +620,9 @@ const result =
         ? undefined
         : result.status === "timed_out"
           ? "timeout"
-          : networkFailure
+          : result.status === "infrastructure_error"
+            ? "infrastructure"
+            : networkFailure
             ? "network"
             : "repository",
 
@@ -627,7 +631,9 @@ const result =
         ? `Sandbox workspace prepared successfully using ${packageManager.name}.`
         : result.status === "timed_out"
           ? `Sandbox workspace preparation timed out after 120 seconds while installing dependencies with ${packageManager.name}.`
-          : networkFailure
+          : result.status === "infrastructure_error"
+            ? "Sandbox workspace preparation could not complete because Docker infrastructure was unavailable."
+            : networkFailure
             ? "Sandbox workspace preparation could not complete because of a package registry or network error."
             : preparationFailureSummary ??
               `Sandbox workspace preparation failed using ${packageManager.name}.`,

@@ -34,6 +34,17 @@ describe(
     );
 
     it(
+      "blocks downstream checks when Docker infrastructure fails",
+      () => {
+        expect(
+          classifyPreparationFailureStatus(
+            "infrastructure"
+          )
+        ).toBe("blocked");
+      }
+    );
+
+    it(
       "reports repository-caused preparation failures as errors",
       () => {
         expect(

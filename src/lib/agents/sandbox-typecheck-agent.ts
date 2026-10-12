@@ -269,6 +269,19 @@ export async function runSandboxTypecheckAgent(
       },
     });
 
+  if (result.status === "infrastructure_error") {
+    return {
+      id: "types",
+      category: "types",
+      name: "TypeScript",
+      status: "error",
+      command: typecheckCommand.display,
+      exitCode: result.exitCode,
+      durationMs: result.durationMs,
+      summary: "Docker infrastructure failed before the repository check could complete.",
+    };
+  }
+
   if (
     result.status ===
     "timed_out"

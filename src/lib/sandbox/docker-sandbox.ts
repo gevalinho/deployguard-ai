@@ -57,7 +57,8 @@ export interface DockerSandboxCommandResult {
   status:
     | "passed"
     | "failed"
-    | "timed_out";
+    | "timed_out"
+    | "infrastructure_error";
 
   exitCode: number | null;
   stdout: string;
@@ -195,6 +196,29 @@ const userArgs =
       executionPromise,
       timeoutPromise,
     ]);
+  } catch (error) {
+    const code =
+      error instanceof Error &&
+      "code" in error &&
+      typeof error.code === "string"
+        ? error.code
+        : undefined;
+
+    if (
+      code !== "ENOENT" &&
+      code !== "EACCES" &&
+      code !== "EPERM"
+    ) {
+      throw error;
+    }
+
+    return {
+      status: "infrastructure_error",
+      exitCode: null,
+      stdout: "",
+      stderr: "",
+      durationMs: Date.now() - startedAt,
+    };
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);
   }
@@ -286,9 +310,11 @@ const userArgs =
 
   return {
     status:
-      outcome.status === "passed"
-        ? "passed"
-        : "failed",
+      outcome.exitCode === 125
+        ? "infrastructure_error"
+        : outcome.status === "passed"
+          ? "passed"
+          : "failed",
 
     exitCode: outcome.exitCode,
     stdout: outcome.stdout,

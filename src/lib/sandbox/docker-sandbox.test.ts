@@ -72,4 +72,76 @@ describe("Docker sandbox timeout", () => {
     finishRun({ status: "failed", exitCode: 1, stdout: "", stderr: "" });
     await rejection;
   });
+
+  it("classifies Docker launch failure as infrastructure error", async () => {
+    runCommand.mockResolvedValue({
+      status: "failed",
+      exitCode: 125,
+      stdout: "",
+      stderr: "Docker daemon unavailable",
+      timedOut: false,
+    });
+
+    const result = await runDockerSandboxCommand({
+      repositoryPath: "/repo",
+      command: ["npm", "test"],
+    });
+
+    expect(result.status).toBe("infrastructure_error");
+    expect(result.exitCode).toBe(125);
+  });
+
+  it.each(["ENOENT", "EACCES", "EPERM"])(
+    "classifies Docker process-start error %s as infrastructure failure",
+    async (code) => {
+      const error = Object.assign(
+        new Error("Sensitive Docker startup diagnostic"),
+        { code }
+      );
+
+      runCommand.mockRejectedValue(error);
+
+      const result = await runDockerSandboxCommand({
+        repositoryPath: "/repo",
+        command: ["npm", "test"],
+      });
+
+      expect(result.status).toBe("infrastructure_error");
+      expect(result.exitCode).toBeNull();
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe("");
+      expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    }
+  );
+
+  it("propagates unexpected Docker execution exceptions", async () => {
+    const error = new Error("Unexpected execution failure");
+
+    runCommand.mockRejectedValue(error);
+
+    await expect(
+      runDockerSandboxCommand({
+        repositoryPath: "/repo",
+        command: ["npm", "test"],
+      })
+    ).rejects.toBe(error);
+  });
+
+  it("preserves ordinary repository command failures", async () => {
+    runCommand.mockResolvedValue({
+      status: "failed",
+      exitCode: 1,
+      stdout: "",
+      stderr: "Tests failed",
+      timedOut: false,
+    });
+
+    const result = await runDockerSandboxCommand({
+      repositoryPath: "/repo",
+      command: ["npm", "test"],
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.exitCode).toBe(1);
+  });
 });
