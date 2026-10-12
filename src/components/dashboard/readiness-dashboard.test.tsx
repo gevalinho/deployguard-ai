@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AiAvailabilityNotice, AssessmentPipeline, ReadinessDashboard } from "./readiness-dashboard";
+import { AiAvailabilityNotice, AssessmentPipeline, FindingEvidence, ReadinessDashboard, VerificationChecks } from "./readiness-dashboard";
 import type { PublicCheckResult } from "@/lib/reporting/types";
 
 describe("repository assessment sign-in state", () => {
@@ -66,5 +66,55 @@ describe("AI availability presentation", () => {
     expect(html).toContain("AI guidance was unavailable for architecture analysis and remediation");
     expect(html).toContain("readiness score, and deterministic remediation plan are complete");
     expect(html).toContain('role="status"');
+  });
+});
+
+
+describe("security dependency exposure presentation", () => {
+  const scopes = [
+    ["production", "Production dependency"],
+    ["development", "Development dependency"],
+    ["both", "Production and development"],
+    ["unknown", "Exposure unknown"],
+  ] as const;
+
+  it.each(scopes)("renders %s exposure in both evidence views", (scope, label) => {
+    const evidence = [{
+      kind: "security_finding" as const,
+      message: "example-package has a high-severity dependency vulnerability.",
+      code: "high",
+      dependencyScope: scope,
+    }];
+
+    const compact = renderToStaticMarkup(
+      <FindingEvidence evidence={evidence} />,
+    );
+
+    const detailed = renderToStaticMarkup(
+      <VerificationChecks checks={[{
+        id: "security",
+        category: "security",
+        name: "Security",
+        status: "failed",
+        summary: "High-severity vulnerabilities detected.",
+        evidence,
+      }]} />,
+    );
+
+    expect(compact).toContain(`Exposure: ${label}`);
+    expect(detailed).toContain(label);
+  });
+
+  it("does not label unrelated evidence as dependency exposure", () => {
+    const html = renderToStaticMarkup(
+      <FindingEvidence evidence={[{
+        kind: "warning",
+        message: "Example warning.",
+        dependencyScope: "production",
+      }]} />,
+    );
+
+    expect(html).not.toContain("Production dependency");
+    expect(html).not.toContain("Exposure:");
   });
 });

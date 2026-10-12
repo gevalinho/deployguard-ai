@@ -1,3 +1,4 @@
+import { createSecurityEvidence } from "./sandbox-security-agent";
 import { describe, expect, it } from "vitest";
 import { inspectNpmStyleAuditReport, parseNpmStyleAuditReport } from "./sandbox-security-agent";
 
@@ -194,5 +195,51 @@ describe("npm audit v2 evidence", () => {
       braces: { ...direct("braces", 123, ["parent"]), via: ["parent", ...direct("braces", 123).via] },
       parent: dependent("parent", ["braces"]),
     }))).toBeNull();
+  });
+});
+
+describe("mixed-scope security evidence aggregation", () => {
+  it("does not hide production exposure when advisories share a package", () => {
+    const evidence = createSecurityEvidence([
+      {
+        packageName: "shared-package",
+        severity: "high",
+        advisoryIds: ["111"],
+        dependencyScope: "development",
+      },
+      {
+        packageName: "shared-package",
+        severity: "high",
+        advisoryIds: ["222"],
+        dependencyScope: "production",
+      },
+    ]);
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0].advisoryIds).toEqual(["111", "222"]);
+    expect(evidence[0].dependencyScope).toBe("production");
+  });
+});
+
+describe("uncertain security evidence aggregation", () => {
+  it("does not discard unknown scope when combining advisories", () => {
+    const evidence = createSecurityEvidence([
+      {
+        packageName: "shared-package",
+        severity: "high",
+        advisoryIds: ["111"],
+        dependencyScope: "both",
+      },
+      {
+        packageName: "shared-package",
+        severity: "high",
+        advisoryIds: ["222"],
+        dependencyScope: "unknown",
+      },
+    ]);
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0].advisoryIds).toEqual(["111", "222"]);
+    expect(evidence[0].dependencyScope).toBe("unknown");
   });
 });

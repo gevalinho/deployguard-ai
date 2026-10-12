@@ -186,6 +186,142 @@ describe("sandbox security audit result", () => {
     expect(result.evidence?.[0].message).toContain("target");
     expect(result.evidence?.[0].advisoryIds).toEqual(["9876"]);
   });
+  it("labels verified development-only findings without passing the full audit", async () => {
+    runSandbox
+      .mockResolvedValueOnce({
+        status: "failed",
+        exitCode: 1,
+        stdout: report(1),
+        stderr: "",
+        durationMs: 1,
+      })
+      .mockResolvedValueOnce({
+        status: "passed",
+        exitCode: 0,
+        stdout: report(0),
+        stderr: "",
+        durationMs: 1,
+      });
+
+    const result = await runSandboxSecurityAgent(await repository());
+
+    expect(result.status).toBe("failed");
+    expect(result.evidence?.[0]).toMatchObject({
+      kind: "security_finding",
+      dependencyScope: "development",
+    });
+    expect(runSandbox).toHaveBeenCalledTimes(2);
+    expect(runSandbox.mock.calls[1][0].command).toContain("--omit=dev");
+  });
+
+  it("retains full-audit findings when the supplementary audit fails", async () => {
+    runSandbox
+      .mockResolvedValueOnce({
+        status: "failed",
+        exitCode: 1,
+        stdout: report(1),
+        stderr: "",
+        durationMs: 1,
+      })
+      .mockResolvedValueOnce({
+        status: "infrastructure_error",
+        exitCode: 125,
+        stdout: "",
+        stderr: "private token=secret",
+        durationMs: 1,
+      });
+
+    const result = await runSandboxSecurityAgent(await repository());
+
+    expect(result.status).toBe("failed");
+    expect(result.evidence?.[0]).toMatchObject({
+      kind: "security_finding",
+      dependencyScope: "unknown",
+    });
+    expect(JSON.stringify(sanitizeCheckForPublic(result))).not.toContain("token=secret");
+  });
+
+  it("identifies production-exposed vulnerabilities", async () => {
+    runSandbox
+      .mockResolvedValueOnce({
+        status: "failed",
+        exitCode: 1,
+        stdout: report(1),
+        stderr: "",
+        durationMs: 1,
+      })
+      .mockResolvedValueOnce({
+        status: "failed",
+        exitCode: 1,
+        stdout: report(1),
+        stderr: "",
+        durationMs: 1,
+      });
+
+    const result = await runSandboxSecurityAgent(await repository());
+
+    expect(result.status).toBe("failed");
+    expect(result.evidence?.[0]).toMatchObject({
+      kind: "security_finding",
+      dependencyScope: "production",
+    });
+    expect(runSandbox).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not infer development scope from malformed production audit output", async () => {
+    runSandbox
+      .mockResolvedValueOnce({
+        status: "failed",
+        exitCode: 1,
+        stdout: report(1),
+        stderr: "",
+        durationMs: 1,
+      })
+      .mockResolvedValueOnce({
+        status: "passed",
+        exitCode: 0,
+        stdout: "{}",
+        stderr: "",
+        durationMs: 1,
+      });
+
+    const result = await runSandboxSecurityAgent(await repository());
+
+    expect(result.status).toBe("failed");
+    expect(result.evidence?.[0]).toMatchObject({
+      kind: "security_finding",
+      dependencyScope: "unknown",
+    });
+    expect(runSandbox).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects unexpected production audit exit codes", async () => {
+    runSandbox
+      .mockResolvedValueOnce({
+        status: "failed",
+        exitCode: 1,
+        stdout: report(1),
+        stderr: "",
+        durationMs: 1,
+      })
+      .mockResolvedValueOnce({
+        status: "failed",
+        exitCode: 2,
+        stdout: report(1),
+        stderr: "",
+        durationMs: 1,
+      });
+
+    const result = await runSandboxSecurityAgent(await repository());
+
+    expect(result.status).toBe("failed");
+    expect(result.evidence?.[0]).toMatchObject({
+      kind: "security_finding",
+      dependencyScope: "unknown",
+    });
+    expect(runSandbox).toHaveBeenCalledTimes(2);
+  });
+
   it("accepts a complete pnpm-style advisory report", async () => {
     const root = await repository();
     await rm(join(root, "package-lock.json"));

@@ -14,7 +14,12 @@ import {
 
 import {
   createAuditCommand,
+  createProductionAuditCommand,
 } from "@/lib/sandbox/package-manager-command";
+
+import {
+  classifyDependencyFindings,
+} from "./dependency-scope";
 
 import {
   getCorepackSandboxConfig,
@@ -34,6 +39,7 @@ export interface AuditFinding {
   packageName: string;
   severity: AuditSeverity;
   advisoryIds?: string[];
+  dependencyScope?: "production" | "development" | "both" | "unknown";
 }
 
 interface NpmStyleAuditReport {
@@ -512,6 +518,23 @@ export function createSecurityEvidence(
     if (seen.has(identity)) {
       const existing = seen.get(identity)!;
       existing.advisoryIds = [...new Set([...(existing.advisoryIds ?? []), ...(finding.advisoryIds ?? [])])];
+
+      const currentScope = existing.dependencyScope;
+      const incomingScope = finding.dependencyScope;
+
+      if (currentScope !== incomingScope) {
+        if (currentScope === "production" || incomingScope === "production") {
+          existing.dependencyScope = "production";
+        } else if (currentScope === "both" || incomingScope === "both") {
+          existing.dependencyScope =
+            currentScope === "unknown" || incomingScope === "unknown"
+              ? "unknown"
+              : "both";
+        } else {
+          existing.dependencyScope = "unknown";
+        }
+      }
+
       continue;
     }
 
@@ -521,6 +544,9 @@ export function createSecurityEvidence(
         `${finding.packageName} has a ${finding.severity}-severity dependency vulnerability.`,
       code: finding.severity,
       ...(finding.advisoryIds?.length ? { advisoryIds: [...finding.advisoryIds] } : {}),
+      ...(finding.dependencyScope
+        ? { dependencyScope: finding.dependencyScope }
+        : {}),
     };
     seen.set(identity, item);
     evidence.push(item);
@@ -611,6 +637,93 @@ function createFailureSummary(
     } reported.` +
     packageText
   );
+}
+
+/**
+ * Supplementary npm audit used only to classify dependency exposure.
+ * An invalid or unavailable result must never imply development-only scope.
+ */
+async function inspectProductionDependencyFindings(
+  repositoryPath: string,
+  packageManager: PackageManagerInfo
+): Promise<AuditFinding[] | null> {
+  const auditCommand = createProductionAuditCommand(packageManager);
+
+  if (!auditCommand) {
+    return null;
+  }
+
+  const corepackConfig = getCorepackSandboxConfig(packageManager, true);
+
+  try {
+    const result = await runDockerSandboxCommand({
+      repositoryPath,
+      command: auditCommand.command,
+      network: "bridge",
+      environment: {
+        CI: "true",
+        HOME: "/tmp/deployguard-home",
+        npm_config_cache: "/tmp/npm-cache",
+      },
+      mounts: [...corepackConfig.mounts],
+      user:
+        typeof process.getuid === "function" &&
+        typeof process.getgid === "function"
+          ? `${process.getuid()}:${process.getgid()}`
+          : "1000:1000",
+      limits: {
+        memoryMb: 1024,
+        cpus: 1,
+        timeoutMs: SECURITY_AUDIT_TIMEOUT_MS,
+      },
+    });
+
+    if (
+      result.status !== "passed" &&
+      result.status !== "failed"
+    ) {
+      return null;
+    }
+
+    if (
+      result.exitCode === null ||
+      result.exitCode === undefined ||
+      (result.status === "failed" && result.exitCode === 0) ||
+      looksLikeInfrastructureFailure(result.stdout, result.stderr)
+    ) {
+      return null;
+    }
+
+    const inspection = inspectNpmStyleAuditReport(result.stdout);
+
+    if (!inspection.findings) {
+      return null;
+    }
+
+    const hasHighRisk = inspection.findings.some(
+      (finding) =>
+        finding.severity === "high" ||
+        finding.severity === "critical"
+    );
+
+    // npm audit uses exit code 0 when no findings meet the
+    // configured audit threshold and 1 when they do.
+    // Other exit codes cannot establish dependency scope.
+    if (result.exitCode !== (hasHighRisk ? 1 : 0)) {
+      return null;
+    }
+
+    if (
+      (result.status === "passed" && result.exitCode !== 0) ||
+      (result.status === "failed" && result.exitCode === 0)
+    ) {
+      return null;
+    }
+
+    return inspection.findings;
+  } catch {
+    return null;
+  }
 }
 
 export async function runSandboxSecurityAgent(
@@ -858,9 +971,22 @@ export async function runSandboxSecurityAgent(
     logAuditDiagnostic(npmInspection.diagnostic, result);
   }
 
+  const productionFindings =
+    getHighRiskFindings(findings).length > 0
+      ? await inspectProductionDependencyFindings(
+          repositoryPath,
+          packageManager
+        )
+      : null;
+
+  const scopedFindings = classifyDependencyFindings(
+    findings,
+    productionFindings
+  );
+
   const securityEvidence =
   createSecurityEvidence(
-    findings
+    scopedFindings
   );
 
   if (highSeverityFinding || findings.some((finding) =>

@@ -35,6 +35,12 @@ export interface CheckEvidence {
   column?: number;
   code?: string;
   advisoryIds?: string[];
+
+  /**
+   * Verified dependency exposure for security findings.
+   * Unknown means the dependency scope has not been established.
+   */
+  dependencyScope?: "production" | "development" | "both" | "unknown";
 } 
 
 export interface CheckConfigurationRequirement {

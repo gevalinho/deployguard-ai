@@ -26,10 +26,11 @@ describe(
         summary: "High-risk findings", stdout: "private audit output", stderr: "private registry detail",
         evidence: [{ kind: "security_finding", code: "high",
           message: "braces has a high-severity dependency vulnerability.",
-          advisoryIds: ["1098094", "1240992"] }],
+          advisoryIds: ["1098094", "1240992"], dependencyScope: "development" }],
       };
       const sanitized = sanitizeCheckForPublic(check);
       expect(sanitized.evidence?.[0].advisoryIds).toEqual(["1098094", "1240992"]);
+      expect(sanitized.evidence?.[0].dependencyScope).toBe("development");
       expect(sanitized).not.toHaveProperty("stdout");
       expect(sanitized).not.toHaveProperty("stderr");
     });

@@ -344,6 +344,23 @@ function formatEvidenceKind(kind: CheckEvidence["kind"]) {
   return kind.replace(/_/g, " ");
 }
 
+function formatDependencyScope(evidence: CheckEvidence) {
+  if (evidence.kind !== "security_finding" || !evidence.dependencyScope) {
+    return null;
+  }
+
+  switch (evidence.dependencyScope) {
+    case "production":
+      return "Production dependency";
+    case "development":
+      return "Development dependency";
+    case "both":
+      return "Production and development";
+    case "unknown":
+      return "Exposure unknown";
+  }
+}
+
 function formatEvidenceLocation(evidence: CheckEvidence) {
   if (!evidence.file) {
     return null;
@@ -450,7 +467,7 @@ function getCheckStateDescription(check: CheckResult) {
   }
 }
 
-function FindingEvidence({ evidence }: { evidence: CheckEvidence[] }) {
+export function FindingEvidence({ evidence }: { evidence: CheckEvidence[] }) {
   const prioritized = evidence.filter((item) => item.kind !== "warning");
   const findings = prioritized.length > 0 ? prioritized : evidence;
 
@@ -475,6 +492,9 @@ function FindingEvidence({ evidence }: { evidence: CheckEvidence[] }) {
                 <span>
                   {isSeverity ? "Severity" : "Code"}: {item.code}
                 </span>
+              )}
+              {formatDependencyScope(item) && (
+                <span>Exposure: {formatDependencyScope(item)}</span>
               )}
               {location && <span className="font-mono">File: {location}</span>}
             </div>
@@ -880,7 +900,7 @@ function RepositoryConfiguration({
 /*                         Verification / Check Evidence                      */
 /* -------------------------------------------------------------------------- */
 
-function VerificationChecks({ checks }: { checks: CheckResult[] }) {
+export function VerificationChecks({ checks }: { checks: CheckResult[] }) {
   return (
     <section>
       <div className="mb-4">
@@ -950,6 +970,11 @@ function VerificationChecks({ checks }: { checks: CheckResult[] }) {
                             {item.code && (
                               <span className="rounded-full border border-zinc-700 px-2.5 py-1 font-mono text-[11px] text-zinc-400">
                                 {item.code}
+                              </span>
+                            )}
+                            {formatDependencyScope(item) && (
+                              <span className="rounded-full border border-zinc-700 px-2.5 py-1 text-[11px] text-zinc-300">
+                                {formatDependencyScope(item)}
                               </span>
                             )}
                           </div>

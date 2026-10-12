@@ -105,6 +105,33 @@ export function createExecCommand(
   }
 }
 
+/**
+ * Optional production-only security audit.
+ *
+ * This supplements the full audit; it must never replace it.
+ * Unsupported package managers return null rather than
+ * assuming their audit flags behave like npm's.
+ */
+export function createProductionAuditCommand(
+  packageManager: PackageManagerInfo
+): PackageManagerCommand | null {
+  if (packageManager.name !== "npm") {
+    return null;
+  }
+
+  return {
+    command: [
+      "npm",
+      "audit",
+      "--omit=dev",
+      "--audit-level=high",
+      "--json",
+    ],
+    display:
+      "npm audit --omit=dev --audit-level=high --json",
+  };
+}
+
 export function createAuditCommand(
   packageManager: PackageManagerInfo
 ): PackageManagerCommand {
