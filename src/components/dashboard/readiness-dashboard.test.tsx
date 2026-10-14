@@ -1,7 +1,40 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AiAvailabilityNotice, AssessmentPipeline, FindingEvidence, ReadinessDashboard, VerificationChecks } from "./readiness-dashboard";
+import { AiAvailabilityNotice, AssessmentPipeline, FindingEvidence, ReadinessDashboard, VerificationChecks, isCurrentRequest, repositoryIdentity, shouldInvalidateRepository } from "./readiness-dashboard";
 import type { PublicCheckResult } from "@/lib/reporting/types";
+
+describe("repository switching identity", () => {
+  it("keeps assessment state for equivalent URL edits", () => {
+    const identity = repositoryIdentity("https://github.com/Owner/Repo");
+    expect(identity).toBe("owner/repo");
+    expect(shouldInvalidateRepository(identity, " https://GITHUB.com/owner/repo.git ")).toBe(false);
+    expect(shouldInvalidateRepository(identity, "https://github.com/owner/repo/")).toBe(false);
+  });
+
+  it("invalidates report, progress and repository configuration when the URL points elsewhere", () => {
+    const identity = repositoryIdentity("https://github.com/owner/first");
+    expect(shouldInvalidateRepository(identity, "https://github.com/owner/second")).toBe(true);
+    expect(shouldInvalidateRepository(identity, "https://github.com/owner/other/branch")).toBe(true);
+    expect(shouldInvalidateRepository(identity, "")).toBe(true);
+  });
+
+  it("rejects out-of-order assessment streams and stale scan responses", () => {
+    expect(isCurrentRequest(1, 2, "owner/first", "owner/second", false)).toBe(false);
+    expect(isCurrentRequest(1, 2, "owner/first", "owner/first", false)).toBe(false);
+    expect(isCurrentRequest(2, 2, "owner/second", "owner/second", false)).toBe(true);
+    expect(isCurrentRequest(2, 2, "owner/second", "owner/second", true)).toBe(false);
+  });
+
+  it("allows a repeat assessment while invalidating its earlier completion", () => {
+    const identity = repositoryIdentity("https://github.com/owner/repo");
+    expect(isCurrentRequest(3, 4, identity, identity, false)).toBe(false);
+    expect(isCurrentRequest(4, 4, identity, identity, false)).toBe(true);
+  });
+
+  it("rejects an authorization return after the user switches repositories", () => {
+    expect(isCurrentRequest(5, 6, "owner/first", "owner/second", false)).toBe(false);
+  });
+});
 
 describe("repository assessment sign-in state", () => {
   it("offers the existing GitHub sign-in flow without an initial auth error", () => {
@@ -116,5 +149,29 @@ describe("security dependency exposure presentation", () => {
 
     expect(html).not.toContain("Production dependency");
     expect(html).not.toContain("Exposure:");
+  });
+});
+
+describe("report accessibility", () => {
+  it("keeps failed status and summary visible while evidence is a native disclosure", () => {
+    const html = renderToStaticMarkup(<VerificationChecks checks={[{
+      id: "build", category: "build", name: "Build", status: "failed",
+      summary: "Build failed", evidence: [{ kind: "error", message: "Long diagnostic" }],
+    }]} />);
+    expect(html).toContain('id="verification-checks"');
+    expect(html).toContain("Build failed");
+    expect(html).toContain("Verified check failed.");
+    expect(html).toMatch(/<details[^>]*><summary[^>]*>[\s\S]*Captured evidence/);
+    expect(html).not.toMatch(/<details[^>]* open/);
+    expect(html).toContain("focus-visible:outline-2");
+  });
+
+  it("makes compact finding evidence collapsible with a keyboard target", () => {
+    const html = renderToStaticMarkup(<FindingEvidence evidence={[{
+      kind: "security_finding", message: "Affected package", file: "very/long/path",
+    }]} />);
+    expect(html).toContain("View evidence (1)");
+    expect(html).toContain("min-h-11");
+    expect(html).toContain("Affected package");
   });
 });

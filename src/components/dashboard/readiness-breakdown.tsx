@@ -122,12 +122,13 @@ export function ReadinessBreakdown({
 
   return (
     <section
+      id="readiness-breakdown"
       aria-labelledby="readiness-breakdown-title"
-      className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6"
+      className="scroll-mt-6 min-w-0 rounded-2xl border border-zinc-800 bg-zinc-900 p-4 sm:p-6 [overflow-wrap:anywhere]"
     >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm text-zinc-400">
             Deterministic scoring
           </p>
 
@@ -138,7 +139,7 @@ export function ReadinessBreakdown({
             Readiness Breakdown
           </h2>
 
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-500">
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
             See exactly how verified repository evidence contributes
             to the production-readiness score.
           </p>
@@ -165,7 +166,7 @@ export function ReadinessBreakdown({
           return (
             <div key={item.category}>
               <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-3">
+                <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
                   <p className="font-medium text-zinc-200">
                     {CATEGORY_LABELS[item.category]}
                   </p>
