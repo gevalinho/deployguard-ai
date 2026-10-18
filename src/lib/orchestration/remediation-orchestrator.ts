@@ -377,6 +377,7 @@ if (
   execution.status !== "applied"
 ) {
   return {
+    sourceCommitSha: ingested.provenance.commitSha,
     repository: {
       owner: repository.owner,
       name: repository.name,
@@ -398,6 +399,7 @@ if (proposal.strategy === "dependency_security") {
     execution.status = "failed";
     execution.summary = "Dependency files could not be safely captured after remediation.";
     return {
+      sourceCommitSha: ingested.provenance.commitSha,
       repository: { owner: repository.owner, name: repository.name,
         fullName: repository.fullName, url: repository.url },
       remediation: sanitizeRemediationForPublic(remediation),

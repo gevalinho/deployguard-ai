@@ -118,6 +118,44 @@ beforeEach(() => {
 });
 
 describe("dashboard repository interactions", () => {
+  it.each([
+    ["abc", true],
+    ["different-commit", false],
+  ] as const)("shows an unsupported remediation only for the current source commit (%s)", async (sourceCommitSha, visible) => {
+    const checks = [{ id: "security", category: "security", name: "Security", status: "failed",
+      summary: "Vulnerability", evidence: [{ kind: "security_finding", code: "high",
+        message: "braces has a high-severity dependency vulnerability.", advisoryIds: ["123"] }] }];
+    const explanation = "No explicit targeted fix version is available.";
+    const remediation = { sourceCommitSha, repository: { owner: "owner", name: "first",
+      fullName: "owner/first", url: "https://github.com/owner/first" },
+      remediation: { proposal: { strategy: "dependency_security" },
+        execution: { status: "unsupported", summary: explanation } } };
+    const fetchMock = vi.fn().mockResolvedValueOnce(responseFor("first", checks))
+      .mockResolvedValueOnce(Response.json({ ok: true, remediation }));
+    vi.stubGlobal("fetch", fetchMock);
+    let tree = renderDashboard();
+    input(tree).onChange({ target: { value: "https://github.com/owner/first" } });
+    tree = renderDashboard();
+    assess(tree);
+    await settle();
+    tree = renderDashboard();
+    const controlled = byType(tree, "ControlledRemediation");
+    expect(controlled).not.toBeNull();
+    const candidate = (controlled!.props as { candidates: unknown[] }).candidates[0];
+    await (controlled!.props as { onExecute: (candidate: unknown) => Promise<void> }).onExecute(candidate);
+    tree = renderDashboard();
+    const result = byType(tree, "RemediationProof");
+    expect(Boolean(result)).toBe(visible);
+    if (visible) {
+      const rendered = (result!.type as (props: { result: unknown }) => ReactNode)(result!.props as { result: unknown });
+      expect(findElement(rendered, (item) => item.type === "p" &&
+        (item.props as { children?: string }).children === explanation)).not.toBeNull();
+      expect(findElement(rendered, (item) => item.type === "span" &&
+        (item.props as { children?: string }).children === "unsupported")).not.toBeNull();
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("detects offline static scans and retries only after an explicit click", async () => {
     const fetchMock = vi.fn().mockResolvedValue(Response.json({ ok: true, repository: {
       fullName: "owner/first", url: "https://github.com/owner/first" }, scan: {} }));

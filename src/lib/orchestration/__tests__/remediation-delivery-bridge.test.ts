@@ -17,6 +17,8 @@ const state = vi.hoisted(() => ({
   duplicateEvidenceIdentity: false,
   invalidFindingType: false,
   missingEvidenceIdentity: false,
+  unsupportedExecution: false,
+  failedCapture: false,
 }));
 vi.mock("@/lib/repository/repository-ingestion", () => ({ ingestGitHubRepository: state.ingest }));
 vi.mock("@/lib/sandbox/workspace-preparation", () => ({ prepareSandboxWorkspace: async (...args: unknown[]) => {
@@ -49,6 +51,13 @@ vi.mock("@/lib/agents/sandbox-security-agent", () => ({
   }),
 }));
 vi.mock("@/lib/remediation/dependency-security-fixer", () => ({ applyDependencySecurityFix: async (path: string) => {
+  if (state.unsupportedExecution) return {
+    status: "unsupported", summary: "No explicit targeted fix version is available.",
+  };
+  if (state.failedCapture) {
+    rmSync(path, { recursive: true, force: true });
+    return { status: "applied", summary: "Applied before capture failed" };
+  }
   if (state.validDependencyFixture) {
     const fixture = join(
       process.cwd(),
@@ -113,9 +122,31 @@ afterEach(() => {
   state.duplicateEvidenceIdentity = false;
   state.invalidFindingType = false;
   state.missingEvidenceIdentity = false;
+  state.unsupportedExecution = false;
+  state.failedCapture = false;
 });
 
 describe("proven remediation to immediate delivery lookup", () => {
+  it.each([
+    ["unsupported", "No explicit targeted fix version is available."],
+    ["failed", "Dependency files could not be safely captured after remediation."],
+  ] as const)("retains source provenance and execution details for %s remediation", async (status, summary) => {
+    state.unsupportedExecution = status === "unsupported";
+    state.failedCapture = status === "failed";
+    state.ingest.mockImplementation(async (repository: unknown) => {
+      state.path = mkdtempSync(join(tmpdir(), "dg-remediation-bridge-"));
+      writeFileSync(join(state.path, "package-lock.json"), "{}");
+      return { repository, repositoryPath: state.path, provenance: state.provenance,
+        cleanup() { rmSync(state.path, { recursive: true, force: true }); } };
+    });
+    const dependencyProposal: FixProposal = { ...proposal, strategy: "dependency_security",
+      packageName: "braces", advisoryId: "123",
+      target: { checkId: "security", category: "security", evidenceIndexes: [0] } };
+    const result = await runRemoteRemediation("https://github.com/owner/repo", dependencyProposal);
+    expect(result.sourceCommitSha).toBe(state.provenance.commitSha);
+    expect(result.remediation.execution).toMatchObject({ status, summary });
+    expect(result.remediation.proof).toBeUndefined();
+  });
   it("binds the selected evidence index to its advisory, including two on one package", async () => {
     state.twoAdvisories = true;
     state.ingest.mockImplementation(async (repository: unknown) => {
