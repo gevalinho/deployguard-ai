@@ -1976,6 +1976,10 @@ export function ReadinessDashboard({
 
   const [scanLoading, setScanLoading] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [scanNetworkFailure, setScanNetworkFailure] = useState(false);
+  const [assessmentNetworkFailure, setAssessmentNetworkFailure] = useState(false);
+  const [assessmentMayStillRun, setAssessmentMayStillRun] = useState(false);
+  const [online, setOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine !== false);
 
   const [showAllResearch, setShowAllResearch] = useState(false);
 
@@ -2030,6 +2034,16 @@ export function ReadinessDashboard({
     };
   }, [invalidateRequests]);
 
+  useEffect(() => {
+    const updateOnline = () => setOnline(navigator.onLine !== false);
+    window.addEventListener?.("online", updateOnline);
+    window.addEventListener?.("offline", updateOnline);
+    return () => {
+      window.removeEventListener?.("online", updateOnline);
+      window.removeEventListener?.("offline", updateOnline);
+    };
+  }, []);
+
   const changeRepositoryUrl = useCallback((value: string) => {
     const identity = repositoryIdentity(value);
     setRepositoryUrl(value);
@@ -2048,6 +2062,9 @@ export function ReadinessDashboard({
     setRemediationError(null);
     setRemediationLoading(false);
     setScanError(null);
+    setScanNetworkFailure(false);
+    setAssessmentNetworkFailure(false);
+    setAssessmentMayStillRun(false);
     setError(null);
     setCopyFeedback(null);
     setLoading(false);
@@ -2142,8 +2159,18 @@ export function ReadinessDashboard({
       requestedIdentity, identityRef.current, controller.signal.aborted);
     setScanLoading(true);
     setScanError(null);
+    setScanNetworkFailure(false);
     setRemoteScan(null);
 
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      setScanError("You are offline. Reconnect and retry the static scan.");
+      setScanNetworkFailure(true);
+      setScanLoading(false);
+      scanControllerRef.current = null;
+      return;
+    }
+
+    let httpError = false;
     try {
       const response = await fetch("/api/repositories/scan", {
         signal: controller.signal,
@@ -2160,6 +2187,7 @@ export function ReadinessDashboard({
       if (!current()) return;
 
       if (!response.ok || !data.ok) {
+        httpError = true;
         throw new Error(data.error ?? "Repository scan failed.");
       }
 
@@ -2169,8 +2197,13 @@ export function ReadinessDashboard({
       });
     } catch (scanError) {
       if (!current()) return;
+      const networkFailure = !httpError && (scanError instanceof TypeError ||
+        (typeof navigator !== "undefined" && navigator.onLine === false));
+      setScanNetworkFailure(networkFailure);
       setScanError(
-        scanError instanceof Error
+        networkFailure
+          ? "The static scan could not connect. Check your connection and retry."
+          : scanError instanceof Error
           ? scanError.message
           : "Unknown repository scan error.",
       );
@@ -2185,14 +2218,26 @@ export function ReadinessDashboard({
     const requestedIdentity = repositoryIdentity(requestedUrl);
     if (!requestedIdentity) { setError("A valid GitHub repository URL is required."); return; }
     if (!mountedRef.current || requestedIdentity !== identityRef.current) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      setError("You are offline. Reconnect before starting an assessment.");
+      setAssessmentNetworkFailure(true);
+      setAssessmentMayStillRun(false);
+      return;
+    }
     const generation = invalidateRequests();
     const controller = new AbortController();
     assessmentControllerRef.current = controller;
     const current = () => mountedRef.current && isCurrentRequest(generation, generationRef.current,
       requestedIdentity, identityRef.current, controller.signal.aborted);
     let receivedResult = false;
+    let requestStarted = false;
+    let serverError = false;
+    let interruptedStream = false;
+    let protocolError = false;
     setLoading(true);
     setError(null);
+    setAssessmentNetworkFailure(false);
+    setAssessmentMayStillRun(false);
     setRepositoryAuthorizationRequired(false);
     setAssessment(null);
     setAssessedIdentity(null);
@@ -2204,6 +2249,7 @@ export function ReadinessDashboard({
     setCopyFeedback(null);
 
     try {
+      requestStarted = true;
       const response = await fetch("/api/assessment", {
         signal: controller.signal,
         method: "POST",
@@ -2223,6 +2269,7 @@ export function ReadinessDashboard({
       if (!current()) return;
 
       if (!response.ok) {
+        serverError = true;
         const data = (await response.json()) as {
           code?: string;
           error?: string;
@@ -2246,6 +2293,7 @@ export function ReadinessDashboard({
       }
 
       if (!response.body) {
+        protocolError = true;
         throw new Error("Assessment stream is unavailable.");
       }
 
@@ -2293,6 +2341,7 @@ export function ReadinessDashboard({
 
             if (payload.ok && payload.assessment) {
               if (repositoryIdentity(payload.assessment.repository.url) !== requestedIdentity) {
+                protocolError = true;
                 throw new Error("Assessment result did not match the requested repository.");
               }
               receivedResult = true;
@@ -2315,20 +2364,32 @@ export function ReadinessDashboard({
       }
 
       if (assessmentError) {
+        serverError = true;
         throw new Error(assessmentError);
       }
       if (!receivedResult) {
+        interruptedStream = true;
         throw new Error("Assessment connection ended before a final report was received.");
       }
     } catch (assessmentError) {
       if (!current()) return;
+      if (receivedResult && !serverError && !protocolError) return;
+      const networkFailure = !serverError && !protocolError && (assessmentError instanceof TypeError ||
+        (typeof navigator !== "undefined" && navigator.onLine === false) ||
+        interruptedStream);
+      setAssessmentNetworkFailure(networkFailure);
+      setAssessmentMayStillRun(networkFailure && requestStarted && !receivedResult);
       if (!receivedResult) {
         setProgressEvents((current) => current.map((event) => event.status === "running"
-          ? { ...event, status: "error", message: "Assessment connection ended before a final report was received." }
+          ? { ...event, status: "error", message: networkFailure
+            ? "Assessment connection ended before a final report was received."
+            : assessmentError instanceof Error ? assessmentError.message : "Assessment failed." }
           : event));
       }
       setError(
-        assessmentError instanceof Error
+        networkFailure
+          ? "The assessment connection was interrupted. Check your connection. The previous assessment may still be running on the server. Starting another may run it twice."
+          : assessmentError instanceof Error
           ? assessmentError.message
           : "Unknown assessment error.",
       );
@@ -2525,10 +2586,18 @@ export function ReadinessDashboard({
             </p>
 
             {scanError && (
-              <p className="mt-3 text-sm text-red-400">{scanError}</p>
+              <div className="mt-3" role="alert">
+                <p className="text-sm text-red-400">{scanError}</p>
+                {scanNetworkFailure && <button type="button" disabled={scanLoading || loading || !online}
+                  onClick={() => void scanRepository()} className="mt-2 rounded-lg border border-zinc-600 px-4 py-2 text-sm text-zinc-100 disabled:opacity-50">Retry Static Scan</button>}
+              </div>
             )}
 
-            {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
+            {error && <div className="mt-3" role="alert">
+              <p className="text-sm text-red-400">{error}</p>
+              {assessmentNetworkFailure && <button type="button" disabled={loading || scanLoading || signInRequired || !online}
+                onClick={() => void runAssessment()} className="mt-2 rounded-lg border border-zinc-600 px-4 py-2 text-sm text-zinc-100 disabled:opacity-50">{assessmentMayStillRun ? "Start Another Assessment" : "Retry Assessment"}</button>}
+            </div>}
 
             {authorizationReturnStatus && (
               <p className="mt-3 text-sm text-emerald-300" role="status">

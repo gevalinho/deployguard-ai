@@ -15,7 +15,7 @@ vi.mock("react", async (importOriginal) => {
     ...actual,
     useState(initial: unknown) {
       const index = cursor++;
-      if (firstRender) hooks[index] = { value: initial };
+      if (firstRender) hooks[index] = { value: typeof initial === "function" ? (initial as () => unknown)() : initial };
       return [hooks[index].value, (next: unknown) => {
         if (unmounted) writesAfterUnmount++;
         hooks[index].value = typeof next === "function"
@@ -83,6 +83,13 @@ function assess(tree: ReactNode) {
   (element.props as { onClick: () => void }).onClick();
 }
 
+function clickButton(tree: ReactNode, label: string) {
+  const element = findElement(tree, (item) => item.type === "button" &&
+    (item.props as { children?: string }).children === label);
+  if (!element) throw new Error(`${label} button missing`);
+  (element.props as { onClick: () => void }).onClick();
+}
+
 function responseFor(repository: string, checks: Array<Record<string, unknown>> = []) {
   const result = { sourceCommitSha: "abc", repository: {
     owner: "owner", name: repository, fullName: `owner/${repository}`,
@@ -111,6 +118,159 @@ beforeEach(() => {
 });
 
 describe("dashboard repository interactions", () => {
+  it("detects offline static scans and retries only after an explicit click", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ ok: true, repository: {
+      fullName: "owner/first", url: "https://github.com/owner/first" }, scan: {} }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("navigator", { onLine: false });
+    let tree = renderDashboard();
+    input(tree).onChange({ target: { value: "https://github.com/owner/first" } });
+    tree = renderDashboard();
+    clickButton(tree, "Static Scan");
+    tree = renderDashboard();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(findElement(tree, (item) => item.type === "button" &&
+      (item.props as { children?: string }).children === "Retry Static Scan")).not.toBeNull();
+    vi.stubGlobal("navigator", { onLine: true });
+    clickButton(tree, "Retry Static Scan");
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("warns that a disconnected assessment may still run and requires another click", async () => {
+    const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(responseFor("first"));
+    vi.stubGlobal("fetch", fetchMock);
+    let tree = renderDashboard();
+    input(tree).onChange({ target: { value: "https://github.com/owner/first" } });
+    tree = renderDashboard();
+    assess(tree);
+    await settle();
+    tree = renderDashboard();
+    expect(findElement(tree, (item) => item.type === "p" &&
+      (item.props as { children?: string }).children === "The assessment connection was interrupted. Check your connection. The previous assessment may still be running on the server. Starting another may run it twice.")).not.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    clickButton(tree, "Start Another Assessment");
+    await settle();
+    tree = renderDashboard();
+    expect(byType(tree, "AssessmentSummary")).not.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a successful assessment and its evidence when the browser is offline", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(responseFor("first"));
+    vi.stubGlobal("fetch", fetchMock);
+    let tree = renderDashboard();
+    input(tree).onChange({ target: { value: "https://github.com/owner/first" } });
+    tree = renderDashboard();
+    assess(tree);
+    await settle();
+    vi.stubGlobal("navigator", { onLine: false });
+    tree = renderDashboard();
+    assess(tree);
+    tree = renderDashboard();
+    expect((byType(tree, "AssessmentSummary")?.props as { report: { generatedAt: string } }).report.generatedAt).toBe("first");
+    expect(findElement(tree, (item) => item.type === "nav" &&
+      (item.props as { "aria-label"?: string })["aria-label"] === "Assessment report sections")).not.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(findElement(tree, (item) => item.type === "p" &&
+      (item.props as { children?: string }).children === "You are offline. Reconnect before starting an assessment.")).not.toBeNull();
+  });
+
+  it("distinguishes HTTP assessment errors from interrupted streams", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(Response.json({ error: "Server unavailable" }, { status: 503 }))
+      .mockResolvedValueOnce(new Response(new ReadableStream({ start(controller) { controller.close(); } })));
+    vi.stubGlobal("fetch", fetchMock);
+    let tree = renderDashboard();
+    input(tree).onChange({ target: { value: "https://github.com/owner/first" } });
+    tree = renderDashboard();
+    assess(tree);
+    await settle();
+    tree = renderDashboard();
+    expect(findElement(tree, (item) => item.type === "p" &&
+      (item.props as { children?: string }).children === "Server unavailable")).not.toBeNull();
+    expect(findElement(tree, (item) => item.type === "button" &&
+      (item.props as { children?: string }).children === "Start Another Assessment")).toBeNull();
+    assess(tree);
+    await settle();
+    tree = renderDashboard();
+    expect(findElement(tree, (item) => item.type === "button" &&
+      (item.props as { children?: string }).children === "Start Another Assessment")).not.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a server reported stream error distinct from a connection failure", async () => {
+    const event = new TextEncoder().encode('event: assessment-error\ndata: {"ok":false,"error":"Verification failed"}\n\n');
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(new ReadableStream({
+      start(controller) { controller.enqueue(event); controller.close(); },
+    }))));
+    let tree = renderDashboard();
+    input(tree).onChange({ target: { value: "https://github.com/owner/first" } });
+    tree = renderDashboard();
+    assess(tree);
+    await settle();
+    tree = renderDashboard();
+    expect(findElement(tree, (item) => item.type === "p" &&
+      (item.props as { children?: string }).children === "Verification failed")).not.toBeNull();
+    expect(findElement(tree, (item) => item.type === "button" &&
+      (item.props as { children?: string }).children === "Start Another Assessment")).toBeNull();
+  });
+
+  it("ignores an intentional abort after the repository changes", async () => {
+    let rejectFirst!: (reason: Error) => void;
+    const fetchMock = vi.fn((_path: string, options: { body: string }) =>
+      JSON.parse(options.body).repositoryUrl.endsWith("/first")
+        ? new Promise<Response>((_resolve, reject) => { rejectFirst = reject; })
+        : Promise.resolve(responseFor("second")));
+    vi.stubGlobal("fetch", fetchMock);
+    let tree = renderDashboard();
+    input(tree).onChange({ target: { value: "https://github.com/owner/first" } });
+    tree = renderDashboard();
+    assess(tree);
+    tree = renderDashboard();
+    input(tree).onChange({ target: { value: "https://github.com/owner/second" } });
+    rejectFirst(new DOMException("Aborted", "AbortError"));
+    tree = renderDashboard();
+    assess(tree);
+    await settle();
+    tree = renderDashboard();
+    expect((byType(tree, "AssessmentSummary")?.props as { report: { generatedAt: string } }).report.generatedAt).toBe("second");
+    expect(findElement(tree, (item) => item.type === "button" &&
+      (item.props as { children?: string }).children === "Start Another Assessment")).toBeNull();
+  });
+
+  it("offers a static scan retry after a connection failure", async () => {
+    const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(Response.json({ ok: true, repository: {
+        fullName: "owner/first", url: "https://github.com/owner/first" }, scan: {} }));
+    vi.stubGlobal("fetch", fetchMock);
+    let tree = renderDashboard();
+    input(tree).onChange({ target: { value: "https://github.com/owner/first" } });
+    tree = renderDashboard();
+    clickButton(tree, "Static Scan");
+    await settle();
+    tree = renderDashboard();
+    expect(findElement(tree, (item) => item.type === "button" &&
+      (item.props as { children?: string }).children === "Retry Static Scan")).not.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    clickButton(tree, "Retry Static Scan");
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a static scan HTTP error separate from a network failure", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ ok: false, error: "Repository unavailable" }, { status: 503 })));
+    let tree = renderDashboard();
+    input(tree).onChange({ target: { value: "https://github.com/owner/first" } });
+    tree = renderDashboard();
+    clickButton(tree, "Static Scan");
+    await settle();
+    tree = renderDashboard();
+    expect(findElement(tree, (item) => item.type === "p" &&
+      (item.props as { children?: string }).children === "Repository unavailable")).not.toBeNull();
+    expect(findElement(tree, (item) => item.type === "button" &&
+      (item.props as { children?: string }).children === "Retry Static Scan")).toBeNull();
+  });
   it("clears the old report on URL change and completes a second assessment without remounting", async () => {
     const fetchMock = vi.fn((_path: string, options: { body: string }) => {
       const url = JSON.parse(options.body).repositoryUrl as string;
