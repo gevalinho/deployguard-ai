@@ -10,6 +10,7 @@ import { reconcileRetainedArtifact } from "@/lib/remediation/frozen-artifact-own
 const state = vi.hoisted(() => ({
   provenance: { source: "verified-cache", remoteVerified: true, commitSha: "a".repeat(40), sourceBranch: "main" },
   stored: null as TrustedArtifactMetadata | null,
+  corruptPersistedMetadata: false,
   path: "",
   dispose: vi.fn(),
   ingest: vi.fn(),
@@ -129,13 +130,14 @@ vi.mock("@/lib/remediation/trusted-artifact-repository", () => ({
       byteSize: artifact.byteSize, format: artifact.format, createdAt: new Date(),
       sourceCommitSha: provenance.commitSha, sourceBranch: provenance.sourceBranch,
       ingestionSource: provenance.source, ingestionRemoteVerified: provenance.remoteVerified };
-    return state.stored;
+    return state.corruptPersistedMetadata ? { ...state.stored, repositoryIdentity: "other/repo" } : state.stored;
   },
   getVerifiedArtifactMetadata: async (id: string) => id === state.stored?.id ? state.stored : null,
 }));
 
 import { runRemoteRemediation } from "@/lib/orchestration/remediation-orchestrator";
 import { deliveryApiDependencies, handleDeveloperDeliveryPost } from "@/lib/remediation/developer-delivery-api";
+import { currentAssessmentArtifact } from "@/lib/remediation/current-assessment-artifact";
 
 const proposal: FixProposal = { id: "lint-fix", title: "Fix lint", description: "Controlled fix", strategy: "lint_autofix",
   risk: "safe", target: { checkId: "lint", category: "lint", evidenceIndexes: [] } };
@@ -146,6 +148,7 @@ afterEach(() => {
   state.provenance = { source: "verified-cache", remoteVerified: true,
     commitSha: "a".repeat(40), sourceBranch: "main" };
   state.stored = null;
+  state.corruptPersistedMetadata = false;
   state.dispose.mockReset();
   state.ingest.mockReset();
   state.mutateDuringVerification = false;
@@ -342,7 +345,7 @@ describe("proven remediation to immediate delivery lookup", () => {
     await runRemoteRemediation("https://github.com/owner/repo", dependencyProposal);
     expect(state.trustedVerification).toHaveBeenCalledTimes(4);
   });
-  it("verifies an authorized dependency upgrade without persisting a delivery artifact", async () => {
+  it("persists an authorized proven dependency upgrade without starting GitHub delivery", async () => {
     state.validDependencyFixture = true;
 
     const fixture = join(
@@ -413,8 +416,21 @@ describe("proven remediation to immediate delivery lookup", () => {
 
     expect(result.remediation.proof?.status).toBe("proven");
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(result.remediation.verifiedArtifactReference).toBeUndefined();
-    expect(state.stored).toBeNull();
+    expect(result.remediation.verifiedPatch).toMatchObject({ fileCount: 2,
+      files: [{ path: "package-lock.json" }, { path: "package.json" }] });
+    expect(result.remediation.verifiedArtifactReference).toEqual({
+      artifactId: "artifact123", deliveryEligible: true,
+    });
+    expect(currentAssessmentArtifact({ repositoryIdentity: "owner/repo",
+      sourceCommitSha: state.provenance.commitSha }, {
+      repositoryIdentity: result.repository.fullName, sourceCommitSha: result.sourceCommitSha,
+      proofStatus: result.remediation.proof?.status,
+      artifactId: result.remediation.verifiedArtifactReference?.artifactId,
+      deliveryEligible: result.remediation.verifiedArtifactReference?.deliveryEligible,
+    })).toEqual({ artifactId: "artifact123", deliveryEligible: true });
+    expect(state.stored).toMatchObject({ repositoryIdentity: "owner/repo",
+      sourceCommitSha: state.provenance.commitSha, sourceBranch: state.provenance.sourceBranch,
+      ingestionRemoteVerified: true, sha256: result.remediation.verifiedPatchArtifact?.sha256 });
     expect(state.dispose).toHaveBeenCalledOnce();
   });
 
@@ -491,6 +507,29 @@ describe("proven remediation to immediate delivery lookup", () => {
     expect(result.remediation.verifiedArtifactReference).toBeUndefined();
     expect(result.remediation.verifiedPatch).toBeUndefined();
     expect(state.stored).toBeNull();
+  });
+
+  it("does not return a delivery reference when persisted metadata has the wrong repository", async () => {
+    state.validDependencyFixture = true;
+    state.corruptPersistedMetadata = true;
+    const fixture = join(process.cwd(), "src/lib/remediation/__fixtures__/npm-braces-upgrade");
+    state.ingest.mockImplementation(async (repository: unknown) => {
+      state.path = mkdtempSync(join(tmpdir(), "dg-remediation-bridge-"));
+      writeFileSync(join(state.path, "package.json"), readFileSync(join(fixture, "package-before.json")));
+      writeFileSync(join(state.path, "package-lock.json"), readFileSync(join(fixture, "package-lock-before.json")));
+      return { repository, repositoryPath: state.path, provenance: state.provenance,
+        cleanup() { rmSync(state.path, { recursive: true, force: true }); } };
+    });
+    const updatedLock = JSON.parse(readFileSync(join(fixture, "package-lock-after.json"), "utf8"));
+    const target = updatedLock.packages["node_modules/braces"];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({
+      name: "braces", version: "3.0.3", dist: { tarball: target.resolved, integrity: target.integrity },
+    }) }));
+    const dependencyProposal: FixProposal = { ...proposal, strategy: "dependency_security",
+      packageName: "braces", advisoryId: "123",
+      target: { checkId: "security", category: "security", evidenceIndexes: [0] } };
+    await expect(runRemoteRemediation("https://github.com/owner/repo", dependencyProposal))
+      .rejects.toThrow("persistence could not be verified");
   });
 
   it("rejects dependency files changed during verification", async () => {

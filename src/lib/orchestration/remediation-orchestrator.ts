@@ -582,21 +582,6 @@ const verifiedPatchArtifact =
 remediation.verifiedPatchArtifact =
   verifiedPatchArtifact;
 
-// Dependency remediation remains observation-only during controlled production
-// testing. Without a persisted artifact ID, the delivery API cannot create a PR.
-if (proposal.strategy === "dependency_security") {
-  console.error("[DeployGuard Remediation Approval]", {
-    overallRemediationApprovalStatus: "verified_observation_only",
-  });
-  remediation.proof = proof;
-  return {
-    sourceCommitSha: ingested.provenance.commitSha,
-    repository: { owner: repository.owner, name: repository.name,
-      fullName: repository.fullName, url: repository.url },
-    remediation: sanitizeRemediationForPublic(remediation),
-  };
-}
-
 /*
  * Persist source-bearing remediation evidence
  * only after independent verification succeeds.
@@ -610,12 +595,26 @@ const persistedArtifact =
     repository.fullName,
     proof.status,
     verifiedPatchArtifact,
-    ingested.provenance
+    ingested.provenance,
+    proposal.strategy === "dependency_security" ? {
+      strategy: "dependency_security",
+      patch: verifiedPatch,
+      packageName: proposal.packageName!,
+      version: execution.authorizedDependency!.version,
+    } : { strategy: "lint_autofix" },
   );
 
-if (!persistedArtifact) {
+if (!persistedArtifact ||
+    persistedArtifact.repositoryIdentity !== repository.fullName ||
+    persistedArtifact.format !== verifiedPatchArtifact.format ||
+    persistedArtifact.sha256 !== verifiedPatchArtifact.sha256 ||
+    persistedArtifact.byteSize !== verifiedPatchArtifact.byteSize ||
+    persistedArtifact.sourceCommitSha !== ingested.provenance.commitSha ||
+    persistedArtifact.sourceBranch !== ingested.provenance.sourceBranch ||
+    persistedArtifact.ingestionSource !== ingested.provenance.source ||
+    persistedArtifact.ingestionRemoteVerified !== (ingested.provenance.remoteVerified === true)) {
   throw new Error(
-    "Proven remediation artifact was not persisted."
+    "Proven remediation artifact persistence could not be verified."
   );
 }
 

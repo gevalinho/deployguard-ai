@@ -59,7 +59,9 @@ async function main() {
       await persistProvenRemediationArtifact(
         repositoryIdentity,
         "failed",
-        artifact
+        artifact,
+        undefined,
+        { strategy: "lint_autofix" }
       );
 
     if (failed !== null) {
@@ -79,7 +81,9 @@ async function main() {
       await persistProvenRemediationArtifact(
         repositoryIdentity,
         "inconclusive",
-        artifact
+        artifact,
+        undefined,
+        { strategy: "lint_autofix" }
       );
 
     if (
@@ -102,7 +106,9 @@ async function main() {
       await persistProvenRemediationArtifact(
         repositoryIdentity,
         "proven",
-        undefined
+        undefined,
+        undefined,
+        { strategy: "lint_autofix" }
       );
 
     if (
@@ -126,7 +132,8 @@ async function main() {
         repositoryIdentity,
         "proven",
         artifact,
-        { source: "fresh-remote", remoteVerified: true, commitSha: "a".repeat(40), sourceBranch: "main" }
+        { source: "fresh-remote", remoteVerified: true, commitSha: "a".repeat(40), sourceBranch: "main" },
+        { strategy: "lint_autofix" }
       );
 
     if (!persisted) {
