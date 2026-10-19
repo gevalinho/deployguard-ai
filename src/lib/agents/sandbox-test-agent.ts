@@ -1,6 +1,8 @@
 import {
   existsSync,
+  lstatSync,
   readFileSync,
+  readdirSync,
 } from "node:fs";
 
 import {
@@ -33,6 +35,27 @@ interface PackageJson {
 }
 
 const MAX_TEST_EVIDENCE = 10;
+
+function nodeTestFiles(repositoryPath: string): string[] | null {
+  try {
+    const directory = join(repositoryPath, "test");
+    if (!lstatSync(directory).isDirectory()) return null;
+    const files = readdirSync(directory, { withFileTypes: true });
+    if (!files.length || files.some((file) => !file.isFile() ||
+        !/^[\w.-]+\.test\.(?:js|cjs|mjs)$/.test(file.name))) return null;
+    return files.map((file) => join("test", file.name)).sort();
+  } catch { return null; }
+}
+
+/** Node's TAP reporter escapes repository stdout as diagnostic lines. */
+export function hasVerifiedNodeTests(stdout: string, files: readonly string[]): boolean {
+  if (!files.length) return false;
+  const footer = /(?:^|\n)1\.\.(\d+)\n# tests (\d+)\n# suites (\d+)\n# pass (\d+)\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms [\d.]+\n?$/.exec(stdout);
+  if (!footer) return false;
+  const [, plan, tests, , passed] = footer.map(Number);
+  return Number.isSafeInteger(tests) && tests > files.length &&
+    plan === tests && passed === tests;
+}
 
 function stripAnsi(value: string): string {
   return value.replace(
@@ -376,12 +399,16 @@ export async function runSandboxTestAgent(
       "test"
     );
 
+  const proofFiles = packageJson.scripts.test === "node --test" ? nodeTestFiles(repositoryPath) : null;
+  const command = proofFiles
+    ? ["node", "--test", "--test-reporter=tap", ...proofFiles] : testCommand.command;
+  const commandDisplay = proofFiles ? command.join(" ") : testCommand.display;
+
   const result =
     await runDockerSandboxCommand({
       repositoryPath,
 
-      command:
-        testCommand.command,
+      command,
 
       network:
         "none",
@@ -419,7 +446,7 @@ export async function runSandboxTestAgent(
       category: "test",
       name: "Tests",
       status: "error",
-      command: testCommand.display,
+      command: commandDisplay,
       exitCode: result.exitCode,
       durationMs: result.durationMs,
       summary: "Docker infrastructure failed before the repository check could complete.",
@@ -437,7 +464,7 @@ export async function runSandboxTestAgent(
       status: "error",
 
       command:
-        testCommand.display,
+        commandDisplay,
 
       exitCode:
         result.exitCode,
@@ -483,10 +510,14 @@ export async function runSandboxTestAgent(
         : "failed",
 
     command:
-      testCommand.display,
+      commandDisplay,
 
     exitCode:
       result.exitCode,
+
+    ...(proofFiles && result.status === "passed" && result.exitCode === 0 &&
+      hasVerifiedNodeTests(result.stdout, proofFiles)
+      ? { testExecutionVerified: true } : {}),
 
     durationMs:
       result.durationMs,

@@ -64,6 +64,8 @@ export interface CheckResult {
 
   command?: string;
   exitCode?: number | null;
+  /** Set only when the sandbox's trusted runner observed an executed test. */
+  testExecutionVerified?: boolean;
   durationMs?: number;
 
   summary: string;

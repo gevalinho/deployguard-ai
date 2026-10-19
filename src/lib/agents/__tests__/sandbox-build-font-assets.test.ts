@@ -1,21 +1,28 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const docker = vi.hoisted(() => vi.fn());
+const reconcile = vi.hoisted(() => vi.fn());
 const prepare = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/sandbox/docker-sandbox", () => ({ runDockerSandboxCommand: docker }));
+vi.mock("@/lib/sandbox/docker-sandbox", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/sandbox/docker-sandbox")>(),
+  runDockerSandboxCommand: docker, reconcileSandboxContainer: reconcile,
+}));
 vi.mock("@/lib/sandbox/next-google-font-assets", () => ({ prepareNextGoogleFonts: prepare }));
 
 import { runSandboxBuildAgent } from "../sandbox-build-agent";
 import { calculateReadinessScore } from "@/lib/scoring/readiness-score";
+import { SandboxContainerStateUnknownError } from "@/lib/sandbox/docker-sandbox";
+import { FrozenArtifactContainerStateError } from "@/lib/remediation/frozen-artifact-ownership";
 
 const roots: string[] = [];
 afterEach(async () => {
   for (const root of roots) await rm(root, { recursive: true, force: true });
   roots.length = 0;
   docker.mockReset();
+  reconcile.mockReset();
   prepare.mockReset();
 });
 
@@ -34,6 +41,24 @@ async function repository() {
 }
 
 describe("production build asset handoff", () => {
+  it("retains the temporary font mount on unknown Docker state until reconciliation", async () => {
+    const source = await repository();
+    const assets = await mkdtemp(join(tmpdir(), "deployguard-font-owned-")); roots.push(assets);
+    const cleanup = vi.fn().mockImplementation(() => rm(assets, { recursive: true, force: true }));
+    prepare.mockResolvedValue({ status: "ready", mount: { source: assets,
+      target: "/deployguard-build-assets", readOnly: true }, environment: {}, cleanup });
+    docker.mockRejectedValueOnce(new SandboxContainerStateUnknownError(
+      "Build state unknown.", "deployguard-build", "e".repeat(64)));
+    const error = await runSandboxBuildAgent(source).catch((caught) => caught) as FrozenArtifactContainerStateError;
+    expect(error).toBeInstanceOf(FrozenArtifactContainerStateError);
+    expect(error.artifacts).toEqual([source, assets]);
+    expect(cleanup).not.toHaveBeenCalled();
+    expect((await stat(assets)).isDirectory()).toBe(true);
+    reconcile.mockResolvedValueOnce(undefined);
+    await error.reconcile();
+    expect(reconcile.mock.calls[0][0]).toMatchObject({ containerId: "e".repeat(64) });
+    await expect(stat(assets)).rejects.toMatchObject({ code: "ENOENT" });
+  });
   it("runs the real build offline with a read-only font mount and awards full build weight on success", async () => {
     const cleanup = vi.fn().mockResolvedValue(undefined);
     prepare.mockResolvedValue({ status: "ready", mount: {

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import type {
@@ -11,9 +11,10 @@ import { detectPackageManager } from "@/lib/sandbox/package-manager";
 import { createRunScriptCommand } from "@/lib/sandbox/package-manager-command";
 import { getCorepackSandboxConfig } from "@/lib/sandbox/corepack-cache";
 import { prepareNextGoogleFonts } from "@/lib/sandbox/next-google-font-assets";
-import { hasDirectNodeApiRuntime } from "@/lib/capabilities/build-applicability";
+import { hasDirectNodeApiRuntime, isDependencyOnlyNpmPackage } from "@/lib/capabilities/build-applicability";
 import { scanRepository } from "@/lib/scanner/repository-scanner";
 import type { RepositoryFact } from "@/lib/evidence/types";
+import { FrozenArtifactContainerStateError, runWithArtifactOwnership } from "@/lib/remediation/frozen-artifact-ownership";
 
 interface PackageJson {
   scripts?: Record<string, string>;
@@ -326,6 +327,13 @@ export async function runSandboxBuildAgent(
         summary: "The root Express package starts an existing JavaScript entry directly with Node.js; no build step is indicated by this start model.",
       };
     }
+    if (isDependencyOnlyNpmPackage(repositoryPath)) {
+      return {
+        id: "build", category: "build", name: "Production Build", status: "skipped",
+        skipReason: "not_applicable",
+        summary: "The npm package contains dependency tests and no production entry or build pipeline.",
+      };
+    }
 
     return {
       id: "build",
@@ -456,8 +464,12 @@ export async function runSandboxBuildAgent(
   }
 
   let result;
+  let containerStateUnknown = false;
   try {
-    result = await runDockerSandboxCommand({
+    const mountedPaths = googleFonts.status === "ready"
+      ? [repositoryPath, googleFonts.mount.source] : [repositoryPath];
+    result = await runWithArtifactOwnership(mountedPaths, repositoryPath,
+      () => runDockerSandboxCommand({
       repositoryPath,
       command: buildCommand.command,
       network: "none",
@@ -487,9 +499,15 @@ export async function runSandboxBuildAgent(
         cpus: 1,
         timeoutMs: 5 * 60 * 1000,
       },
-    });
+      }), () => {
+        if (googleFonts.status === "ready")
+          rmSync(googleFonts.mount.source, { recursive: true, force: true });
+      });
+  } catch (error) {
+    containerStateUnknown = error instanceof FrozenArtifactContainerStateError;
+    throw error;
   } finally {
-    if (googleFonts.status === "ready") await googleFonts.cleanup();
+    if (googleFonts.status === "ready" && !containerStateUnknown) await googleFonts.cleanup();
   }
 
   if (result.status === "infrastructure_error") {

@@ -5,6 +5,7 @@ import type {
 
 import {
   runDockerSandboxCommand,
+  SandboxContainerStateUnknownError,
 } from "@/lib/sandbox/docker-sandbox";
 
 import {
@@ -721,7 +722,8 @@ async function inspectProductionDependencyFindings(
     }
 
     return inspection.findings;
-  } catch {
+  } catch (error) {
+    if (error instanceof SandboxContainerStateUnknownError) throw error;
     return null;
   }
 }

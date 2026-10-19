@@ -130,4 +130,30 @@ describe("root Node capability and build applicability", () => {
     });
     expect((await runSandboxBuildAgent(root)).skipReason).toBe("not_configured");
   });
+
+  it("classifies only a dependency exercise with test files as build not applicable", async () => {
+    const root = repository({ dependencies: { lodash: "4.17.20" },
+      scripts: { test: "node --test" }, files: { "test/lodash.test.js": "require('node:assert');" } });
+    // The dependency-only classification requires an explicitly private package.
+    const { readFileSync, writeFileSync } = await import("node:fs");
+    const manifestPath = join(root, "package.json");
+    writeFileSync(manifestPath, JSON.stringify({ ...JSON.parse(readFileSync(manifestPath, "utf8")), private: true }));
+    expect(await runSandboxBuildAgent(root)).toMatchObject({ status: "skipped", skipReason: "not_applicable" });
+  });
+
+  const ambiguousPackages: Array<{ name: string; files: Record<string, string>;
+    dependencies?: Record<string, string>; scripts?: Record<string, string> }> = [
+    { name: "a missing test file", files: {} },
+    { name: "a production source file", files: { "test/lodash.test.js": "", "src/index.js": "" } },
+    { name: "a framework dependency", files: { "test/lodash.test.js": "" }, dependencies: { lodash: "*", next: "*" } },
+    { name: "an unrecognized test command", files: { "test/lodash.test.js": "" }, scripts: { test: "custom-runner" } },
+  ];
+  it.each(ambiguousPackages)("keeps $name build outcome inconclusive", async ({ files, dependencies, scripts }) => {
+    const root = repository({ dependencies: dependencies ?? { lodash: "*" },
+      scripts: scripts ?? { test: "node --test" }, files });
+    const { readFileSync, writeFileSync } = await import("node:fs");
+    const manifestPath = join(root, "package.json");
+    writeFileSync(manifestPath, JSON.stringify({ ...JSON.parse(readFileSync(manifestPath, "utf8")), private: true }));
+    expect(await runSandboxBuildAgent(root)).toMatchObject({ status: "skipped", skipReason: "not_configured" });
+  });
 });

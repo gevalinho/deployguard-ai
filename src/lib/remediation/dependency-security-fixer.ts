@@ -2,9 +2,11 @@ import { planDependencyRepair } from "@/lib/remediation/dependency-repair-planne
 import { parseNpmStyleAuditReport } from "@/lib/agents/sandbox-security-agent";
 import type { FixExecutionResult, FixProposal } from "@/lib/remediation/types";
 
-import { runDockerSandboxCommand, SandboxContainerStateUnknownError } from "@/lib/sandbox/docker-sandbox";
+import { runDockerSandboxCommand } from "@/lib/sandbox/docker-sandbox";
+import { rmSync } from "node:fs";
 import { chown, chmod, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { isAbsolute, join, sep } from "node:path";
+import { FrozenArtifactContainerStateError, runWithArtifactOwnership } from "./frozen-artifact-ownership";
 
 import { detectPackageManager } from "@/lib/sandbox/package-manager";
 
@@ -189,7 +191,8 @@ export async function applyDependencySecurityFix(
   try {
     if (hostUid !== uid || hostGid !== gid) await chown(cacheDirectory, uid, gid);
     await chmod(cacheDirectory, 0o700);
-    result = await runDockerSandboxCommand({
+    result = await runWithArtifactOwnership([repositoryPath, cacheDirectory], repositoryPath,
+      () => runDockerSandboxCommand({
       repositoryPath,
       command: ["node", "-e", preflightScript, String(uid), String(gid), ...command.slice(1)],
       network: "bridge",
@@ -199,9 +202,9 @@ export async function applyDependencySecurityFix(
       user: `${uid}:${gid}`,
       mounts: [{ source: cacheDirectory, target: "/tmp/npm-cache", selinuxPrivate: true }],
       limits: { memoryMb: 2048, cpus: 1, timeoutMs: FIX_TIMEOUT_MS },
-    });
+      }), () => rmSync(cacheDirectory, { recursive: true, force: true }));
   } catch (error) {
-    containerStateUnknown = error instanceof SandboxContainerStateUnknownError;
+    containerStateUnknown = error instanceof FrozenArtifactContainerStateError;
     throw error;
   } finally {
     if (containerStateUnknown) {

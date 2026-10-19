@@ -33,6 +33,7 @@ import {
 } from "@/lib/remediation/dependency-security-verifier";
 
 import type {
+  FixProof,
   FixProposal,
   RemediationRun,
 } from "@/lib/remediation/types";
@@ -82,6 +83,12 @@ import {
 import {
   persistProvenRemediationArtifact,
 } from "@/lib/remediation/verified-remediation-persistence";
+import { trustedLodashFixture } from "@/lib/remediation/trusted-lodash-fixture";
+import { verifyTrustedLodashRemediation } from "@/lib/remediation/trusted-lodash-verification";
+import { createFrozenSourceSnapshot } from "@/lib/remediation/frozen-source-snapshot";
+import { SandboxContainerStateUnknownError } from "@/lib/sandbox/docker-sandbox";
+import { FrozenArtifactContainerStateError, holdArtifacts,
+  retainUnknownArtifact } from "@/lib/remediation/frozen-artifact-ownership";
 
 export interface RemoteRemediationResult {
   sourceCommitSha?: string;
@@ -99,8 +106,8 @@ export interface RemoteRemediationResult {
 async function runRegressionChecks(
   repositoryPath: string
 ): Promise<CheckResult[]> {
-  const checks =
-    await Promise.all([
+  const outcomes =
+    await Promise.allSettled([
       runSandboxTypecheckAgent(
         repositoryPath
       ),
@@ -117,8 +124,11 @@ async function runRegressionChecks(
         repositoryPath
       ),
     ]);
-
-  return checks;
+  const errors = outcomes.flatMap((outcome) =>
+    outcome.status === "rejected" ? [outcome.reason] : []);
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, "Regression checks failed.");
+  return outcomes.map((outcome) => (outcome as PromiseFulfilledResult<CheckResult>).value);
 }
 
 function createRemediationReadinessImpact(
@@ -176,6 +186,11 @@ export async function runRemoteRemediation(
       undefined,
       readTransportFactory,
     );
+
+  const trustedFixture = trustedLodashFixture(repository.fullName,
+    ingested.provenance.commitSha, ingested.provenance.remoteVerified);
+  const releaseIngestedWorkspace = holdArtifacts([ingested.repositoryPath]);
+  let retainIngestedWorkspace = false;
 
   try {
     /*
@@ -417,17 +432,19 @@ if (proposal.strategy === "dependency_security") {
  * from proving itself twice.
  */
 
-const allRegressionChecks =
-  await runRegressionChecks(
-    ingested.repositoryPath
-  );
+let regressionChecks: CheckResult[];
+let proof: FixProof;
+let frozenSourceIdentity: string | undefined;
 
-const regressionChecks =
-  allRegressionChecks.filter(
-    (check) =>
-      check.id !==
-      proposal.target.checkId
-  );
+if (proposal.strategy === "dependency_security" && trustedFixture.recognized) {
+  const verified = await verifyTrustedLodashRemediation(ingested.repositoryPath, before,
+    proposal.packageName!, proposal.advisoryId!, trustedFixture.contract);
+  proof = verified.proof;
+  frozenSourceIdentity = verified.sourceIdentity;
+  regressionChecks = verified.proof.regressionChecks;
+} else {
+  const allRegressionChecks = await runRegressionChecks(ingested.repositoryPath);
+  regressionChecks = allRegressionChecks.filter((check) => check.id !== proposal.target.checkId);
 
 /*
  * Independently verify the mutated repository.
@@ -435,8 +452,7 @@ const regressionChecks =
  * Successful execution alone is never proof.
  */
 
-const proof =
-  proposal.strategy ===
+  proof = proposal.strategy ===
   "dependency_security"
     ? await verifyDependencySecurityFix(
         ingested.repositoryPath,
@@ -451,6 +467,7 @@ const proof =
         before,
         regressionChecks
       );
+}
 
 const targetComparison =
   proof.comparisons.find(
@@ -478,6 +495,15 @@ if (targetComparison) {
 if (proof.status === "proven") {
   let verifiedPatch: ReturnType<typeof createVerifiedPatch>;
   try {
+    if (proposal.strategy === "dependency_security" && trustedFixture.recognized && !frozenSourceIdentity)
+      throw new Error("Trusted fixture proof has no frozen source identity.");
+    if (frozenSourceIdentity) {
+      const finalSource = createFrozenSourceSnapshot(ingested.repositoryPath);
+      try {
+        if (finalSource.identity !== frozenSourceIdentity)
+          throw new Error("The post-remediation source changed after frozen verification.");
+      } finally { finalSource.cleanup(); }
+    }
     const workspaceAfter = captureWorkspaceSnapshot(ingested.repositoryPath);
     if (proposal.strategy === "dependency_security") {
       const paths = new Set([
@@ -636,15 +662,37 @@ remediation.proof =
   ),
       
     };
+  } catch (error) {
+    const errors = error instanceof AggregateError ? error.errors as unknown[] : [error];
+    const unknownContainers = errors.flatMap((item) => {
+      if (item instanceof FrozenArtifactContainerStateError) return [item];
+      if (item instanceof SandboxContainerStateUnknownError)
+        return [new FrozenArtifactContainerStateError(item, [ingested.repositoryPath],
+          ingested.repositoryPath, () => {})];
+      return [];
+    });
+    if (unknownContainers.length) {
+      retainIngestedWorkspace = true;
+      let pending = unknownContainers.length;
+      for (const container of unknownContainers) {
+        const recoveryId = retainUnknownArtifact(container, () => {
+          if (--pending === 0) {
+            releaseIngestedWorkspace();
+            ingested.cleanup();
+          }
+        });
+        console.error("[DeployGuard Remediation] Docker state unknown; mounted artifacts retained.",
+          { recoveryId, containerId: container.containerId ?? "unavailable" });
+      }
+    }
+    throw error;
   } finally {
-    /*
-     * The original GitHub repository is never
-     * mutated.
-     *
-     * Every remediation attempt ends by deleting
-     * its disposable workspace.
-     */
+    // An unknown Docker container can still hold this disposable workspace.
+    // Reconciliation owns its cleanup in that case.
 
-    ingested.cleanup();
+    if (!retainIngestedWorkspace) {
+      releaseIngestedWorkspace();
+      ingested.cleanup();
+    }
   }
 }

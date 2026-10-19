@@ -3,8 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 const runSandbox = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/sandbox/docker-sandbox", () => ({ runDockerSandboxCommand: runSandbox }));
+vi.mock("@/lib/sandbox/docker-sandbox", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/sandbox/docker-sandbox")>(),
+  runDockerSandboxCommand: runSandbox,
+}));
 import { runSandboxSecurityAgent } from "./sandbox-security-agent";
+import { SandboxContainerStateUnknownError } from "@/lib/sandbox/docker-sandbox";
 import { sanitizeCheckForPublic } from "@/lib/reporting/public-report";
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots) await rm(root, { recursive: true, force: true }); roots.length = 0; runSandbox.mockReset(); vi.restoreAllMocks(); });
@@ -239,6 +243,24 @@ describe("sandbox security audit result", () => {
       dependencyScope: "unknown",
     });
     expect(JSON.stringify(sanitizeCheckForPublic(result))).not.toContain("token=secret");
+  });
+
+  it("propagates unknown Docker state from the supplementary audit", async () => {
+    const unknown = new SandboxContainerStateUnknownError("Production audit state unknown.",
+      "deployguard-production-audit", "c".repeat(64));
+    runSandbox.mockResolvedValueOnce({ status: "failed", exitCode: 1,
+      stdout: report(1), stderr: "", durationMs: 1 }).mockRejectedValueOnce(unknown);
+    await expect(runSandboxSecurityAgent(await repository())).rejects.toBe(unknown);
+    expect(runSandbox).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the ordinary supplementary-audit exception fallback", async () => {
+    runSandbox.mockResolvedValueOnce({ status: "failed", exitCode: 1,
+      stdout: report(1), stderr: "", durationMs: 1 })
+      .mockRejectedValueOnce(new Error("Registry unavailable."));
+    const result = await runSandboxSecurityAgent(await repository());
+    expect(result.status).toBe("failed");
+    expect(result.evidence?.[0]).toMatchObject({ dependencyScope: "unknown" });
   });
 
   it("identifies production-exposed vulnerabilities", async () => {

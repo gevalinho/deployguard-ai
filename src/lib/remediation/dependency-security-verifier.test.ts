@@ -1,10 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { CheckResult } from "@/lib/checks/types";
 const audit = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/agents/sandbox-security-agent", async (original) => ({
   ...(await original()), runSandboxSecurityAgent: audit,
 }));
 import { verifyDependencySecurityFix } from "./dependency-security-verifier";
+import { runSandboxBuildAgent } from "@/lib/agents/sandbox-build-agent";
 
 const report = (entries: Array<[string, string, "high" | "critical"]>) => JSON.stringify({
   auditReportVersion: 2,
@@ -24,11 +28,23 @@ const after = (entries: Array<[string, string, "high" | "critical"]>): CheckResu
   exitCode: entries.length ? 1 : 0,
 });
 const check = (id: string, status: CheckResult["status"] = "passed"): CheckResult =>
-  ({ id, category: "build", name: id, status, summary: "" });
+  ({ id, category: id as CheckResult["category"], name: id, status,
+    exitCode: status === "passed" ? 0 : null,
+    ...(id === "test" && status === "passed" ? { testExecutionVerified: true } : {}), summary: "" });
 const regressions = ["types", "lint", "test", "build"].map((id) => check(id));
+let defaultRoot: string;
+beforeAll(() => {
+  defaultRoot = mkdtempSync(join(tmpdir(), "deployguard-proof-default-"));
+  writeFileSync(join(defaultRoot, "package.json"), JSON.stringify({ scripts: { test: "node --test" } }));
+  writeFileSync(join(defaultRoot, "package-lock.json"), JSON.stringify({ lockfileVersion: 3, packages: {} }));
+  mkdirSync(join(defaultRoot, "test"));
+  writeFileSync(join(defaultRoot, "test", "suite.test.js"), `const test = require('node:test');
+    for (let index = 0; index < 4; index++) test('case ' + index, () => {});`);
+});
+afterAll(() => rmSync(defaultRoot, { recursive: true, force: true }));
 const verify = (current: CheckResult, baseline = before, checks = regressions, id = "123") => {
   audit.mockResolvedValue(current);
-  return verifyDependencySecurityFix("/repo", baseline, checks, "braces", ["types", "lint", "test", "build"], id);
+  return verifyDependencySecurityFix(defaultRoot, baseline, checks, "braces", ["types", "lint", "test", "build"], id);
 };
 
 describe("advisory-specific dependency verification", () => {
@@ -61,5 +77,62 @@ describe("advisory-specific dependency verification", () => {
     expect((await verify(after([]), before, [...regressions.slice(0, 3), check("build", "failed")])).status).toBe("not_proven");
     expect((await verify(after([]), before, [...regressions.slice(0, 3), check("build", "skipped")])).status).toBe("inconclusive");
     expect((await verify(after([]), before, regressions.slice(0, 3))).status).toBe("inconclusive");
+    expect((await verify(after([]), before, [...regressions, check("other")])).status).toBe("inconclusive");
+    expect((await verify(after([]), before, [...regressions.slice(0, 3), { ...check("build"), category: "test" }])).status).toBe("inconclusive");
+    audit.mockResolvedValue(after([]));
+    expect((await verifyDependencySecurityFix(defaultRoot, before, [], "braces", [], "123")).status).toBe("inconclusive");
+    expect((await verifyDependencySecurityFix(defaultRoot, before, regressions.slice(0, 3), "braces", [], "123")).status).toBe("inconclusive");
+  });
+  it("requires runner-observed tests even with a zero exit code", async () => {
+    const checks = regressions.map((item) => item.id === "test"
+      ? { ...item, testExecutionVerified: undefined } : item);
+    expect((await verify(after([]), before, checks)).status).toBe("inconclusive");
+  });
+  it("proves the actual dependency-only fixture shape with a passing test", async () => {
+    const root = mkdtempSync(join(tmpdir(), "deployguard-proof-"));
+    try {
+      writeFileSync(join(root, "package.json"), JSON.stringify({ name: "deployguard-vulnerable-fixture",
+        version: "1.0.0", private: true, scripts: { test: "node --test" },
+        dependencies: { lodash: "4.17.20" } }));
+      writeFileSync(join(root, "package-lock.json"), JSON.stringify({ lockfileVersion: 3, packages: {} }));
+      mkdirSync(join(root, "test"));
+      writeFileSync(join(root, "test", "lodash.test.js"), `const test = require('node:test');
+        for (let index = 0; index < 4; index++) test('case ' + index, () => {});`);
+      audit.mockResolvedValue(after([]));
+      const checks = [
+        { ...check("types", "skipped"), skipReason: "not_applicable" as const },
+        { ...check("lint", "skipped"), skipReason: "not_configured" as const },
+        check("test"),
+        { ...check("build", "skipped"), skipReason: "not_applicable" as const },
+      ];
+      const prove = (candidate = checks) => verifyDependencySecurityFix(root, before, candidate,
+        "braces", ["types", "lint", "test", "build"], "123");
+      expect(await runSandboxBuildAgent(root)).toMatchObject({ status: "skipped", skipReason: "not_applicable" });
+      expect((await prove()).status).toBe("proven");
+      expect((await prove(checks.map((check) => check.id === "test" ? { ...check, exitCode: null } : check))).status).toBe("inconclusive");
+      expect((await prove(checks.map((check) => check.id === "build" ? { ...check, skipReason: "unsupported" } : check))).status).toBe("inconclusive");
+      expect((await prove([...checks, check("build")])).status).toBe("inconclusive");
+      mkdirSync(join(root, "src"));
+      writeFileSync(join(root, "src", "index.js"), "module.exports = {};");
+      expect(await runSandboxBuildAgent(root)).toMatchObject({ status: "skipped", skipReason: "not_configured" });
+      expect((await prove()).status).toBe("inconclusive");
+      writeFileSync(join(root, "package.json"), JSON.stringify({ name: "fixture", version: "1.0.0",
+        private: true, dependencies: { lodash: "4.17.20" }, scripts: {} }));
+      expect((await prove()).status).toBe("inconclusive");
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+  it("does not prove a missing build in an application", async () => {
+    const root = mkdtempSync(join(tmpdir(), "deployguard-proof-app-"));
+    try {
+      writeFileSync(join(root, "package.json"), JSON.stringify({ name: "app", version: "1.0.0",
+        dependencies: { react: "*", vite: "*" }, scripts: { test: "node --test" } }));
+      writeFileSync(join(root, "package-lock.json"), JSON.stringify({ lockfileVersion: 3, packages: {} }));
+      audit.mockResolvedValue(after([]));
+      const checks = [check("types"), check("lint"), check("test"),
+        { ...check("build", "skipped"), skipReason: "not_configured" as const }];
+      expect((await verifyDependencySecurityFix(root, before, checks, "braces",
+        ["types", "lint", "test", "build"], "123")).status).toBe("inconclusive");
+      expect(await runSandboxBuildAgent(root)).toMatchObject({ status: "skipped", skipReason: "not_configured" });
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });

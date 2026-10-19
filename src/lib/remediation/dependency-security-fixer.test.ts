@@ -1,14 +1,18 @@
-import { mkdtemp, stat, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, stat, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const runSandbox = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/sandbox/docker-sandbox", () => ({
+const reconcile = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/sandbox/docker-sandbox", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/sandbox/docker-sandbox")>(),
   runDockerSandboxCommand: runSandbox,
-  SandboxContainerStateUnknownError: class extends Error {},
+  reconcileSandboxContainer: reconcile,
 }));
 import { applyDependencySecurityFix } from "./dependency-security-fixer";
+import { SandboxContainerStateUnknownError } from "@/lib/sandbox/docker-sandbox";
+import { FrozenArtifactContainerStateError } from "./frozen-artifact-ownership";
 
 const repositories: string[] = [];
 const cacheRoots: string[] = [];
@@ -24,6 +28,7 @@ afterEach(async () => {
     delete process.env.DEPLOYGUARD_REMEDIATION_CACHE_ROOT;
   else process.env.DEPLOYGUARD_REMEDIATION_CACHE_ROOT = originalCacheRoot;
   runSandbox.mockReset();
+  reconcile.mockReset();
 });
 async function repository() {
   const cacheRoot = await mkdtemp(
@@ -111,6 +116,28 @@ const report = (value: object) =>
   `DEPLOYGUARD_CACHE_PREFLIGHT:${JSON.stringify(value)}\n`;
 
 describe("dependency cache preflight", () => {
+  it("retains the mounted cache and repository until the original Docker ID is reconciled", async () => {
+    const path = await repository();
+    const cacheRoot = process.env.DEPLOYGUARD_REMEDIATION_CACHE_ROOT!;
+    runSandbox.mockRejectedValueOnce(new SandboxContainerStateUnknownError(
+      "Mutation state unknown.", "deployguard-mutation", "b".repeat(64)));
+    const error = await applyDependencySecurityFix(path, proposal, validBaselineAudit)
+      .catch((caught) => caught) as FrozenArtifactContainerStateError;
+    expect(error).toBeInstanceOf(FrozenArtifactContainerStateError);
+    expect(error.containerId).toBe("b".repeat(64));
+    expect(error.artifacts).toContain(path);
+    const cachePath = error.artifacts.find((artifact) => artifact !== path)!;
+    expect(await readdir(cacheRoot)).toHaveLength(1);
+    expect((await stat(cachePath)).isDirectory()).toBe(true);
+    reconcile.mockRejectedValueOnce(new SandboxContainerStateUnknownError("Inspection failed."));
+    await expect(error.reconcile()).rejects.toThrow("Inspection failed.");
+    expect((await stat(cachePath)).isDirectory()).toBe(true);
+    reconcile.mockResolvedValueOnce(undefined);
+    await error.reconcile();
+    expect(reconcile.mock.calls.at(-1)?.[0]).toMatchObject({ containerId: "b".repeat(64) });
+    expect(await readdir(cacheRoot)).toHaveLength(0);
+    expect((await stat(path)).isDirectory()).toBe(true);
+  });
   it("rejects missing baseline audit without executing Docker", async () => {
     const path = await repository();
 
