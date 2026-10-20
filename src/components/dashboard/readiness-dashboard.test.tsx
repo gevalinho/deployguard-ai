@@ -1,7 +1,39 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AiAvailabilityNotice, AssessmentPipeline, FindingEvidence, ReadinessDashboard, VerificationChecks, isCurrentRequest, repositoryIdentity, shouldInvalidateRepository } from "./readiness-dashboard";
+import { AiAvailabilityNotice, AssessmentPipeline, FindingEvidence, ReadinessDashboard, ReadinessScoreCard, VerificationChecks, isCurrentRequest, repositoryIdentity, shouldInvalidateRepository } from "./readiness-dashboard";
 import type { PublicCheckResult } from "@/lib/reporting/types";
+import { calculateReadinessScore } from "@/lib/scoring/readiness-score";
+
+describe("readiness score presentation", () => {
+  it("qualifies 100/100 when only five percent of applicable weight was evaluated", () => {
+    const readiness = calculateReadinessScore([
+      { id: "database", category: "database", name: "Database", status: "passed", summary: "Passed" },
+      { id: "build", category: "build", name: "Build", status: "blocked", summary: "Blocked" },
+    ]);
+    const html = renderToStaticMarkup(<ReadinessScoreCard readiness={readiness} />);
+
+    expect(readiness.score).toBe(100);
+    expect(readiness.coverage).toBe(5);
+    expect(html).toContain("100<span");
+    expect(html).toContain("Assessment coverage is 5%");
+    expect(html).toContain("Insufficient evidence");
+    expect(html).toContain("Production readiness not established");
+    expect(html).toContain("only evaluated checks, not all applicable verification categories");
+  });
+
+  it("shows a fully evaluated assessment without an evidence warning", () => {
+    const readiness = calculateReadinessScore([
+      ...(["build", "types", "lint", "test", "security", "database", "deployment", "environment"] as const)
+        .map((category) => ({ id: category, category, name: category, status: "passed" as const, summary: "Passed" })),
+    ]);
+    const html = renderToStaticMarkup(<ReadinessScoreCard readiness={readiness} />);
+
+    expect(readiness.coverage).toBe(100);
+    expect(html).toContain("100<span");
+    expect(html).not.toContain("Insufficient evidence");
+    expect(html).not.toContain("Production readiness not established");
+  });
+});
 
 describe("repository switching identity", () => {
   it("keeps assessment state for equivalent URL edits", () => {

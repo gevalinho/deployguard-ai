@@ -31,6 +31,21 @@ function check(
 describe(
   "calculateReadinessScore",
   () => {
+    it("keeps a single passing five-point category at 100/100 with five percent coverage", () => {
+      const result = calculateReadinessScore([
+        check("database", "database", "passed"),
+      ]);
+
+      expect(result.score).toBe(100);
+      expect(result.coverage).toBe(5);
+      expect(result.earnedWeight).toBe(5);
+      expect(result.evaluatedWeight).toBe(5);
+      expect(result.applicableWeight).toBe(100);
+      expect(result.breakdown.find((item) => item.category === "database")?.status).toBe("passed");
+      expect(result.breakdown.filter((item) => item.status === "unevaluated")).toHaveLength(7);
+      expect(result.unevaluatedCategories).toHaveLength(7);
+    });
+
     it(
       "scores verified passing checks using evaluated weight",
       () => {

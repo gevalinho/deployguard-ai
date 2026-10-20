@@ -742,12 +742,14 @@ export function AssessmentPipeline({
 /*                                Score Cards                                 */
 /* -------------------------------------------------------------------------- */
 
-function ReadinessScoreCard({ score }: { score: number }) {
+export function ReadinessScoreCard({ readiness }: { readiness: PublicProductionReadinessReport["readiness"] }) {
+  const { score, coverage, evaluatedWeight, applicableWeight } = readiness;
+  const insufficientEvidence = evaluatedWeight < applicableWeight;
   return (
     <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-sm text-zinc-400">Production Readiness</p>
+          <p className="text-sm text-zinc-400">Readiness score for evaluated checks</p>
 
           <p className="mt-2 text-5xl font-semibold">
             {score}
@@ -759,6 +761,16 @@ function ReadinessScoreCard({ score }: { score: number }) {
           Deterministic
         </span>
       </div>
+
+      {insufficientEvidence && (
+        <div role="status" className="mt-5 rounded-xl border border-amber-500/50 bg-amber-500/10 p-4 text-amber-100">
+          <p className="text-base font-semibold">Insufficient evidence</p>
+          <p className="mt-1 text-sm font-semibold">Production readiness not established</p>
+          <p className="mt-2 text-sm leading-6">
+            Assessment coverage is {coverage}%. A high score reflects only evaluated checks, not all applicable verification categories.
+          </p>
+        </div>
+      )}
 
       <div className="mt-5 h-2 overflow-hidden rounded-full bg-zinc-800">
         <div
@@ -2741,7 +2753,7 @@ export function ReadinessDashboard({
             </nav>
 
             <section id="report-overview" aria-label="Assessment overview" className="scroll-mt-6 grid min-w-0 gap-4 md:grid-cols-2">
-              <ReadinessScoreCard score={report.readiness.score} />
+              <ReadinessScoreCard readiness={report.readiness} />
 
               <CoverageCard coverage={report.readiness.coverage} />
             </section>
