@@ -1,5 +1,4 @@
 import {
-  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -8,10 +7,16 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { cp } from "node:fs/promises";
 // import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { runCommand } from "@/lib/execution/command-runner";
+import { CommandTerminationUnconfirmedError, runCommand } from "@/lib/execution/command-runner";
+import { inspectRepositoryArchive, MAX_ARCHIVE_BYTES } from "@/lib/repository/archive-safety";
+import { AssessmentDeadlineError, assessmentDelay, remainingAssessmentMs } from "@/lib/orchestration/assessment-execution";
+import { AssessmentInterruptedError } from "@/lib/orchestration/assessment-interruption";
+import { assertArtifactCanBeDeleted, holdArtifacts } from "@/lib/remediation/frozen-artifact-ownership";
+import { createPreparationOwnershipRecord } from "@/lib/orchestration/preparation-ownership";
 import type { GitHubRepository } from "@/lib/repository/github-repository";
 import type {
   RepositoryReadTransportFactory,
@@ -83,12 +88,6 @@ const CACHE_ROOT = resolve(
 );
 
 const WORKSPACE_ROOT = resolve(process.cwd(), ".deployguard", "workspaces");
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolveDelay) => {
-    setTimeout(resolveDelay, ms);
-  });
-}
 
 function formatDuration(startedAt: number): string {
   return ((Date.now() - startedAt) / 1000).toFixed(2);
@@ -241,6 +240,7 @@ async function getRemoteHeadIdentity(
       sourceBranch,
     };
   } catch (error) {
+    if (error instanceof CommandTerminationUnconfirmedError) throw error;
     console.warn(
       "[Repository Ingestion] Remote HEAD identity check could not be completed.",
       error,
@@ -276,7 +276,7 @@ async function saveRepositoryToCache(
     recursive: true,
   });
 
-  cpSync(sourcePath, cachePath, {
+  await cp(sourcePath, cachePath, {
     recursive: true,
     force: true,
   });
@@ -484,7 +484,7 @@ async function copyCachedRepository(
 
   const copyStartedAt = Date.now();
 
-  cpSync(cachedPath, repositoryPath, {
+  await cp(cachedPath, repositoryPath, {
     recursive: true,
     force: true,
   });
@@ -542,11 +542,15 @@ async function tryArchiveDownload(
       "--max-time",
       String(ARCHIVE_MAX_TIME_SECONDS),
 
+      "--max-filesize",
+      String(MAX_ARCHIVE_BYTES),
+
       "--output",
       archivePath,
       archiveUrl,
     ],
     temporaryRoot,
+    { timeoutMs: remainingAssessmentMs(ARCHIVE_MAX_TIME_SECONDS * 1000) },
   );
 
   console.log(
@@ -582,6 +586,15 @@ async function tryArchiveDownload(
 
   await onProgress?.("Extracting GitHub archive...");
 
+  try {
+    await inspectRepositoryArchive(archivePath);
+  } catch (error) {
+    if (error instanceof AssessmentDeadlineError) throw error;
+    console.warn("[Repository Ingestion] Archive failed safety validation; using Git clone fallback.");
+    rmSync(archivePath, { force: true });
+    return false;
+  }
+
   const extractionStartedAt = Date.now();
 
   const extraction = await runCommand(
@@ -597,6 +610,7 @@ async function tryArchiveDownload(
       "--strip-components=1",
     ],
     temporaryRoot,
+    { timeoutMs: remainingAssessmentMs(60_000) },
   );
 
   rmSync(archivePath, {
@@ -705,6 +719,8 @@ async function cloneRepository(
       },
     );
 
+    if (result.timedOut) throw new AssessmentDeadlineError("repository", "stage_deadline_exceeded");
+
     if (result.status === "passed" && existsSync(repositoryPath)) {
       cloneSucceeded = true;
 
@@ -751,7 +767,7 @@ async function cloneRepository(
         `Retrying repository clone in ${retryDelayMs / 1000}s...`,
       );
 
-      await delay(retryDelayMs);
+      await assessmentDelay(retryDelayMs);
     }
   }
 
@@ -794,17 +810,24 @@ export async function ingestGitHubRepository(
   const temporaryRoot = mkdtempSync(join(WORKSPACE_ROOT, "deployguard-repo-"));
 
   const repositoryPath = join(temporaryRoot, "repository");
+  const removeWorkspace = () => {
+    try {
+      assertArtifactCanBeDeleted(repositoryPath);
+      rmSync(temporaryRoot, { recursive: true, force: true });
+    } catch (error) {
+      console.error("[Repository Ingestion] Workspace cleanup unconfirmed.",
+        { repositoryPath, error });
+      throw new AssessmentInterruptedError({ stage: "repository", service: "assessment service",
+        reason: "assessment_cleanup_unconfirmed", retryable: false });
+    }
+  };
 
   const ingestionStartedAt = Date.now();
 
-  const readTransport =
-    readTransportFactory
-      ? await readTransportFactory(
-          repository
-        )
-      : null;
-
+  let readTransport: Awaited<ReturnType<RepositoryReadTransportFactory>> | null = null;
+  let retainedForUnconfirmedProcess = false;
   try {
+    readTransport = readTransportFactory ? await readTransportFactory(repository) : null;
     const cacheResult = await copyCachedRepository(repository, repositoryPath, readTransport?.env);
 
     let provenance: RepositoryIngestionProvenance | null = null;
@@ -891,6 +914,7 @@ export async function ingestGitHubRepository(
       try {
         await saveRepositoryToCache(repository, repositoryPath, provenance);
       } catch (cacheError) {
+        if (cacheError instanceof CommandTerminationUnconfirmedError) throw cacheError;
         console.warn(
           "[Repository Ingestion] Repository was ingested successfully, but caching failed.",
           cacheError,
@@ -936,22 +960,38 @@ export async function ingestGitHubRepository(
           return;
         }
 
+        removeWorkspace();
         cleanedUp = true;
-
-        rmSync(temporaryRoot, {
-          recursive: true,
-          force: true,
-        });
       },
     };
   } catch (error) {
-    rmSync(temporaryRoot, {
-      recursive: true,
-      force: true,
-    });
+    if (error instanceof CommandTerminationUnconfirmedError) {
+      retainedForUnconfirmedProcess = true;
+      holdArtifacts([repositoryPath]);
+      let ownershipDirectory: string | undefined;
+      try { ownershipDirectory = createPreparationOwnershipRecord(repositoryPath).directory; }
+      catch (recordError) {
+        console.error("[Repository Ingestion] Could not write private recovery metadata.",
+          { repositoryPath, error: recordError });
+      }
+      console.error("[Repository Ingestion] Child process termination unconfirmed; workspace retained.",
+        { repositoryPath, pid: error.pid, ownershipDirectory });
+      throw new AssessmentInterruptedError({ stage: "repository", service: "assessment service",
+        reason: "assessment_cleanup_unconfirmed", retryable: false });
+    }
+    removeWorkspace();
 
     throw error;
   } finally {
-    await readTransport?.dispose?.();
+    try {
+      await readTransport?.dispose?.();
+    } catch (error) {
+      // A failed transport disposal rejects ingestion even after its return
+      // value was prepared, so no caller can take ownership of this workspace.
+      if (!retainedForUnconfirmedProcess) removeWorkspace();
+      console.error("[Repository Ingestion] Transport disposal unconfirmed.", error);
+      throw new AssessmentInterruptedError({ stage: "repository", service: "assessment service",
+        reason: "assessment_cleanup_unconfirmed", retryable: false });
+    }
   }
 }

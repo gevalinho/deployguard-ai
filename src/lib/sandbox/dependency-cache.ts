@@ -16,9 +16,8 @@ import {
   resolve,
 } from "node:path";
 
-import {
-  spawnSync,
-} from "node:child_process";
+import { runCommand } from "@/lib/execution/command-runner";
+import { remainingAssessmentMs } from "@/lib/orchestration/assessment-execution";
 
 export const DEPENDENCY_CACHE_VERSION =
   "v4";
@@ -175,10 +174,10 @@ export function hasDependencyCache(
   );
 }
 
-export function restoreDependencyCache(
+export async function restoreDependencyCache(
   key: string,
   repositoryPath: string
-): boolean {
+): Promise<boolean> {
   const archivePath =
     getDependencyCachePath(
       key
@@ -224,7 +223,7 @@ export function restoreDependencyCache(
   );
 
   const result =
-    spawnSync(
+    await runCommand(
       "tar",
       [
         "-xf",
@@ -232,18 +231,12 @@ export function restoreDependencyCache(
         "-C",
         repositoryPath,
       ],
-      {
-        encoding:
-          "utf8",
-
-        timeout:
-          2 * 60 * 1000,
-      }
+      repositoryPath,
+      { timeoutMs: remainingAssessmentMs(2 * 60 * 1000) }
     );
 
   if (
-    result.error ||
-    result.status !== 0
+    result.status !== "passed"
   ) {
     console.warn(
       "[Dependency Cache] Cached archive could not be extracted. Removing invalid cache entry."
@@ -272,10 +265,10 @@ export function restoreDependencyCache(
   );
 }
 
-export function saveDependencyCache(
+export async function saveDependencyCache(
   key: string,
   repositoryPath: string
-): boolean {
+): Promise<boolean> {
   const source =
     join(
       repositoryPath,
@@ -337,7 +330,7 @@ export function saveDependencyCache(
   }
 
   const result =
-    spawnSync(
+    await runCommand(
       "tar",
       [
         "-cf",
@@ -346,18 +339,12 @@ export function saveDependencyCache(
         repositoryPath,
         ...archiveEntries,
       ],
-      {
-        encoding:
-          "utf8",
-
-        timeout:
-          2 * 60 * 1000,
-      }
+      repositoryPath,
+      { timeoutMs: remainingAssessmentMs(2 * 60 * 1000) }
     );
 
   if (
-    result.error ||
-    result.status !== 0
+    result.status !== "passed"
   ) {
     rmSync(
       temporaryArchive,

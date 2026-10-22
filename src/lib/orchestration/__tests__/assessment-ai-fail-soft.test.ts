@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { calculateReadinessScore } from "@/lib/scoring/readiness-score";
+import { createDatabaseEvidenceCheck } from "@/lib/agents/database-evidence-check";
 import type { CheckResult } from "@/lib/checks/types";
 
 const ai = vi.hoisted(() => ({ architect: vi.fn(), remediation: vi.fn(), cleanup: vi.fn() }));
@@ -34,6 +35,9 @@ const checks: CheckResult[] = [
   { id: "build", category: "build", name: "Build", status: "passed", summary: "Passed" },
   { id: "security", category: "security", name: "Security", status: "failed", summary: "Failed" },
 ];
+const completedChecks = [...checks, createDatabaseEvidenceCheck({
+  repositoryPath: "/temporary/repository", scannedAt: "2026-01-01T00:00:00.000Z", facts: [],
+})];
 
 afterEach(() => { vi.useRealTimers(); ai.architect.mockReset(); ai.remediation.mockReset(); ai.cleanup.mockReset(); });
 
@@ -50,7 +54,7 @@ describe("assessment AI fail-soft boundary", () => {
     await vi.advanceTimersByTimeAsync(12_100);
     await assertion;
     const result = await resultPromise;
-    const baseline = calculateReadinessScore(checks);
+    const baseline = calculateReadinessScore(completedChecks);
     expect(result.report.readiness.score).toBe(baseline.score);
     expect(result.report.readiness.coverage).toBe(baseline.coverage);
     expect(result.report.architecture).toBeUndefined();
@@ -70,7 +74,7 @@ describe("assessment AI fail-soft boundary", () => {
     await vi.advanceTimersByTimeAsync(20_100);
     await assertion;
     const result = await resultPromise;
-    const baseline = calculateReadinessScore(checks);
+    const baseline = calculateReadinessScore(completedChecks);
     expect(result.report.readiness).toEqual(baseline);
     expect(result.report.aiAvailability).toEqual({ architecture: "unavailable", remediation: "unavailable" });
   });

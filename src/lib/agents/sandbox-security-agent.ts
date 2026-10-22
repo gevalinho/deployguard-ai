@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 import type {
   CheckEvidence,
   CheckResult,
@@ -72,7 +75,7 @@ function looksLikeInfrastructureFailure(
   const combinedOutput =
     `${stdout}\n${stderr}`;
 
-  return /ECONNRESET|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|network|registry|socket hang up|fetch failed/i.test(
+  return /ECONNRESET|ENOTFOUND|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|socket hang up|fetch failed|network connectivity|(?:HTTP|status|response)\s*[:=]?\s*(?:429|5\d\d)\b|\bE(?:429|5\d\d)\b|ERR_PNPM_FETCH_(?:429|5\d\d)/i.test(
     combinedOutput
   );
 }
@@ -737,16 +740,18 @@ export async function runSandboxSecurityAgent(
     );
 
   if (!packageManager) {
+    const nodePackageExists = existsSync(join(repositoryPath, "package.json"));
     return {
       id: "security",
       category: "security",
       name:
         "Dependency Security",
       status: "skipped",
-      skipReason:
-        "not_applicable",
+      skipReason: nodePackageExists ? "unsupported" : "not_applicable",
       summary:
-        "No supported package manager lockfile was detected.",
+        nodePackageExists
+          ? "A Node package exists, but no supported package manager lockfile was detected."
+          : "No Node package was detected for dependency auditing.",
     };
   }
 
@@ -829,6 +834,7 @@ export async function runSandboxSecurityAgent(
     }
 
     return {
+      infrastructureFailure: "docker_unavailable",
       id: "security",
       category: "security",
       name: "Dependency Security",
@@ -854,6 +860,7 @@ export async function runSandboxSecurityAgent(
       name:
         "Dependency Security",
       status: "blocked",
+      transientFailure: "audit_service",
 
       command:
         auditCommand.display,
@@ -893,6 +900,7 @@ export async function runSandboxSecurityAgent(
       name:
         "Dependency Security",
       status: "blocked",
+      transientFailure: "audit_service",
 
       command:
         auditCommand.display,

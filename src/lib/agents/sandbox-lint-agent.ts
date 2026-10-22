@@ -233,6 +233,7 @@ export async function runSandboxLintAgent(
 
   if (result.status === "infrastructure_error") {
     return {
+      infrastructureFailure: "docker_unavailable",
       id: "lint",
       category: "lint",
       name: "Lint",

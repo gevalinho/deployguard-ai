@@ -6,6 +6,7 @@ import https from "node:https";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import { createRequire } from "node:module";
 import ts from "typescript";
+import { currentAssessmentExecution, remainingAssessmentMs } from "@/lib/orchestration/assessment-execution";
 
 import type { DockerSandboxMount } from "./docker-sandbox";
 
@@ -38,7 +39,7 @@ const STAGING_ROOT = join(CACHE_ROOT, "staging");
 
 export type GoogleFontPreparation =
   | { status: "not_required" }
-  | { status: "blocked"; reason: string }
+  | { status: "blocked"; reason: string; transientFailure?: "approved_build_asset" }
   | { status: "ready"; mount: DockerSandboxMount; environment: Record<string, string>;
       cleanup: () => Promise<void> };
 
@@ -54,7 +55,8 @@ export function publicIpv4(address: string): boolean {
     (a === 203 && b === 0 && c === 113));
 }
 
-export async function fetchApprovedGoogleAsset(url: string, maxBytes: number): Promise<Buffer> {
+export async function fetchApprovedGoogleAsset(url: string, maxBytes: number,
+  deadline = Date.now() + 10_000): Promise<Buffer> {
   const parsed = new URL(url);
   if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port ||
       parsed.hash || !["fonts.googleapis.com", "fonts.gstatic.com"].includes(parsed.hostname))
@@ -62,7 +64,14 @@ export async function fetchApprovedGoogleAsset(url: string, maxBytes: number): P
   if ((parsed.hostname === "fonts.googleapis.com" && parsed.pathname !== "/css2") ||
       (parsed.hostname === "fonts.gstatic.com" && !/\.woff2?$/.test(parsed.pathname)))
     throw new Error("unapproved_asset_path");
-  const addresses = await dns.lookup(parsed.hostname, { family: 4, all: true });
+  const dnsTimeoutMs = Math.max(1, deadline - Date.now());
+  let dnsTimer: ReturnType<typeof setTimeout> | undefined;
+  const addresses = await Promise.race([
+    dns.lookup(parsed.hostname, { family: 4, all: true }),
+    new Promise<never>((_resolve, reject) => {
+      dnsTimer = setTimeout(() => reject(new Error("asset_total_timeout")), dnsTimeoutMs);
+    }),
+  ]).finally(() => { if (dnsTimer) clearTimeout(dnsTimer); });
   if (!addresses.length || addresses.some((entry) => !publicIpv4(entry.address)))
     throw new Error("unapproved_dns_address");
   const address = addresses[0].address;
@@ -74,11 +83,11 @@ export async function fetchApprovedGoogleAsset(url: string, maxBytes: number): P
       servername: parsed.hostname,
       headers: { Host: parsed.hostname,
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.36" },
-      timeout: 10_000,
+      timeout: Math.max(1, Math.min(10_000, deadline - Date.now())),
     }, (response) => {
       if (response.statusCode !== 200) {
         response.resume();
-        reject(new Error("asset_http_failure"));
+        reject(new Error(`asset_http_${response.statusCode}`));
         return;
       }
       const chunks: Buffer[] = [];
@@ -94,6 +103,14 @@ export async function fetchApprovedGoogleAsset(url: string, maxBytes: number): P
       response.on("end", () => resolve(Buffer.concat(chunks)));
       response.on("error", reject);
     });
+    const deadlineTimer = setTimeout(() => request.destroy(new Error("asset_total_timeout")),
+      Math.max(1, deadline - Date.now()));
+    const assessmentSignal = currentAssessmentExecution()?.signal;
+    const cancel = () => request.destroy(new Error("asset_total_timeout"));
+    if (assessmentSignal?.aborted) cancel();
+    else assessmentSignal?.addEventListener("abort", cancel, { once: true });
+    request.on("close", () => clearTimeout(deadlineTimer));
+    request.on("close", () => assessmentSignal?.removeEventListener("abort", cancel));
     request.on("timeout", () => request.destroy(new Error("asset_timeout")));
     request.on("error", reject);
   });
@@ -215,10 +232,20 @@ async function cachedAsset(cacheRoot: string, url: string, maxBytes: number,
 export async function prepareNextGoogleFonts(repositoryPath: string,
   fetchAsset = fetchApprovedGoogleAsset, cacheRoot = CACHE_ROOT): Promise<GoogleFontPreparation> {
   let staging: string | undefined;
-  const deadline = Date.now() + 60_000;
-  const boundedFetch = (url: string, maxBytes: number) => {
-    if (Date.now() >= deadline) throw new Error("asset_total_timeout");
-    return fetchAsset(url, maxBytes);
+  const deadline = Date.now() + remainingAssessmentMs(60_000);
+  const boundedFetch = async (url: string, maxBytes: number) => {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      if (Date.now() >= deadline) throw new Error("asset_total_timeout");
+      try {
+        return await fetchAsset(url, maxBytes, deadline);
+      } catch (error) {
+        const code = error instanceof Error ? error.message : "";
+        if (!/ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|ECONNRESET|ECONNREFUSED|ETIMEDOUT|asset_timeout|asset_http_429|asset_http_5\\d\\d/i.test(code) ||
+            attempt === 2 || Date.now() + 500 >= deadline) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+    throw new Error("asset_total_timeout");
   };
   try {
     const packageJson = JSON.parse(readFileSync(join(repositoryPath, "package.json"), "utf8")) as {
@@ -275,6 +302,8 @@ export async function prepareNextGoogleFonts(repositoryPath: string,
       : ["invalid_font_css", "invalid_asset_data", "font_file_limit", "asset_total_limit"].includes(code)
         ? "Approved Google Font assets failed validation or exceeded download limits."
         : "Approved Google Font assets could not be fetched for the isolated production build.";
-    return { status: "blocked", reason };
+    const transientFailure = /ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|ECONNRESET|ECONNREFUSED|ETIMEDOUT|asset_timeout|asset_total_timeout|asset_http_429|asset_http_5\\d\\d/i.test(code)
+      ? "approved_build_asset" as const : undefined;
+    return { status: "blocked", reason, ...(transientFailure ? { transientFailure } : {}) };
   }
 }

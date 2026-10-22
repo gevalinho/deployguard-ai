@@ -8,6 +8,8 @@ import {
 import {
   runCommand,
 } from "@/lib/execution/command-runner";
+import { createAssessmentExecutionContext, runAssessmentStage } from
+  "@/lib/orchestration/assessment-execution";
 
 const inheritedSecretName =
   "DEPLOYGUARD_TEST_SERVER_SECRET";
@@ -28,6 +30,32 @@ afterEach(() => {
 describe(
   "runCommand environment isolation",
   () => {
+    it("caps output from a noisy child process", async () => {
+      const result = await runCommand(process.execPath,
+        ["-e", "process.stdout.write('x'.repeat(4 * 1024 * 1024))"], process.cwd(),
+        { timeoutMs: 5_000 });
+      expect(result.status).toBe("passed");
+      expect(result.stdout.length).toBeLessThanOrEqual(2 * 1024 * 1024);
+    });
+
+    it("terminates a child that exceeds its command deadline", async () => {
+      const result = await runCommand(process.execPath,
+        ["-e", "setInterval(() => {}, 1000)"], process.cwd(), { timeoutMs: 50 });
+      expect(result.timedOut).toBe(true);
+      expect(result.status).toBe("failed");
+    });
+
+    it("terminates a running command when its assessment is cancelled", async () => {
+      const context = createAssessmentExecutionContext();
+      const pending = context.run(() => runAssessmentStage("preparation", () =>
+        runCommand(process.execPath, ["-e", "setInterval(() => {}, 1000)"], process.cwd())));
+      const assertion = expect(pending).rejects.toMatchObject({ name: "AssessmentCancelledError" });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(context.cancel("user_requested")).toBe(true);
+      await assertion;
+      context.dispose();
+    });
+
     it(
       "does not expose the parent process environment when inheritance is disabled",
       async () => {

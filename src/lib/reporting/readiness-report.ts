@@ -9,6 +9,7 @@ import type {
 } from "@/lib/reporting/types";
 import type { RepositoryScanResult } from "@/lib/scanner/types";
 import type { ReadinessScore } from "@/lib/scoring/readiness-score";
+import { calculateReadinessVerdict } from "@/lib/scoring/readiness-verdict";
 
 const MAX_REMEDIATION_EVIDENCE = 3;
 
@@ -325,6 +326,7 @@ export function createProductionReadinessReport(
     architecture,
     checks,
     readiness,
+    readinessVerdict: calculateReadinessVerdict(checks, readiness),
     remediation: createRemediationItems(checks),
   };
 }

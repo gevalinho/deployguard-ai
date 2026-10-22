@@ -5,6 +5,7 @@ import type {
   ResearchSourceAuthority,
   ResearchSourceType,
 } from "@/lib/research/types";
+import { currentAssessmentExecution, remainingAssessmentMs, assessmentDelay } from "@/lib/orchestration/assessment-execution";
 
 interface TavilySearchResult {
   title?: string;
@@ -216,18 +217,6 @@ function toResearchEvidence(
   };
 }
 
-function delay(
-  milliseconds: number
-): Promise<void> {
-  return new Promise(
-    (resolve) =>
-      setTimeout(
-        resolve,
-        milliseconds
-      )
-  );
-}
-
 function isRetryableStatus(
   status: number
 ): boolean {
@@ -290,12 +279,16 @@ export async function researchTopic(
   ) {
     const controller =
       new AbortController();
+    const assessmentSignal = currentAssessmentExecution()?.signal;
+    const cancel = () => controller.abort();
+    if (assessmentSignal?.aborted) cancel();
+    else assessmentSignal?.addEventListener("abort", cancel, { once: true });
 
     const timeout =
       setTimeout(
         () =>
           controller.abort(),
-        TAVILY_TIMEOUT_MS
+        remainingAssessmentMs(TAVILY_TIMEOUT_MS)
       );
 
     try {
@@ -349,9 +342,7 @@ export async function researchTopic(
             `[DeployGuard Research] Tavily returned ${response.status}. Retrying in ${backoffMs}ms...`
           );
 
-          await delay(
-            backoffMs
-          );
+          await assessmentDelay(backoffMs);
 
           continue;
         }
@@ -417,13 +408,12 @@ export async function researchTopic(
           : `[DeployGuard Research] Network request failed on attempt ${attempt}/${TAVILY_MAX_ATTEMPTS}. Retrying in ${backoffMs}ms...`
       );
 
-      await delay(
-        backoffMs
-      );
+      await assessmentDelay(backoffMs);
     } finally {
       clearTimeout(
         timeout
       );
+      assessmentSignal?.removeEventListener("abort", cancel);
     }
   }
 

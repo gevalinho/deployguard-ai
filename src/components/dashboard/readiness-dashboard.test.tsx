@@ -1,8 +1,18 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AiAvailabilityNotice, AssessmentPipeline, FindingEvidence, ReadinessDashboard, ReadinessScoreCard, VerificationChecks, isCurrentRequest, repositoryIdentity, shouldInvalidateRepository } from "./readiness-dashboard";
-import type { PublicCheckResult } from "@/lib/reporting/types";
+import { AiAvailabilityNotice, AssessmentPipeline, FindingEvidence, ReadinessDashboard, ReadinessScoreCard, ReadinessVerdictCard, VerificationChecks, isCurrentRequest, repositoryIdentity, shouldInvalidateRepository } from "./readiness-dashboard";
+import type { PublicCheckResult, PublicProductionReadinessReport } from "@/lib/reporting/types";
 import { calculateReadinessScore } from "@/lib/scoring/readiness-score";
+import { calculateReadinessVerdict } from "@/lib/scoring/readiness-verdict";
+
+function reportFor(checks: PublicCheckResult[], includeVerdict = true): PublicProductionReadinessReport {
+  const readiness = calculateReadinessScore(checks);
+  return {
+    generatedAt: "", repository: { path: "/repo", scannedAt: "", facts: [] },
+    checks, readiness, remediation: [],
+    ...(includeVerdict ? { readinessVerdict: calculateReadinessVerdict(checks, readiness) } : {}),
+  };
+}
 
 describe("readiness score presentation", () => {
   it("qualifies 100/100 when only five percent of applicable weight was evaluated", () => {
@@ -15,10 +25,8 @@ describe("readiness score presentation", () => {
     expect(readiness.score).toBe(100);
     expect(readiness.coverage).toBe(5);
     expect(html).toContain("100<span");
-    expect(html).toContain("Assessment coverage is 5%");
-    expect(html).toContain("Insufficient evidence");
-    expect(html).toContain("Production readiness not established");
-    expect(html).toContain("only evaluated checks, not all applicable verification categories");
+    expect(html).toContain("Verified Performance");
+    expect(html).not.toContain("Ready");
   });
 
   it("shows a fully evaluated assessment without an evidence warning", () => {
@@ -32,6 +40,61 @@ describe("readiness score presentation", () => {
     expect(html).toContain("100<span");
     expect(html).not.toContain("Insufficient evidence");
     expect(html).not.toContain("Production readiness not established");
+  });
+});
+
+describe("server readiness verdict presentation", () => {
+  const categories = ["build", "types", "lint", "test", "security", "database", "deployment", "environment"] as const;
+  const passing = () => categories.map((category) => ({
+    id: category, category, name: category, status: "passed" as const, summary: "Verified pass",
+  }));
+
+  it("shows Ready only for a completed server verdict and states its scope", () => {
+    const html = renderToStaticMarkup(<ReadinessVerdictCard report={reportFor(passing())} />);
+    expect(html).toContain(">Ready</h2>");
+    expect(html).toContain("Pre-deployment readiness based on verified checks");
+    expect(html).toContain("does not guarantee production behavior");
+    expect(html).toContain("dependency audits cover declared dependencies");
+  });
+
+  it("shows confirmed failures as Not Ready even with blocked evidence", () => {
+    const checks = passing().map((check) => check.category === "build"
+      ? { ...check, status: "blocked" as const, summary: "Build blocked" }
+      : check.category === "test"
+        ? { ...check, status: "failed" as const, summary: "Tests failed" } : check);
+    const html = renderToStaticMarkup(<ReadinessVerdictCard report={reportFor(checks)} />);
+    expect(html).toContain(">Not Ready</h2>");
+    expect(html).toContain("Tests failed");
+    expect(html).not.toContain("Build blocked");
+  });
+
+  it("shows 100/100 at 5% coverage as Undetermined with safe reasons", () => {
+    const report = reportFor([{ id: "database", category: "database", name: "Database",
+      status: "passed", summary: "Verified pass" }]);
+    expect(report.readiness).toMatchObject({ score: 100, coverage: 5 });
+    const html = renderToStaticMarkup(<ReadinessVerdictCard report={report} />);
+    expect(html).toContain(">Undetermined</h2>");
+    expect(html).toContain("Required check evidence is missing.");
+    expect(html).toContain("Affected categories:");
+    expect(html).not.toContain(">Ready</h2>");
+  });
+
+  it("keeps legacy reports undetermined without inventing check results", () => {
+    const report = reportFor(passing(), false);
+    const html = renderToStaticMarkup(<ReadinessVerdictCard report={report} />);
+    expect(report.readiness).toMatchObject({ score: 100, coverage: 100 });
+    expect(html).toContain(">Undetermined</h2>");
+    expect(html).toContain("older report has no server-calculated verdict");
+    expect(html).not.toContain("Relevant check evidence");
+  });
+
+  it("does not render unknown server reason text", () => {
+    const report = reportFor(passing());
+    report.readinessVerdict = { version: 1, status: "undetermined",
+      reasonCodes: ["<script>unsafe</script>" as never], affectedCategories: [] };
+    const html = renderToStaticMarkup(<ReadinessVerdictCard report={report} />);
+    expect(html).not.toContain("unsafe");
+    expect(html).toContain("older report has no server-calculated verdict");
   });
 });
 

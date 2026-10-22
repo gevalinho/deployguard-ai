@@ -25,6 +25,24 @@ const report = (high: number) => JSON.stringify({
   metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high, critical: 0, total: high } },
 });
 describe("sandbox security audit result", () => {
+  it("does not exclude a Node package without an auditable lockfile", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dg-audit-no-lockfile-"));
+    roots.push(root);
+    await writeFile(join(root, "package.json"), JSON.stringify({ name: "unlocked" }));
+    expect(await runSandboxSecurityAgent(root)).toMatchObject({
+      status: "skipped", skipReason: "unsupported",
+    });
+    expect(runSandbox).not.toHaveBeenCalled();
+  });
+
+  it.each(["ENOTFOUND registry.npmjs.org", "EAI_AGAIN registry.npmjs.org",
+    "ECONNRESET", "HTTP 503"])("marks audit service failure for recovery: %s", async (stderr) => {
+    runSandbox.mockResolvedValue({ status: "failed", exitCode: 1,
+      stdout: "", stderr, durationMs: 1 });
+    const result = await runSandboxSecurityAgent(await repository());
+    expect(result).toMatchObject({ status: "blocked", transientFailure: "audit_service" });
+    expect(sanitizeCheckForPublic(result)).not.toHaveProperty("transientFailure");
+  });
   it.each(["", "{}", '{"vulnerabilities":{'])("rejects incomplete output", async (stdout) => {
     runSandbox.mockResolvedValue({ status: "passed", exitCode: 0, stdout, stderr: "", durationMs: 1 });
     expect((await runSandboxSecurityAgent(await repository())).status).toBe("error");

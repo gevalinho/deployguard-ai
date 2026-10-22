@@ -100,6 +100,27 @@ function responseFor(repository: string, checks: Array<Record<string, unknown>> 
   return new Response(new ReadableStream({ start(controller) { controller.enqueue(bytes); controller.close(); } }));
 }
 
+function responseWithEvents(...events: Array<{ event: string; data: unknown }>) {
+  const body = events.map(({ event, data }) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join("");
+  return new Response(new ReadableStream({ start(controller) {
+    controller.enqueue(new TextEncoder().encode(body));
+    controller.close();
+  } }));
+}
+
+const interruptionEvent = (retryable: boolean) => ({
+  ok: false, status: "interrupted", stage: "build", service: "Google Fonts",
+  reason: retryable ? "approved_build_asset_unavailable" : "approved_build_asset_policy_rejected",
+  retryable, message: "Assessment stopped.",
+});
+
+const resultEvent = { ok: true, assessment: {
+  repository: { owner: "owner", name: "first", fullName: "owner/first",
+    url: "https://github.com/owner/first" },
+  report: { generatedAt: "first", readiness: { score: 100, coverage: 5, breakdown: [] },
+    checks: [], remediation: [] },
+} };
+
 async function settle() {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
@@ -118,6 +139,127 @@ beforeEach(() => {
 });
 
 describe("dashboard repository interactions", () => {
+  it("shows requested then confirmed cancellation without a readiness score", async () => {
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    const response = new Response(new ReadableStream<Uint8Array>({ start(controller) { stream = controller; } }));
+    const fetchMock = vi.fn((url: string) => url === "/api/assessment/cancel"
+      ? Promise.resolve(Response.json({ ok: true, status: "cancellation_requested" }))
+      : Promise.resolve(response));
+    vi.stubGlobal("fetch", fetchMock);
+    let tree = renderDashboard();
+    input(tree).onChange({ target: { value: "https://github.com/owner/first" } });
+    tree = renderDashboard(); assess(tree); await settle(); tree = renderDashboard();
+    clickButton(tree, "Cancel Assessment"); await settle(); tree = renderDashboard();
+    expect(findElement(tree, (item) => item.type === "p" &&
+      (item.props as { children?: string }).children ===
+        "Cancellation requested. Waiting for server cleanup confirmation.")).not.toBeNull();
+    stream.enqueue(new TextEncoder().encode('event: cancelled\ndata: {"ok":false,"status":"cancelled"}\n\n'));
+    stream.close();
+    await settle(); tree = renderDashboard();
+    expect(findElement(tree, (item) => item.type === "section" &&
+      (item.props as { "aria-label"?: string })["aria-label"] === "Assessment cancelled")).not.toBeNull();
+    expect(byType(tree, "ReadinessScoreCard")).toBeNull();
+    expect(byType(tree, "ReadinessVerdictCard")).toBeNull();
+  });
+
+  it("treats browser stream loss as unconfirmed server execution", async () => {
+    const response = new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.close(); },
+    }));
+    const fetchMock = vi.fn().mockResolvedValue(response);
+    vi.stubGlobal("fetch", fetchMock);
+    let tree = renderDashboard();
+    input(tree).onChange({ target: { value: "https://github.com/owner/first" } });
+    tree = renderDashboard(); assess(tree); await settle(); tree = renderDashboard();
+    expect(findElement(tree, (item) => item.type === "section" &&
+      (item.props as { "aria-label"?: string })["aria-label"] === "Assessment cancelled")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(byType(tree, "ReadinessScoreCard")).toBeNull();
+  });
+
+  it("rejects a cancelled stream that also contains a successful result", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(responseWithEvents(
+      { event: "cancelled", data: { ok: false, status: "cancelled" } },
+      { event: "result", data: resultEvent },
+    )));
+    let tree = renderDashboard();
+    input(tree).onChange({ target: { value: "https://github.com/owner/first" } });
+    tree = renderDashboard(); assess(tree); await settle(); tree = renderDashboard();
+    expect(byType(tree, "ReadinessScoreCard")).toBeNull();
+    expect(byType(tree, "ReadinessVerdictCard")).toBeNull();
+  });
+  it("shows the terminal interruption without a score and retries on request", async () => {
+    const event = new TextEncoder().encode(
+      'event: interrupted\ndata: {"ok":false,"status":"interrupted","stage":"preparation","service":"package registry","reason":"dependency_registry_unavailable","retryable":true,"message":"Package registry unavailable. Retry Assessment."}\n\n');
+    const interruptedResponse = new Response(new ReadableStream({
+      start(controller) { controller.enqueue(event); controller.close(); },
+    }));
+    const fetchMock = vi.fn().mockResolvedValueOnce(interruptedResponse)
+      .mockResolvedValueOnce(responseFor("first"));
+    vi.stubGlobal("fetch", fetchMock);
+    let tree = renderDashboard();
+    input(tree).onChange({ target: { value: "https://github.com/owner/first" } });
+    tree = renderDashboard();
+    assess(tree);
+    await settle();
+    tree = renderDashboard();
+    expect(findElement(tree, (item) => item.type === "p" &&
+      (item.props as { children?: string }).children === "Production readiness: Not determined")).not.toBeNull();
+    expect(byType(tree, "ReadinessScoreCard")).toBeNull();
+    clickButton(tree, "Retry Assessment");
+    await settle();
+    tree = renderDashboard();
+    expect(byType(tree, "ReadinessScoreCard")).not.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not offer Retry Assessment for a non-retryable policy rejection", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(responseWithEvents({
+      event: "interrupted", data: interruptionEvent(false),
+    })));
+    let tree = renderDashboard();
+    input(tree).onChange({ target: { value: "https://github.com/owner/first" } });
+    tree = renderDashboard(); assess(tree); await settle(); tree = renderDashboard();
+    expect(findElement(tree, (item) => item.type === "section" &&
+      (item.props as { "aria-label"?: string })["aria-label"] === "Assessment interrupted")).not.toBeNull();
+    expect(findElement(tree, (item) => item.type === "button" &&
+      (item.props as { children?: string }).children === "Retry Assessment")).toBeNull();
+    expect(byType(tree, "ReadinessScoreCard")).toBeNull();
+    expect(byType(tree, "ReadinessVerdictCard")).toBeNull();
+  });
+
+  it.each([
+    ["result", "interrupted"],
+    ["interrupted", "result"],
+  ] as const)("rejects conflicting terminal SSE events: %s then %s", async (first, second) => {
+    const event = (kind: "result" | "interrupted") => ({ event: kind,
+      data: kind === "result" ? resultEvent : interruptionEvent(true) });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(responseWithEvents(event(first), event(second))));
+    let tree = renderDashboard();
+    input(tree).onChange({ target: { value: "https://github.com/owner/first" } });
+    tree = renderDashboard(); assess(tree); await settle(); tree = renderDashboard();
+    expect(byType(tree, "ReadinessScoreCard")).toBeNull();
+    expect(byType(tree, "ReadinessVerdictCard")).toBeNull();
+    expect(findElement(tree, (item) => item.type === "section" &&
+      (item.props as { "aria-label"?: string })["aria-label"] === "Assessment interrupted")).toBeNull();
+    expect(findElement(tree, (item) => item.type === "p" &&
+      typeof (item.props as { children?: unknown }).children === "string" &&
+      /Invalid or conflicting|Invalid assessment interruption/.test((item.props as { children: string }).children))).not.toBeNull();
+  });
+
+  it("rejects a result followed by a malformed terminal block", async () => {
+    const body = `event: result\ndata: ${JSON.stringify(resultEvent)}\n\nevent: interrupted\ndata: {broken}\n\n`;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(new ReadableStream({
+      start(controller) { controller.enqueue(new TextEncoder().encode(body)); controller.close(); },
+    }))));
+    let tree = renderDashboard();
+    input(tree).onChange({ target: { value: "https://github.com/owner/first" } });
+    tree = renderDashboard(); assess(tree); await settle(); tree = renderDashboard();
+    expect(byType(tree, "ReadinessVerdictCard")).toBeNull();
+    expect(byType(tree, "ReadinessScoreCard")).toBeNull();
+    expect(findElement(tree, (item) => item.type === "p" &&
+      (item.props as { children?: string }).children === "Malformed final assessment event.")).not.toBeNull();
+  });
   it.each([
     ["abc", true],
     ["different-commit", false],

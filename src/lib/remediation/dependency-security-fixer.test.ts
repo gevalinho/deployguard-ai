@@ -31,8 +31,11 @@ afterEach(async () => {
   reconcile.mockReset();
 });
 async function repository() {
+  // The production cache policy forbids /tmp. A test checkout under /tmp
+  // therefore needs an isolated writable base outside /tmp (for example /dev/shm).
+  const cacheBase = process.env.DEPLOYGUARD_TEST_CACHE_BASE ?? process.cwd();
   const cacheRoot = await mkdtemp(
-    join(process.cwd(), ".deployguard-cache-test-"),
+    join(cacheBase, ".deployguard-cache-test-"),
   );
   cacheRoots.push(cacheRoot);
   process.env.DEPLOYGUARD_REMEDIATION_CACHE_ROOT = cacheRoot;

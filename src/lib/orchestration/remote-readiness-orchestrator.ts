@@ -3,6 +3,7 @@ import {
   type ArchitectureAnalysis,
 } from "@/lib/agents/architect-agent";
 import { runDeploymentAgent } from "@/lib/agents/deployment-agent";
+import { createDatabaseEvidenceCheck } from "@/lib/agents/database-evidence-check";
 import { runEnvironmentAgent } from "@/lib/agents/environment-agent";
 import {
   runRemediationAgent,
@@ -48,6 +49,13 @@ import type { PublicProductionReadinessReport } from "@/lib/reporting/types";
 
 import { scanRepository } from "@/lib/scanner/repository-scanner";
 import { calculateReadinessScore } from "@/lib/scoring/readiness-score";
+import { AssessmentInterruptedError } from "@/lib/orchestration/assessment-interruption";
+import { ASSESSMENT_BUDGET_MS, assessmentDelay, currentAssessmentExecution, runAssessmentExecution,
+  runAssessmentStage, type AssessmentStage, AssessmentDeadlineError } from "@/lib/orchestration/assessment-execution";
+import { FrozenArtifactContainerStateError, holdArtifacts, retainUnknownArtifact } from "@/lib/remediation/frozen-artifact-ownership";
+import { SandboxContainerStateUnknownError } from "@/lib/sandbox/docker-sandbox";
+import { CommandTerminationUnconfirmedError } from "@/lib/execution/command-runner";
+import { createPreparationOwnershipRecord } from "@/lib/orchestration/preparation-ownership";
 
 import { prepareSandboxWorkspace } from "@/lib/sandbox/workspace-preparation";
 
@@ -240,6 +248,8 @@ export async function runRemoteReadinessAssessment(
   repositoryUrl: string,
   options: RemoteReadinessAssessmentOptions = {}
 ): Promise<RemoteReadinessAssessment> {
+  if (!currentAssessmentExecution())
+    return runAssessmentExecution(() => runRemoteReadinessAssessment(repositoryUrl, options));
   const {
     environment: repositoryEnvironment = {},
     onProgress,
@@ -268,8 +278,16 @@ export async function runRemoteReadinessAssessment(
   ): Promise<T> => {
     const startedAt = Date.now();
 
+    const stageBudget: Record<string, AssessmentStage> = {
+      "Repository Ingestion": "repository", "Repository Scan": "scan",
+      "Environment Check": "scan", "Deployment Check": "scan",
+      "Sandbox Preparation": "preparation", TypeScript: "types", Lint: "lint",
+      Tests: "test", "Production Build": "build", "Dependency Security": "security",
+      "External Research": "optional", "Nemotron Analysis": "optional",
+      "Nemotron Remediation": "optional", "Readiness Report": "report",
+    };
     try {
-      return await operation();
+      return stageBudget[stage] ? await runAssessmentStage(stageBudget[stage], operation) : await operation();
     } finally {
       const durationMs =
         Date.now() - startedAt;
@@ -287,6 +305,12 @@ export async function runRemoteReadinessAssessment(
     }
   };
 
+  const requireSandboxInfrastructure = (check: CheckResult, stage: "types" | "lint" | "test" | "build" | "security") => {
+    if (check.infrastructureFailure === "docker_unavailable")
+      throw new AssessmentInterruptedError({ stage, service: "Docker sandbox",
+        reason: "sandbox_infrastructure_unavailable", retryable: true });
+  };
+
   try {
     const repository =
       parseGitHubRepositoryUrl(repositoryUrl);
@@ -302,30 +326,34 @@ export async function runRemoteReadinessAssessment(
       "Preparing repository..."
     );
 
-    const ingested = await measureStage(
-      "Repository Ingestion",
-      () =>
-        ingestGitHubRepository(
-          repository,
-          (message) =>
-            emitProgress(
-              "repository",
-              "Repository",
-              "running",
-              message
-            ),
-          options.readTransportFactory
-        )
-    );
-
-    await emitProgress(
-      "repository",
-      "Repository",
-      "passed",
-      "Repository prepared successfully."
-    );
+    let ingested: Awaited<ReturnType<typeof ingestGitHubRepository>>;
+    let retainIngestedWorkspace = false;
+    let trackedPreparation: Promise<PreparationOutcome> | undefined;
+    let preparationOwnership: ReturnType<typeof createPreparationOwnershipRecord> | undefined;
+    try {
+      ingested = await measureStage(
+        "Repository Ingestion",
+        () => ingestGitHubRepository(repository,
+          (message) => emitProgress("repository", "Repository", "running", message),
+          options.readTransportFactory)
+      );
+    } catch (error) {
+      const diagnostic = error instanceof Error ? error.message : "";
+      if (/ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|ECONNRESET|ECONNREFUSED|Could not resolve host|Failed to connect|Connection timed out|Command timed out/i.test(diagnostic)) {
+        await emitProgress("repository", "Repository", "interrupted",
+          "GitHub could not be reached for repository ingestion.");
+        throw new AssessmentInterruptedError({
+          stage: "repository", service: "GitHub", reason: "github_unavailable",
+          retryable: true,
+        });
+      }
+      throw error;
+    }
 
     try {
+      await emitProgress(
+        "repository", "Repository", "passed", "Repository prepared successfully."
+      );
       /*
        * Repository scan
        */
@@ -360,10 +388,8 @@ export async function runRemoteReadinessAssessment(
        * The planner decides what preparation is required.
        * The workspace executor performs those requirements.
        */
-      const preparationPlan =
-        createPreparationPlan(
-          scan.facts
-        );
+      const preparationPlan = await runAssessmentStage("scan", async () =>
+        createPreparationPlan(scan.facts));
 
       console.log(
         "[DeployGuard Preparation Plan]",
@@ -464,14 +490,19 @@ export async function runRemoteReadinessAssessment(
        * Sandbox preparation branch.
        */
 
+      preparationOwnership = createPreparationOwnershipRecord(ingested.repositoryPath);
       const preparationPromise: Promise<PreparationOutcome> =
         measureStage(
           "Sandbox Preparation",
-          () =>
-            prepareSandboxWorkspace(
-              ingested.repositoryPath,
-              preparationPlan
-            )
+          async () => {
+            let preparation = await prepareSandboxWorkspace(ingested.repositoryPath, preparationPlan);
+            if (preparation.status !== "passed" &&
+                (preparation.failureKind === "network" || preparation.failureKind === "timeout")) {
+              await assessmentDelay(500);
+              preparation = await prepareSandboxWorkspace(ingested.repositoryPath, preparationPlan);
+            }
+            return preparation;
+          }
         )
           .then(
             async (
@@ -507,19 +538,26 @@ export async function runRemoteReadinessAssessment(
                 diagnostic
               );
 
-              await emitProgress(
-                "preparation",
-                "Sandbox Preparation",
-                "error",
-                "Sandbox preparation could not be completed."
-              );
+              try {
+                await emitProgress(
+                  "preparation", "Sandbox Preparation", "error",
+                  "Sandbox preparation could not be completed."
+                );
+              } catch {
+                // Preserve the original Docker ownership error even if the
+                // progress transport has already closed.
+              }
 
               return {
                 status: "error",
                 error,
               };
             }
-          );
+          )
+          // Progress delivery must not leave a rejected preparation task
+          // unobserved when another concurrent check exits first.
+          .catch((error: unknown): PreparationOutcome => ({ status: "error", error }));
+      trackedPreparation = preparationPromise;
 
       /*
        * Nemotron architecture analysis depends on
@@ -584,6 +622,7 @@ export async function runRemoteReadinessAssessment(
         );
 
       checks.push(deployment);
+      checks.push(await runAssessmentStage("scan", async () => createDatabaseEvidenceCheck(scan)));
 
       /*
        * Resolve sandbox preparation.
@@ -596,6 +635,12 @@ export async function runRemoteReadinessAssessment(
         preparationOutcome.status ===
         "error"
       ) {
+        if (preparationOutcome.error instanceof SandboxContainerStateUnknownError ||
+            preparationOutcome.error instanceof FrozenArtifactContainerStateError ||
+            preparationOutcome.error instanceof AssessmentDeadlineError ||
+            preparationOutcome.error instanceof CommandTerminationUnconfirmedError) {
+          throw preparationOutcome.error;
+        }
         const message =
           preparationOutcome.error instanceof
           Error
@@ -610,6 +655,25 @@ export async function runRemoteReadinessAssessment(
 
       const preparation =
         preparationOutcome.preparation;
+
+      if (preparation.failureKind === "infrastructure")
+        throw new AssessmentInterruptedError({ stage: "preparation", service: "Docker sandbox",
+          reason: "sandbox_infrastructure_unavailable", retryable: true });
+
+      if (preparation.status !== "passed" &&
+          (preparation.failureKind === "network" || preparation.failureKind === "timeout")) {
+        await emitProgress("preparation", "Sandbox Preparation", "interrupted",
+          preparation.failureKind === "timeout"
+            ? "Dependency installation timed out after two preparation attempts."
+            : "The package registry was unavailable after two preparation attempts.");
+        throw new AssessmentInterruptedError({
+          stage: "preparation",
+          service: preparation.failureKind === "timeout" ? "dependency installation" : "package registry",
+          reason: preparation.failureKind === "timeout"
+            ? "dependency_preparation_timeout" : "dependency_registry_unavailable",
+          retryable: true,
+        });
+      }
 
       /*
        * Repository-controlled deterministic checks.
@@ -642,6 +706,7 @@ export async function runRemoteReadinessAssessment(
           );
 
         checks.push(typecheck);
+        requireSandboxInfrastructure(typecheck, "types");
 
         await emitProgress(
           "types",
@@ -673,6 +738,7 @@ export async function runRemoteReadinessAssessment(
           );
 
         checks.push(lint);
+        requireSandboxInfrastructure(lint, "lint");
 
         await emitProgress(
           "lint",
@@ -702,6 +768,7 @@ export async function runRemoteReadinessAssessment(
           );
 
         checks.push(tests);
+        requireSandboxInfrastructure(tests, "test");
 
         await emitProgress(
           "test",
@@ -736,6 +803,26 @@ export async function runRemoteReadinessAssessment(
           );
 
         checks.push(build);
+        requireSandboxInfrastructure(build, "build");
+
+        if (build.transientFailure === "approved_build_asset") {
+          await emitProgress("build", "Production Build", "interrupted",
+            "Approved Google Fonts assets were unavailable after bounded recovery.");
+          throw new AssessmentInterruptedError({
+            stage: "build", service: "Google Fonts",
+            reason: "approved_build_asset_unavailable",
+            retryable: true,
+          });
+        }
+
+        if (build.blockedByExternalNetwork) {
+          await emitProgress("build", "Production Build", "interrupted",
+            "The isolated build could not verify an external network dependency.");
+          throw new AssessmentInterruptedError({
+            stage: "build", service: "external build dependency",
+            reason: "external_build_dependency_unavailable", retryable: false,
+          });
+        }
 
         await emitProgress(
           "build",
@@ -756,15 +843,27 @@ export async function runRemoteReadinessAssessment(
         );
 
         const security =
-          await measureStage(
-            "Dependency Security",
-            () =>
-              runSandboxSecurityAgent(
-                ingested.repositoryPath
-              )
-          );
+          await measureStage("Dependency Security", async () => {
+            let result = await runSandboxSecurityAgent(ingested.repositoryPath);
+            if (result.transientFailure === "audit_service") {
+              await assessmentDelay(500);
+              result = await runSandboxSecurityAgent(ingested.repositoryPath);
+            }
+            return result;
+          });
 
         checks.push(security);
+        requireSandboxInfrastructure(security, "security");
+
+        if (security.transientFailure === "audit_service") {
+          await emitProgress("security", "Dependency Security", "interrupted",
+            "The dependency audit service was unavailable after two attempts.");
+          throw new AssessmentInterruptedError({
+            stage: "security", service: "dependency audit service",
+            reason: "audit_service_unavailable",
+            retryable: true,
+          });
+        }
 
         await emitProgress(
           "security",
@@ -1156,13 +1255,79 @@ export async function runRemoteReadinessAssessment(
         report: publicReport,
         verification,
       };
+    } catch (error) {
+      if (trackedPreparation) {
+        const preparation = trackedPreparation;
+        const settled = await Promise.race([
+          preparation.then((outcome) => ({ settled: true as const, outcome })),
+          new Promise<{ settled: false }>((resolve) => {
+            const timer = setTimeout(() => resolve({ settled: false }), ASSESSMENT_BUDGET_MS.cleanup);
+            void preparation.finally(() => clearTimeout(timer));
+          }),
+        ]);
+        if (!settled.settled) {
+          retainIngestedWorkspace = true;
+          holdArtifacts([ingested.repositoryPath]);
+          console.error("[DeployGuard Assessment] Preparation did not settle; workspace retained.",
+            { repositoryPath: ingested.repositoryPath,
+              ownershipDirectory: preparationOwnership?.directory });
+          throw new AssessmentInterruptedError({ stage: "execution", service: "assessment service",
+            reason: "assessment_cleanup_unconfirmed", retryable: false });
+        }
+        if (settled.outcome.status === "error" &&
+            (settled.outcome.error instanceof FrozenArtifactContainerStateError ||
+              settled.outcome.error instanceof SandboxContainerStateUnknownError ||
+              settled.outcome.error instanceof CommandTerminationUnconfirmedError))
+          error = settled.outcome.error;
+      }
+      if (error instanceof CommandTerminationUnconfirmedError) {
+        retainIngestedWorkspace = true;
+        holdArtifacts([ingested.repositoryPath]);
+        console.error("[DeployGuard Assessment] Child process termination unconfirmed; workspace retained.",
+          { repositoryPath: ingested.repositoryPath, pid: error.pid,
+            ownershipDirectory: preparationOwnership?.directory });
+        throw new AssessmentInterruptedError({ stage: "execution", service: "assessment service",
+          reason: "assessment_cleanup_unconfirmed", retryable: false });
+      }
+      if (error instanceof AssessmentDeadlineError) {
+        throw new AssessmentInterruptedError({
+          stage: error.stage === "overall" || error.stage === "optional" ? "execution" : error.stage,
+          service: "assessment service", reason: error.reason, retryable: true,
+        });
+      }
+      if (error instanceof FrozenArtifactContainerStateError ||
+          error instanceof SandboxContainerStateUnknownError) {
+        retainIngestedWorkspace = true;
+        const owned = error instanceof FrozenArtifactContainerStateError ? error : (() => {
+          const paths = error.mountedPaths.length ? error.mountedPaths : [ingested.repositoryPath];
+          const release = holdArtifacts(paths);
+          return new FrozenArtifactContainerStateError(error, paths, ingested.repositoryPath, release);
+        })();
+        const recoveryId = retainUnknownArtifact(owned, () => {
+          ingested.cleanup();
+          preparationOwnership?.discard();
+        });
+        console.error("[DeployGuard Assessment] Docker cleanup unconfirmed; mounts retained.",
+          { recoveryId, containerId: owned.containerId ?? "unavailable" });
+        throw new AssessmentInterruptedError({ stage: "execution", service: "Docker sandbox",
+          reason: "sandbox_cleanup_unconfirmed", retryable: false });
+      }
+      throw error;
     } finally {
       /*
        * Agents always operate against the
        * disposable ingestion workspace.
        */
 
-      ingested.cleanup();
+      if (!retainIngestedWorkspace) {
+        try { ingested.cleanup(); preparationOwnership?.discard(); }
+        catch (cleanupError) {
+          console.error("[DeployGuard Assessment] Workspace cleanup unconfirmed.",
+            { repositoryPath: ingested.repositoryPath, error: cleanupError });
+          throw new AssessmentInterruptedError({ stage: "execution", service: "assessment service",
+            reason: "assessment_cleanup_unconfirmed", retryable: false });
+        }
+      }
     }
   } finally {
     const totalDurationMs =

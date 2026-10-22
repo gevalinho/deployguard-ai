@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseAiJson } from "./response-validation";
 import { validateArchitectureAnalysis } from "./architecture-validation";
 import { runAiWithDeadline } from "./ai-deadline";
+import { createAssessmentExecutionContext, runAssessmentStage } from
+  "@/lib/orchestration/assessment-execution";
 
 afterEach(() => vi.useRealTimers());
 
@@ -17,6 +19,21 @@ describe("bounded AI and strict JSON", () => {
     await vi.advanceTimersByTimeAsync(100);
     await assertion;
     expect(signal?.aborted).toBe(true);
+  });
+
+  it("settles promptly when an assessment is cancelled during optional AI", async () => {
+    const context = createAssessmentExecutionContext();
+    let providerSignal: AbortSignal | undefined;
+    const pending = context.run(() => runAssessmentStage("optional", () =>
+      runAiWithDeadline(60_000, async (signal) => {
+        providerSignal = signal;
+        return new Promise<never>(() => {});
+      })));
+    const assertion = expect(pending).rejects.toMatchObject({ name: "AssessmentCancelledError" });
+    context.cancel("user_requested");
+    await assertion;
+    expect(providerSignal?.aborted).toBe(true);
+    context.dispose();
   });
 
   it("propagates provider and network errors without retries", async () => {

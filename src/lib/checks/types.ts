@@ -56,11 +56,19 @@ export interface CheckConfigurationRequirement {
 }
 
 export interface CheckResult {
+  /** Trusted internal classification; omitted from the public check allowlist. */
+  transientFailure?: "audit_service" | "approved_build_asset";
+  infrastructureFailure?: "docker_unavailable";
+  blockedByExternalNetwork?: boolean;
+  /** Set only when a trusted preparation stage attributes an error to repository input. */
+  failureOrigin?: "repository";
   id: string;
   category: CheckCategory;
   name: string;
   status: CheckStatus;
   skipReason?: SkipReason;
+  /** Trusted check policy: absence of this specific configuration disqualifies readiness. */
+  requiredForReadiness?: boolean;
 
   command?: string;
   exitCode?: number | null;

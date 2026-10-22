@@ -17,7 +17,7 @@ const CATEGORY_LABELS: Record<
   test: "Tests",
   security: "Security",
   database: "Database",
-  deployment: "Deployment",
+  deployment: "Deployment Configuration",
   environment: "Environment",
 };
 

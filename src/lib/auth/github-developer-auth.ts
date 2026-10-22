@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { createInstallationAccessToken, GitHubRepositoryInstallationNotFoundError } from "@/lib/remediation/github-app-auth";
 import { githubRemoteMatches } from "@/lib/remediation/github-app-git-transport";
 import { newNonce } from "@/lib/auth/developer-session";
+import { currentAssessmentExecution } from "@/lib/orchestration/assessment-execution";
 
 export interface OAuthState { state: string; verifier: string; expiresAt: number }
 function config() {
@@ -113,6 +114,7 @@ export async function authorizeDeveloperRepository(
   if (access.repositoryIdentity !== repositoryIdentity || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false;
   const response = await request(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/collaborators/${encodeURIComponent(developer.login)}/permission`, {
     headers: { Authorization: `Bearer ${access.token}`, Accept: "application/vnd.github+json" }, cache: "no-store",
+    signal: currentAssessmentExecution()?.signal,
   });
   if (!response.ok) return false;
   const result = await response.json() as { permission?: unknown; user?: { id?: unknown } };

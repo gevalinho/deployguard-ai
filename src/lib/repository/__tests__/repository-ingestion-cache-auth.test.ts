@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const { runCommand } = vi.hoisted(() => ({ runCommand: vi.fn() }));
-vi.mock("@/lib/execution/command-runner", () => ({ runCommand }));
+vi.mock("@/lib/execution/command-runner", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/execution/command-runner")>(), runCommand,
+}));
 
 const originalCwd = process.cwd();
 let root: string | undefined;
@@ -17,6 +19,40 @@ afterEach(() => {
 });
 
 describe("authenticated cache revalidation", () => {
+  it("retains ingestion workspace when a child process cannot confirm exit", async () => {
+    root = mkdtempSync(join(tmpdir(), "dg-unconfirmed-child-"));
+    process.chdir(root);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { CommandTerminationUnconfirmedError } = await import("@/lib/execution/command-runner");
+    const { ingestGitHubRepository } = await import("@/lib/repository/repository-ingestion");
+    runCommand.mockRejectedValue(new CommandTerminationUnconfirmedError(43210));
+    const repo = { owner: "owner", name: "repo", fullName: "owner/repo",
+      url: "https://github.com/owner/repo", cloneUrl: "https://github.com/owner/repo.git" };
+    await expect(ingestGitHubRepository(repo)).rejects.toMatchObject({ outcome: {
+      reason: "assessment_cleanup_unconfirmed", retryable: false } });
+    const workspaces = join(root, ".deployguard", "workspaces");
+    expect(readdirSync(workspaces)).toHaveLength(1);
+    const record = log.mock.calls.find(([message]) =>
+      message === "[Repository Ingestion] Child process termination unconfirmed; workspace retained.");
+    const directory = (record?.[1] as { ownershipDirectory?: string } | undefined)?.ownershipDirectory;
+    expect(directory).toEqual(expect.any(String));
+    rmSync(directory!, { recursive: true, force: true });
+    log.mockRestore();
+  });
+  it("removes the temporary workspace if GitHub token acquisition fails", async () => {
+    root = mkdtempSync(join(tmpdir(), "dg-token-failure-"));
+    process.chdir(root);
+    const { ingestGitHubRepository } = await import("@/lib/repository/repository-ingestion");
+    const repo = { owner: "owner", name: "repo", fullName: "owner/repo",
+      url: "https://github.com/owner/repo", cloneUrl: "https://github.com/owner/repo.git" };
+    const factory = vi.fn().mockRejectedValue(new Error("GitHub token unavailable"));
+    await expect(ingestGitHubRepository(repo, undefined, factory)).rejects.toThrow("GitHub token unavailable");
+    expect(factory).toHaveBeenCalledOnce();
+    const workspaces = join(root, ".deployguard", "workspaces");
+    expect(existsSync(workspaces)).toBe(true);
+    expect(readdirSync(workspaces)).toEqual([]);
+  });
+
   for (const verified of [true, false]) {
     it(`${verified ? "accepts" : "rejects"} remote identity using only Git read credentials`, async () => {
       root = mkdtempSync(join(tmpdir(), "dg-cache-auth-"));

@@ -341,6 +341,9 @@ export async function runSandboxBuildAgent(
       name: "Production Build",
       status: "skipped",
       skipReason: "not_configured",
+      requiredForReadiness: facts.some((fact) =>
+        (fact.key === "framework" && fact.value === "Next.js") ||
+        (fact.key === "tooling" && fact.value === "Vite")),
       summary:
         "No build script is configured.",
     };
@@ -460,6 +463,7 @@ export async function runSandboxBuildAgent(
     return {
       id: "build", category: "build", name: "Production Build", status: "blocked",
       command: buildCommand.display, summary: googleFonts.reason,
+      ...(googleFonts.transientFailure ? { transientFailure: googleFonts.transientFailure } : {}),
     };
   }
 
@@ -467,7 +471,8 @@ export async function runSandboxBuildAgent(
   let containerStateUnknown = false;
   try {
     const mountedPaths = googleFonts.status === "ready"
-      ? [repositoryPath, googleFonts.mount.source] : [repositoryPath];
+      ? [repositoryPath, ...corepackConfig.mounts.map((mount) => mount.source), googleFonts.mount.source]
+      : [repositoryPath, ...corepackConfig.mounts.map((mount) => mount.source)];
     result = await runWithArtifactOwnership(mountedPaths, repositoryPath,
       () => runDockerSandboxCommand({
       repositoryPath,
@@ -512,6 +517,7 @@ export async function runSandboxBuildAgent(
 
   if (result.status === "infrastructure_error") {
     return {
+      infrastructureFailure: "docker_unavailable",
       id: "build",
       category: "build",
       name: "Production Build",
@@ -582,6 +588,8 @@ export async function runSandboxBuildAgent(
     category: "build",
     name: "Production Build",
     status,
+    ...(status === "blocked" && networkDependencyFailure
+      ? { blockedByExternalNetwork: true } : {}),
 
     command: buildCommand.display,
     exitCode: result.exitCode,

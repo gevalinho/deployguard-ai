@@ -1,9 +1,9 @@
 import {
   randomUUID,
 } from "node:crypto";
-import { constants, closeSync, fstatSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
+import { constants, closeSync, fstatSync, lstatSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 import type {
   SandboxLimits,
@@ -16,6 +16,9 @@ import {
 import {
   runCommand,
 } from "@/lib/execution/command-runner";
+import { assertAssessmentTime, currentAssessmentExecution, remainingAssessmentMs } from "@/lib/orchestration/assessment-execution";
+
+const DOCKER_CLIENT_REAP_RESERVE_MS = 90_000;
 
 export interface DockerSandboxMount {
   source: string;
@@ -26,13 +29,52 @@ export interface DockerSandboxMount {
 
 export class SandboxContainerStateUnknownError extends Error {
   constructor(message: string, readonly containerName?: string,
-    readonly containerId?: string, readonly containerIdFile?: string) {
+    readonly containerId?: string, readonly containerIdFile?: string,
+    readonly mountedPaths: readonly string[] = []) {
     super(message);
     this.name = "SandboxContainerStateUnknownError";
   }
 }
 
 const FULL_CONTAINER_ID = /^[0-9a-f]{64}$/;
+const IDENTITY_DIRECTORY = /^deployguard-container-id-[A-Za-z0-9]+$/;
+const CONTAINER_NAME = /^deployguard-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
+
+export interface RetainedSandboxResourceRecord {
+  version: 1;
+  containerName: string;
+  containerIdFile: string;
+  mountedPaths: string[];
+}
+
+/** Read recovery metadata without treating it as permission to delete any path. */
+export function readRetainedSandboxResourceRecord(directory: string): RetainedSandboxResourceRecord {
+  const resolved = resolve(directory);
+  if (dirname(resolved) !== resolve(tmpdir()) || !IDENTITY_DIRECTORY.test(basename(resolved)))
+    throw new Error("Invalid Docker identity directory.");
+  const directoryStat = lstatSync(resolved);
+  if (!directoryStat.isDirectory() || directoryStat.uid !== process.getuid?.() ||
+      (directoryStat.mode & 0o077) !== 0)
+    throw new Error("Docker identity directory ownership is invalid.");
+  const fd = openSync(join(resolved, "resources.json"),
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size < 1 || stat.size > 16_384 ||
+        stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0)
+      throw new Error("Docker resource record ownership is invalid.");
+    const record: unknown = JSON.parse(readFileSync(fd, "utf8"));
+    if (!record || typeof record !== "object") throw new Error("Invalid Docker resource record.");
+    const value = record as Partial<RetainedSandboxResourceRecord>;
+    if (value.version !== 1 || !value.containerName || !CONTAINER_NAME.test(value.containerName) ||
+        value.containerIdFile !== join(resolved, "cid") || !Array.isArray(value.mountedPaths) ||
+        value.mountedPaths.length === 0 || value.mountedPaths.length > 32 ||
+        value.mountedPaths.some((path) => typeof path !== "string" || !isAbsolute(path) || resolve(path) !== path))
+      throw new Error("Invalid Docker resource record.");
+    return value as RetainedSandboxResourceRecord;
+  } finally { closeSync(fd); }
+}
+
 function readContainerId(path: string): string | undefined {
   try {
     const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -49,11 +91,28 @@ function readContainerId(path: string): string | undefined {
 export async function reconcileSandboxContainer(
   identity: SandboxContainerStateUnknownError, cwd: string,
 ): Promise<void> {
-  const containerId = identity.containerId ??
-    (identity.containerIdFile ? readContainerId(identity.containerIdFile) : undefined);
+  if (identity.containerIdFile) {
+    let record: RetainedSandboxResourceRecord;
+    try { record = readRetainedSandboxResourceRecord(dirname(identity.containerIdFile)); }
+    catch {
+      throw new SandboxContainerStateUnknownError("Docker resource record is missing or invalid.",
+        identity.containerName, identity.containerId, identity.containerIdFile, identity.mountedPaths);
+    }
+    if (record.containerIdFile !== identity.containerIdFile ||
+        record.containerName !== identity.containerName ||
+        JSON.stringify(record.mountedPaths) !== JSON.stringify(identity.mountedPaths))
+      throw new SandboxContainerStateUnknownError("Docker resource record conflicts with the captured identity.",
+        identity.containerName, identity.containerId, identity.containerIdFile, identity.mountedPaths);
+  }
+  const fileId = identity.containerIdFile ? readContainerId(identity.containerIdFile) : undefined;
+  // A captured ID cannot override a missing, malformed, or conflicting CID file.
+  if (identity.containerIdFile && (!fileId || (identity.containerId && identity.containerId !== fileId)))
+    throw new SandboxContainerStateUnknownError("Original Docker container identity is inconsistent.",
+      identity.containerName, identity.containerId, identity.containerIdFile, identity.mountedPaths);
+  const containerId = fileId ?? identity.containerId;
   if (!containerId || !FULL_CONTAINER_ID.test(containerId))
     throw new SandboxContainerStateUnknownError("Original Docker container ID is unavailable.",
-      identity.containerName, undefined, identity.containerIdFile);
+      identity.containerName, undefined, identity.containerIdFile, identity.mountedPaths);
   let result: Awaited<ReturnType<typeof runCommand>>;
   try {
     result = await runCommand("docker", ["inspect", "--format", "{{.State.Running}}", containerId],
@@ -61,18 +120,27 @@ export async function reconcileSandboxContainer(
   } catch {
     throw new SandboxContainerStateUnknownError(
       `Docker container ${containerId} could not be inspected.`, identity.containerName,
-      containerId, identity.containerIdFile);
+      containerId, identity.containerIdFile, identity.mountedPaths);
   }
   const absent = result.exitCode !== 0 && /no such (object|container)/i.test(result.stderr);
   if (result.timedOut || (!absent && (result.exitCode !== 0 || result.stdout.trim() !== "false")))
     throw new SandboxContainerStateUnknownError(
       `Docker container ${containerId} is not confirmed stopped.`, identity.containerName,
-      containerId, identity.containerIdFile);
+      containerId, identity.containerIdFile, identity.mountedPaths);
 }
 
 export function discardSandboxContainerIdentity(identity: SandboxContainerStateUnknownError): void {
-  if (identity.containerIdFile) rmSync(dirname(identity.containerIdFile),
-    { recursive: true, force: true });
+  if (identity.containerIdFile) {
+    const record = readRetainedSandboxResourceRecord(dirname(identity.containerIdFile));
+    const fileId = readContainerId(identity.containerIdFile);
+    if (record.containerIdFile !== identity.containerIdFile ||
+        record.containerName !== identity.containerName ||
+        JSON.stringify(record.mountedPaths) !== JSON.stringify(identity.mountedPaths) ||
+        !fileId || (identity.containerId && identity.containerId !== fileId))
+      throw new SandboxContainerStateUnknownError("Docker identity cannot be discarded without a matching full ID and resource record.",
+        identity.containerName, identity.containerId, identity.containerIdFile, identity.mountedPaths);
+    rmSync(dirname(identity.containerIdFile), { recursive: true, force: true });
+  }
 }
 
 // export interface DockerSandboxCommand {
@@ -116,16 +184,27 @@ export interface DockerSandboxCommandResult {
 export async function runDockerSandboxCommand(
   input: DockerSandboxCommand
 ): Promise<DockerSandboxCommandResult> {
-  const limits =
-    input.limits ??
-    DEFAULT_SANDBOX_LIMITS;
+  const configuredLimits = input.limits ?? DEFAULT_SANDBOX_LIMITS;
+  const limits = { ...configuredLimits,
+    timeoutMs: remainingAssessmentMs(configuredLimits.timeoutMs) };
 
   const containerName =
     `deployguard-${randomUUID()}`;
   const identityDirectory = mkdtempSync(join(tmpdir(), "deployguard-container-id-"));
   const containerIdFile = join(identityDirectory, "cid");
+  const mountedPaths = [...new Set([input.repositoryPath, ...(input.mounts ?? []).map((mount) => mount.source)])];
+  // This private record remains available to an operator when Docker state is unknown.
+  // It is never used as authority to delete a mount or target a container by name.
+  try {
+    writeFileSync(join(identityDirectory, "resources.json"), JSON.stringify({
+      version: 1, containerName, containerIdFile, mountedPaths,
+    }), { mode: 0o600, flag: "wx" });
+  } catch (error) {
+    rmSync(identityDirectory, { recursive: true, force: true });
+    throw error;
+  }
   const identity = (message: string) => new SandboxContainerStateUnknownError(
-    message, containerName, readContainerId(containerIdFile), containerIdFile);
+    message, containerName, readContainerId(containerIdFile), containerIdFile, mountedPaths);
   const discardIdentity = () => rmSync(identityDirectory, { recursive: true, force: true });
 
 const environmentArgs =
@@ -222,6 +301,10 @@ const userArgs =
 
   const startedAt = Date.now();
 
+  // Cancellation before launch creates no Docker owner; release the unused
+  // identity record. Once launched, reconciliation controls every bind source.
+  try { assertAssessmentTime(); } catch (error) { discardIdentity(); throw error; }
+
   const executionPromise =
     runCommand(
       "docker",
@@ -232,10 +315,15 @@ const userArgs =
   let timeoutHandle:
     ReturnType<typeof setTimeout> |
     undefined;
+  const assessmentSignal = currentAssessmentExecution()?.signal;
+  let cancelTimeout: (() => void) | undefined;
 
   const timeoutPromise =
     new Promise<"timeout">(
       (resolve) => {
+        cancelTimeout = () => resolve("timeout");
+        if (assessmentSignal?.aborted) cancelTimeout();
+        else assessmentSignal?.addEventListener("abort", cancelTimeout, { once: true });
         timeoutHandle = setTimeout(
           () => {
             resolve("timeout");
@@ -277,6 +365,7 @@ const userArgs =
     };
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);
+    if (cancelTimeout) assessmentSignal?.removeEventListener("abort", cancelTimeout);
   }
 
   if (outcome === "timeout") {
@@ -319,10 +408,22 @@ const userArgs =
     > |
     undefined;
 
+  let reapTimer: ReturnType<typeof setTimeout> | undefined;
   try {
-    terminatedResult = await executionPromise;
+    terminatedResult = await Promise.race([
+      executionPromise,
+      new Promise<never>((_resolve, reject) => {
+        reapTimer = setTimeout(() => reject(new Error("docker_client_reap_timeout")),
+          DOCKER_CLIENT_REAP_RESERVE_MS);
+      }),
+    ]);
   } catch {
-    // Verify container state below even if the Docker client failed.
+    // A client that has not exited can still hold the bind sources. Retain
+    // ownership even if Docker might later report its container stopped.
+    void executionPromise.catch(() => undefined);
+    throw identity(`Docker client did not exit within the cleanup reserve for ${containerName}.`);
+  } finally {
+    if (reapTimer) clearTimeout(reapTimer);
   }
 
   const timeoutIdentity = identity(`Docker container ${containerName} could not be confirmed stopped after timeout. ` +

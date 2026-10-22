@@ -2,6 +2,18 @@ import {
   spawn,
   type ChildProcess,
 } from "node:child_process";
+import { currentAssessmentExecution, remainingAssessmentMs } from "@/lib/orchestration/assessment-execution";
+
+const MAX_CAPTURE_BYTES = 2 * 1024 * 1024;
+const TERMINATION_GRACE_MS = 2_000;
+const TERMINATION_REAP_MS = 5_000;
+
+export class CommandTerminationUnconfirmedError extends Error {
+  constructor(readonly pid: number | undefined) {
+    super("Command termination could not be confirmed after escalation.");
+    this.name = "CommandTerminationUnconfirmedError";
+  }
+}
 
 export interface CommandResult {
   command: string;
@@ -89,6 +101,9 @@ export function runCommand(
   cwd: string,
   options: RunCommandOptions = {}
 ): Promise<CommandResult> {
+  const effectiveTimeoutMs = command === "docker" ? options.timeoutMs ?? Number.POSITIVE_INFINITY :
+    remainingAssessmentMs(options.timeoutMs ?? Number.POSITIVE_INFINITY);
+  const assessmentSignal = command === "docker" ? undefined : currentAssessmentExecution()?.signal;
   return new Promise(
     (resolve, reject) => {
       const startedAt =
@@ -132,14 +147,30 @@ export function runCommand(
 
       let settled = false;
       let timedOut = false;
-
-      let forceKillTimer:
-        NodeJS.Timeout | null =
-        null;
+      let reapTimer: NodeJS.Timeout | null = null;
+      let forceKillTimer: NodeJS.Timeout | null = null;
+      const escalate = () => {
+        terminateProcess(child, "SIGTERM");
+        forceKillTimer = setTimeout(() => {
+          if (settled) return;
+          terminateProcess(child, "SIGKILL");
+          reapTimer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            clearTimers();
+            reject(new CommandTerminationUnconfirmedError(child.pid));
+          }, TERMINATION_REAP_MS);
+        }, TERMINATION_GRACE_MS);
+      };
+      const abortCommand = () => {
+        if (settled || timedOut) return;
+        timedOut = true;
+        escalate();
+      };
 
       const commandTimeout =
-        options.timeoutMs &&
-        options.timeoutMs > 0
+        Number.isFinite(effectiveTimeoutMs) &&
+        effectiveTimeoutMs > 0
           ? setTimeout(() => {
               if (settled) {
                 return;
@@ -148,28 +179,14 @@ export function runCommand(
               timedOut = true;
 
               stderr +=
-                `\nCommand timed out after ${options.timeoutMs}ms.`;
+                `\nCommand timed out after ${effectiveTimeoutMs}ms.`;
 
-              terminateProcess(
-                child,
-                "SIGTERM"
-              );
-
-              forceKillTimer =
-                setTimeout(() => {
-                  if (settled) {
-                    return;
-                  }
-
-                  terminateProcess(
-                    child,
-                    "SIGKILL"
-                  );
-                }, 2_000);
-            }, options.timeoutMs)
+              escalate();
+            }, effectiveTimeoutMs)
           : null;
 
       const clearTimers = () => {
+        assessmentSignal?.removeEventListener("abort", abortCommand);
         if (commandTimeout) {
           clearTimeout(
             commandTimeout
@@ -181,21 +198,22 @@ export function runCommand(
             forceKillTimer
           );
         }
+        if (reapTimer) clearTimeout(reapTimer);
       };
 
       child.stdout?.on(
         "data",
         (chunk) => {
-          stdout +=
-            chunk.toString();
+          if (stdout.length < MAX_CAPTURE_BYTES)
+            stdout += chunk.toString().slice(0, MAX_CAPTURE_BYTES - stdout.length);
         }
       );
 
       child.stderr?.on(
         "data",
         (chunk) => {
-          stderr +=
-            chunk.toString();
+          if (stderr.length < MAX_CAPTURE_BYTES)
+            stderr += chunk.toString().slice(0, MAX_CAPTURE_BYTES - stderr.length);
         }
       );
 
@@ -213,6 +231,9 @@ export function runCommand(
           reject(error);
         }
       );
+
+      if (assessmentSignal?.aborted) abortCommand();
+      else assessmentSignal?.addEventListener("abort", abortCommand, { once: true });
 
       child.on(
         "close",

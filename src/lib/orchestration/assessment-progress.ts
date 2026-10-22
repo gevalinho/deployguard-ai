@@ -6,7 +6,8 @@ export type AssessmentProgressStatus =
   | "blocked"
   | "skipped"
   | "error"
-  | "completed";
+  | "completed"
+  | "interrupted";
 
 export interface AssessmentProgressEvent {
   stage: string;

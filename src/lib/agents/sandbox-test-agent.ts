@@ -442,6 +442,7 @@ export async function runSandboxTestAgent(
 
   if (result.status === "infrastructure_error") {
     return {
+      infrastructureFailure: "docker_unavailable",
       id: "test",
       category: "test",
       name: "Tests",

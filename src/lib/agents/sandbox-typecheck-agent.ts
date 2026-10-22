@@ -160,10 +160,8 @@ export async function runSandboxTypecheckAgent(
       category: "types",
       name: "TypeScript",
       status: "skipped",
-      skipReason:
-        "not_applicable",
       summary:
-        "No tsconfig.json was detected.",
+        "No tsconfig.json was detected; TypeScript applicability is unverified.",
     };
   }
 
@@ -271,6 +269,7 @@ export async function runSandboxTypecheckAgent(
 
   if (result.status === "infrastructure_error") {
     return {
+      infrastructureFailure: "docker_unavailable",
       id: "types",
       category: "types",
       name: "TypeScript",

@@ -32,6 +32,7 @@ import {
 import type {
   PreparationPlan,
 } from "@/lib/sandbox/preparation-planner";
+import { CommandTerminationUnconfirmedError } from "@/lib/execution/command-runner";
 
 export const DEPENDENCY_PREPARATION_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -114,7 +115,7 @@ function detectNetworkFailure(
   const combinedOutput =
     `${stdout}\n${stderr}`;
 
-  return /ECONNRESET|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|network aborted|network connectivity/i.test(
+  return /ECONNRESET|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|ECONNREFUSED|socket hang up|network aborted|network connectivity|(?:HTTP|status|response)\s*[:=]?\s*(?:429|5\d\d)\b|\bE(?:429|5\d\d)\b|ERR_PNPM_FETCH_(?:429|5\d\d)/i.test(
     combinedOutput
   );
 }
@@ -275,7 +276,7 @@ if (
         );
 
         const restored =
-          restoreDependencyCache(
+          await restoreDependencyCache(
             dependencyCacheKey,
             repositoryPath
           );
@@ -312,6 +313,7 @@ if (
         );
       }
     } catch (error) {
+      if (error instanceof CommandTerminationUnconfirmedError) throw error;
       console.warn(
         "[Dependency Cache] Cache lookup failed. Falling back to package installation.",
         error instanceof Error
@@ -563,7 +565,7 @@ const result =
         Date.now();
 
       const saved =
-        saveDependencyCache(
+        await saveDependencyCache(
           dependencyCacheKey,
           repositoryPath
         );
@@ -574,6 +576,7 @@ const result =
           : "[Dependency Cache] No node_modules directory was available to cache."
       );
     } catch (error) {
+      if (error instanceof CommandTerminationUnconfirmedError) throw error;
       console.warn(
         "[Dependency Cache] Cache save failed. Assessment will continue normally.",
         error instanceof Error

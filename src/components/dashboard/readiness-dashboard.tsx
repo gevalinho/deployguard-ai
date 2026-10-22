@@ -11,6 +11,8 @@ import type {
 import { ReadinessBreakdown } from "@/components/dashboard/readiness-breakdown";
 import { parseGitHubRepositoryUrl } from "@/lib/repository/github-repository";
 import { serializeAiContext, serializeFinding, writeShareText } from "./assessment-share";
+import type { AssessmentInterruption } from "@/lib/orchestration/assessment-interruption";
+import { resolveReadinessVerdict, type ReadinessVerdictReason } from "@/lib/scoring/readiness-verdict";
 
 export function repositoryIdentity(value: string): string | null {
   try {
@@ -220,7 +222,7 @@ const PROCESS_STEPS = [
   {
     step: "02",
     title: "Verification",
-    description: "Validate build, types, tests, security and deployment.",
+    description: "Run supported checks and inspect deployment configuration.",
   },
   {
     step: "03",
@@ -230,7 +232,7 @@ const PROCESS_STEPS = [
   {
     step: "04",
     title: "Readiness",
-    description: "Calculate a deterministic score and remediation plan.",
+    description: "Calculate a deterministic verdict, performance score and remediation plan.",
   },
 ] as const;
 
@@ -742,14 +744,89 @@ export function AssessmentPipeline({
 /*                                Score Cards                                 */
 /* -------------------------------------------------------------------------- */
 
+const VERDICT_REASONS: Record<ReadinessVerdictReason, string> = {
+  all_applicable_checks_passed: "All applicable supported checks passed.",
+  confirmed_check_failure: "A verified check failed.",
+  required_check_not_configured: "A mandatory check is not configured.",
+  zero_evaluated_weight: "No weighted check could be evaluated.",
+  required_evidence_missing: "Required check evidence is missing.",
+  required_evidence_blocked: "A required check was blocked.",
+  required_evidence_unsupported: "A required check is unsupported.",
+  required_evidence_error: "A required check ended with an error.",
+  applicability_unknown: "Check applicability could not be established.",
+  legacy_report_missing_verdict: "This older report has no server-calculated verdict.",
+};
+const VERDICT_CATEGORY_LABELS: Record<PublicCheckResult["category"], string> = {
+  build: "Production build", types: "TypeScript", lint: "Lint", test: "Tests",
+  security: "Dependency security", database: "Database", deployment: "Deployment configuration",
+  environment: "Environment",
+};
+
+export function ReadinessVerdictCard({ report }: { report: ReadinessReport }) {
+  const verdict = resolveReadinessVerdict(report);
+  const label = verdict.status === "ready" ? "Ready"
+    : verdict.status === "not_ready" ? "Not Ready" : "Undetermined";
+  const details = verdict.status === "not_ready"
+    ? report.checks.filter((check) => check.status === "failed" ||
+      (check.status === "skipped" && check.skipReason === "not_configured" &&
+        verdict.affectedCategories.includes(check.category)))
+    : verdict.status === "undetermined"
+      ? report.checks.filter((check) => check.status === "blocked" || check.status === "error" ||
+        (check.status === "skipped" && check.skipReason !== "not_applicable"))
+      : [];
+  const reasons = verdict.reasonCodes
+    .filter((code): code is ReadinessVerdictReason => Object.hasOwn(VERDICT_REASONS, code))
+    .map((code) => VERDICT_REASONS[code]);
+
+  return (
+    <section aria-label="Pre-deployment readiness verdict" className="rounded-2xl border border-violet-500/40 bg-violet-500/10 p-6">
+      <p className="text-sm font-medium text-violet-200">Pre-deployment readiness based on verified checks</p>
+      <h2 className="mt-2 text-3xl font-semibold">{label}</h2>
+      {verdict.status === "ready" ? (
+        <p className="mt-3 text-sm leading-6 text-zinc-200">
+          DeployGuard&apos;s applicable supported pre-deployment checks passed. This does not guarantee production behavior, successful deployment, or comprehensive application security.
+        </p>
+      ) : (
+        <>
+          <p className="mt-3 text-sm text-zinc-200">
+            {verdict.status === "not_ready" ? "Confirmed disqualifying findings:" : "Evidence needed to determine readiness:"}
+          </p>
+          <ul className="mt-2 list-inside list-disc space-y-1 text-sm text-zinc-300">
+            {(reasons.length > 0 ? reasons : ["The report does not contain a recognized readiness reason."])
+              .map((reason) => <li key={reason}>{reason}</li>)}
+          </ul>
+          {verdict.affectedCategories.length > 0 && (
+            <p className="mt-3 text-sm text-zinc-300">
+              Affected categories: {verdict.affectedCategories
+                .filter((category) => Object.hasOwn(VERDICT_CATEGORY_LABELS, category))
+                .map((category) => VERDICT_CATEGORY_LABELS[category]).join(", ")}.
+            </p>
+          )}
+          {details.length > 0 && (
+            <ul className="mt-3 space-y-2 text-sm text-zinc-200" aria-label="Relevant check evidence">
+              {details.slice(0, 8).map((check) => (
+                <li key={check.id} className="rounded-lg border border-zinc-700/70 p-3">
+                  <span className="font-medium">{check.name}:</span> {check.summary}
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+      <p className="mt-4 text-xs leading-5 text-zinc-400">
+        Database integration may remain unverified. Deployment configuration detection does not verify a deployment; dependency audits cover declared dependencies, not all application security risks.
+      </p>
+    </section>
+  );
+}
+
 export function ReadinessScoreCard({ readiness }: { readiness: PublicProductionReadinessReport["readiness"] }) {
-  const { score, coverage, evaluatedWeight, applicableWeight } = readiness;
-  const insufficientEvidence = evaluatedWeight < applicableWeight;
+  const { score } = readiness;
   return (
     <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-sm text-zinc-400">Readiness score for evaluated checks</p>
+          <p className="text-sm text-zinc-400">Verified Performance</p>
 
           <p className="mt-2 text-5xl font-semibold">
             {score}
@@ -761,16 +838,6 @@ export function ReadinessScoreCard({ readiness }: { readiness: PublicProductionR
           Deterministic
         </span>
       </div>
-
-      {insufficientEvidence && (
-        <div role="status" className="mt-5 rounded-xl border border-amber-500/50 bg-amber-500/10 p-4 text-amber-100">
-          <p className="text-base font-semibold">Insufficient evidence</p>
-          <p className="mt-1 text-sm font-semibold">Production readiness not established</p>
-          <p className="mt-2 text-sm leading-6">
-            Assessment coverage is {coverage}%. A high score reflects only evaluated checks, not all applicable verification categories.
-          </p>
-        </div>
-      )}
 
       <div className="mt-5 h-2 overflow-hidden rounded-full bg-zinc-800">
         <div
@@ -787,8 +854,8 @@ export function ReadinessScoreCard({ readiness }: { readiness: PublicProductionR
       </p>
 
       <p className="mt-2 text-sm leading-6 text-zinc-500">
-        Calculated from verified build, type, lint, test, security, database,
-        deployment and environment evidence — not from an AI opinion.
+        Calculated from evaluated category check outcomes. The separate verdict
+        decides whether the evidence is sufficient for this assessment scope.
       </p>
     </div>
   );
@@ -799,7 +866,7 @@ function CoverageCard({ coverage }: { coverage: number }) {
     <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-sm text-zinc-400">Assessment Coverage</p>
+          <p className="text-sm text-zinc-400">Evidence Coverage</p>
 
           <p className="mt-2 text-5xl font-semibold">
             {coverage}
@@ -807,9 +874,7 @@ function CoverageCard({ coverage }: { coverage: number }) {
           </p>
         </div>
 
-        <span className="w-fit shrink-0 whitespace-nowrap rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400">
-          Evidence coverage
-        </span>
+        <span className="w-fit shrink-0 whitespace-nowrap rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400">Deterministic</span>
       </div>
 
       <div className="mt-5 h-2 overflow-hidden rounded-full bg-zinc-800">
@@ -979,7 +1044,7 @@ export function VerificationChecks({ checks, onCopyFinding, copyFeedback }: {
                 <StatusBadge check={check} />
               </div>
 
-              <p className="mt-3 text-xs leading-5 text-zinc-400">
+      <p className="mt-3 text-xs leading-5 text-zinc-400">
                 {getCheckStateDescription(check)}
               </p>
 
@@ -1996,6 +2061,7 @@ export function ReadinessDashboard({
   const [showAllResearch, setShowAllResearch] = useState(false);
 
   const [assessment, setAssessment] = useState<AssessmentResult | null>(null);
+  const [interruption, setInterruption] = useState<AssessmentInterruption | null>(null);
 
   const [remediationLoading, setRemediationLoading] = useState(false);
 
@@ -2005,6 +2071,8 @@ export function ReadinessDashboard({
     useState<RemediationResult | null>(null);
 
   const [loading, setLoading] = useState(false);
+  const [cancellationStatus, setCancellationStatus] = useState<"none" | "requesting" |
+    "requested" | "confirmed" | "unconfirmed">("none");
   const [error, setError] = useState<string | null>(null);
   const [sessionExpired, setSessionExpired] = useState(false);
   const signInRequired = !developer || sessionExpired;
@@ -2020,6 +2088,8 @@ export function ReadinessDashboard({
   const mountedRef = useRef(false);
   const generationRef = useRef(0);
   const assessmentControllerRef = useRef<AbortController | null>(null);
+  const activeAssessmentIdRef = useRef<string | null>(null);
+  const cancellationAcceptedRef = useRef(false);
   const scanControllerRef = useRef<AbortController | null>(null);
   const resumeControllerRef = useRef<AbortController | null>(null);
   const [assessedIdentity, setAssessedIdentity] = useState<string | null>(null);
@@ -2064,6 +2134,7 @@ export function ReadinessDashboard({
     invalidateRequests();
     setAssessedIdentity(null);
     setAssessment(null);
+    setInterruption(null);
     setRemoteScan(null);
     setProgressEvents([]);
     setRepositoryEnvironment({});
@@ -2080,10 +2151,13 @@ export function ReadinessDashboard({
     setError(null);
     setCopyFeedback(null);
     setLoading(false);
+    setCancellationStatus("none");
+    activeAssessmentIdRef.current = null;
+    cancellationAcceptedRef.current = false;
     setScanLoading(false);
   }, [invalidateRequests]);
 
-  const currentAssessment = assessment && assessedIdentity &&
+  const currentAssessment = !interruption && assessment && assessedIdentity &&
     assessedIdentity === repositoryIdentity(repositoryUrl) &&
     assessedIdentity === repositoryIdentity(assessment.repository.url) &&
     assessedIdentity === assessment.repository.fullName.toLowerCase()
@@ -2237,11 +2311,20 @@ export function ReadinessDashboard({
       return;
     }
     const generation = invalidateRequests();
+    const assessmentId = crypto.randomUUID();
+    activeAssessmentIdRef.current = assessmentId;
+    cancellationAcceptedRef.current = false;
+    setCancellationStatus("none");
     const controller = new AbortController();
     assessmentControllerRef.current = controller;
     const current = () => mountedRef.current && isCurrentRequest(generation, generationRef.current,
       requestedIdentity, identityRef.current, controller.signal.aborted);
-    let receivedResult = false;
+    let terminalOutcome:
+      | { kind: "result"; assessment: AssessmentResult }
+      | { kind: "interrupted"; interruption: AssessmentInterruption }
+      | { kind: "cancelled" }
+      | { kind: "assessment-error"; error: string }
+      | null = null;
     let requestStarted = false;
     let serverError = false;
     let interruptedStream = false;
@@ -2252,6 +2335,7 @@ export function ReadinessDashboard({
     setAssessmentMayStillRun(false);
     setRepositoryAuthorizationRequired(false);
     setAssessment(null);
+    setInterruption(null);
     setAssessedIdentity(null);
     setProgressEvents([]);
     setShowAllResearch(false);
@@ -2269,6 +2353,7 @@ export function ReadinessDashboard({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          assessmentId,
           repositoryUrl: requestedUrl,
 
           ...(Object.keys(repositoryEnvironment).length > 0
@@ -2313,8 +2398,6 @@ export function ReadinessDashboard({
       const decoder = new TextDecoder();
 
       let buffer = "";
-      let assessmentError: string | null = null;
-
       while (true) {
         const { value, done } = await reader.read();
         if (!current()) { await reader.cancel().catch(() => {}); return; }
@@ -2334,10 +2417,18 @@ export function ReadinessDashboard({
           const parsed = parseSseBlock(block);
 
           if (!parsed) {
+            if (/^event:\s*(?:result|interrupted|cancelled|assessment-error)\s*$/m.test(block)) {
+              protocolError = true;
+              throw new Error("Malformed final assessment event.");
+            }
             continue;
           }
 
           if (parsed.event === "progress") {
+            if (terminalOutcome) {
+              protocolError = true;
+              throw new Error("Assessment stream contained events after its final outcome.");
+            }
             const progress = parsed.data as AssessmentProgressEvent;
 
             setProgressEvents((current) => [...current, progress]);
@@ -2346,58 +2437,118 @@ export function ReadinessDashboard({
           }
 
           if (parsed.event === "result") {
-            const payload = parsed.data as {
-              ok: boolean;
-              assessment: AssessmentResult;
-            };
-
-            if (payload.ok && payload.assessment) {
-              if (repositoryIdentity(payload.assessment.repository.url) !== requestedIdentity) {
-                protocolError = true;
-                throw new Error("Assessment result did not match the requested repository.");
-              }
-              receivedResult = true;
-              setAssessment(payload.assessment);
-              setAssessedIdentity(requestedIdentity);
+            const payload = parsed.data as { ok?: boolean; assessment?: AssessmentResult } | null;
+            if (terminalOutcome || payload?.ok !== true || !payload.assessment?.repository ||
+                repositoryIdentity(payload.assessment.repository.url) !== requestedIdentity ||
+                !Number.isFinite(payload.assessment.report?.readiness?.score) ||
+                !Number.isFinite(payload.assessment.report?.readiness?.coverage) ||
+                !Array.isArray(payload.assessment.report?.readiness?.breakdown) ||
+                !Array.isArray(payload.assessment.report?.checks)) {
+              protocolError = true;
+              throw new Error("Invalid or conflicting assessment result.");
             }
+            terminalOutcome = { kind: "result", assessment: payload.assessment };
 
             continue;
           }
 
-          if (parsed.event === "assessment-error") {
-            const payload = parsed.data as {
-              ok: boolean;
-              error?: string;
-            };
+          if (parsed.event === "cancelled") {
+            const payload = parsed.data as { ok?: boolean; status?: string } | null;
+            if (terminalOutcome || payload?.ok !== false || payload.status !== "cancelled") {
+              protocolError = true;
+              throw new Error("Invalid or conflicting cancellation response.");
+            }
+            terminalOutcome = { kind: "cancelled" };
+            continue;
+          }
 
-            assessmentError = payload.error ?? "Assessment failed.";
+          if (parsed.event === "interrupted") {
+            const payload = parsed.data as ({ ok?: boolean } & Partial<AssessmentInterruption>) | null;
+            if (!terminalOutcome && payload?.ok === false && payload.status === "interrupted" &&
+                typeof payload.message === "string" && typeof payload.stage === "string" &&
+                typeof payload.service === "string" && typeof payload.reason === "string" &&
+                typeof payload.retryable === "boolean") {
+              terminalOutcome = { kind: "interrupted", interruption: payload as AssessmentInterruption };
+            } else {
+              protocolError = true;
+              throw new Error("Invalid assessment interruption response.");
+            }
+            continue;
+          }
+
+          if (parsed.event === "assessment-error") {
+            const payload = parsed.data as { ok?: boolean; error?: string } | null;
+            if (terminalOutcome || payload?.ok !== false || typeof payload.error !== "string") {
+              protocolError = true;
+              throw new Error("Invalid or conflicting assessment error.");
+            }
+            terminalOutcome = { kind: "assessment-error", error: payload.error };
           }
         }
       }
 
-      if (assessmentError) {
-        serverError = true;
-        throw new Error(assessmentError);
+      if (buffer.trim()) {
+        protocolError = true;
+        throw new Error("Assessment stream ended with an incomplete event.");
       }
-      if (!receivedResult) {
+
+      if (terminalOutcome?.kind === "assessment-error") {
+        serverError = true;
+        throw new Error(terminalOutcome.error);
+      }
+      if (!terminalOutcome) {
         interruptedStream = true;
         throw new Error("Assessment connection ended before a final report was received.");
       }
+      if (terminalOutcome.kind === "result") {
+        if (cancellationAcceptedRef.current) {
+          protocolError = true;
+          throw new Error("Assessment completed after cancellation was accepted.");
+        }
+        setAssessment(terminalOutcome.assessment);
+        setAssessedIdentity(requestedIdentity);
+      } else if (terminalOutcome.kind === "interrupted") {
+        setInterruption(terminalOutcome.interruption);
+        if (terminalOutcome.interruption.reason === "sandbox_cleanup_unconfirmed" ||
+            terminalOutcome.interruption.reason === "assessment_cleanup_unconfirmed")
+          setCancellationStatus("unconfirmed");
+      } else {
+        setCancellationStatus("confirmed");
+        setAssessment(null);
+      }
     } catch (assessmentError) {
       if (!current()) return;
-      if (receivedResult && !serverError && !protocolError) return;
+      setAssessment(null);
+      setInterruption(null);
+      setAssessedIdentity(null);
       const networkFailure = !serverError && !protocolError && (assessmentError instanceof TypeError ||
         (typeof navigator !== "undefined" && navigator.onLine === false) ||
         interruptedStream);
       setAssessmentNetworkFailure(networkFailure);
-      setAssessmentMayStillRun(networkFailure && requestStarted && !receivedResult);
-      if (!receivedResult) {
-        setProgressEvents((current) => current.map((event) => event.status === "running"
-          ? { ...event, status: "error", message: networkFailure
-            ? "Assessment connection ended before a final report was received."
-            : assessmentError instanceof Error ? assessmentError.message : "Assessment failed." }
-          : event));
+      setAssessmentMayStillRun(networkFailure && requestStarted);
+      if (cancellationAcceptedRef.current) {
+        for (let attempt = 0; attempt < 60 && current(); attempt += 1) {
+          try {
+            const statusResponse = await fetch(`/api/assessment/cancel?assessmentId=${encodeURIComponent(assessmentId)}`,
+              { cache: "no-store" });
+            if (!statusResponse.ok) break;
+            const status = await statusResponse.json() as { status?: string };
+            if (!current()) return;
+            if (status.status === "cancelled") { setCancellationStatus("confirmed"); return; }
+            if (status.status === "cleanup_unconfirmed") { setCancellationStatus("unconfirmed"); return; }
+            if (status.status !== "cancellation_requested") break;
+            setCancellationStatus("requested");
+          } catch { break; }
+          await new Promise((resolve) => setTimeout(resolve, 2_000));
+        }
+        if (current()) setCancellationStatus("unconfirmed");
+        return;
       }
+      setProgressEvents((current) => current.map((event) => event.status === "running"
+        ? { ...event, status: "error", message: networkFailure
+          ? "Assessment connection ended before a final report was received."
+          : assessmentError instanceof Error ? assessmentError.message : "Assessment failed." }
+        : event));
       setError(
         networkFailure
           ? "The assessment connection was interrupted. Check your connection. The previous assessment may still be running on the server. Starting another may run it twice."
@@ -2413,6 +2564,35 @@ export function ReadinessDashboard({
       if (assessmentControllerRef.current === controller) assessmentControllerRef.current = null;
     }
   }, [repositoryUrl, repositoryEnvironment, invalidateRequests]);
+
+  const cancelAssessment = useCallback(async () => {
+    const assessmentId = activeAssessmentIdRef.current;
+    if (!assessmentId || !loading || cancellationStatus !== "none") return;
+    setCancellationStatus("requesting");
+    try {
+      let response: Response | undefined;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        response = await fetch("/api/assessment/cancel", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ assessmentId }),
+        });
+        if (response.status !== 404) break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      if (!response) throw new Error("Cancellation request was not sent.");
+      const data = await response.json() as { status?: string };
+      if (activeAssessmentIdRef.current !== assessmentId) return;
+      if (!response.ok) { setCancellationStatus("unconfirmed"); return; }
+      if (data.status === "cancellation_requested") {
+        cancellationAcceptedRef.current = true;
+        setCancellationStatus((status) => status === "confirmed" || status === "unconfirmed" ? status : "requested");
+      } else if (data.status === "cancelled") {
+        cancellationAcceptedRef.current = true;
+        setCancellationStatus("confirmed");
+      } else if (data.status === "cleanup_unconfirmed") setCancellationStatus("unconfirmed");
+      else setCancellationStatus(data.status === "completed" ? "none" : "unconfirmed");
+    } catch { if (activeAssessmentIdRef.current === assessmentId) setCancellationStatus("unconfirmed"); }
+  }, [loading, cancellationStatus]);
 
   useEffect(() => {
     if (authorizationReturnStarted.current) return;
@@ -2574,7 +2754,23 @@ export function ReadinessDashboard({
               >
                 {loading ? "Assessment running..." : "Assess Repository"}
               </button>
+              {loading && <button type="button" onClick={() => void cancelAssessment()}
+                disabled={cancellationStatus !== "none"}
+                className="min-h-11 rounded-xl border border-amber-500 px-5 py-3 font-medium text-amber-100 disabled:opacity-50">
+                Cancel Assessment
+              </button>}
             </div>
+
+            {cancellationStatus === "requesting" && <p role="status" className="mt-3 text-sm text-amber-200">Sending cancellation request…</p>}
+            {cancellationStatus === "requested" && <p role="status" className="mt-3 text-sm text-amber-200">Cancellation requested. Waiting for server cleanup confirmation.</p>}
+            {cancellationStatus === "confirmed" && <section role="status" aria-label="Assessment cancelled" className="mt-3 rounded-xl border border-amber-500 p-4 text-amber-100">
+              <p className="font-semibold">Assessment cancellation confirmed</p>
+              <p>Production readiness: Not determined</p>
+            </section>}
+            {cancellationStatus === "unconfirmed" && <section role="alert" aria-label="Cancellation unconfirmed" className="mt-3 rounded-xl border border-amber-500 p-4 text-amber-100">
+              <p className="font-semibold">Cancellation could not be confirmed</p>
+              <p>Production readiness: Not determined. The assessment or sandbox cleanup may still be running. Contact an operator before retrying.</p>
+            </section>}
 
             {signInRequired && (
               <div className="mt-4 rounded-xl border border-sky-500/25 bg-sky-500/5 p-4">
@@ -2607,9 +2803,26 @@ export function ReadinessDashboard({
 
             {error && <div className="mt-3" role="alert">
               <p className="text-sm text-red-400">{error}</p>
-              {assessmentNetworkFailure && <button type="button" disabled={loading || scanLoading || signInRequired || !online}
+              {assessmentNetworkFailure && cancellationStatus === "none" && <button type="button" disabled={loading || scanLoading || signInRequired || !online}
                 onClick={() => void runAssessment()} className="mt-2 rounded-lg border border-zinc-600 px-4 py-2 text-sm text-zinc-100 disabled:opacity-50">{assessmentMayStillRun ? "Start Another Assessment" : "Retry Assessment"}</button>}
             </div>}
+
+            {interruption && <section role="alert" aria-label="Assessment interrupted"
+              className="mt-5 rounded-2xl border border-amber-500/50 bg-amber-500/10 p-5 text-amber-100">
+              <h2 className="text-xl font-semibold">Assessment interrupted</h2>
+              <p className="mt-2 font-semibold">Production readiness: Not determined</p>
+              <p className="mt-2">Verification stopped during {interruption.stage} because {interruption.service} was unavailable or rejected the required operation.</p>
+              <p className="mt-2 text-sm">Reason: {interruption.reason.replaceAll("_", " ")}.</p>
+              {interruption.retryable ? (
+                <button type="button" onClick={() => void runAssessment()}
+                  disabled={loading || scanLoading || !online}
+                  className="mt-4 rounded-lg border border-amber-300 px-4 py-2 disabled:opacity-50">
+                  Retry Assessment
+                </button>
+              ) : (
+                <p className="mt-3 text-sm">Review the policy, authorization, or source configuration issue before starting another assessment.</p>
+              )}
+            </section>}
 
             {authorizationReturnStatus && (
               <p className="mt-3 text-sm text-emerald-300" role="status">
@@ -2752,6 +2965,8 @@ export function ReadinessDashboard({
               </ul>
             </nav>
 
+            <ReadinessVerdictCard report={report} />
+
             <section id="report-overview" aria-label="Assessment overview" className="scroll-mt-6 grid min-w-0 gap-4 md:grid-cols-2">
               <ReadinessScoreCard readiness={report.readiness} />
 
@@ -2790,10 +3005,9 @@ export function ReadinessDashboard({
               </h2>
 
               <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-400">
-                The readiness score above is produced from deterministic
-                repository and runtime evidence. External research and NVIDIA
-                Nemotron add context and explanation, but they do not invent the
-                score.
+                The verdict and performance score above come from deterministic
+                check outcomes. External research and NVIDIA Nemotron add context
+                and explanation; neither changes the verdict.
               </p>
             </section>
 

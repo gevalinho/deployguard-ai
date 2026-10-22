@@ -1,29 +1,19 @@
-import type {
-  ArchitectureAnalysis,
-} from "@/lib/agents/architect-agent";
+import type { ArchitectureAnalysis } from "@/lib/agents/architect-agent";
 
-import type {
-  RemediationAction,
-} from "@/lib/agents/remediation-agent";
+import type { RemediationAction } from "@/lib/agents/remediation-agent";
 
-import type {
-  CheckResult,
-} from "@/lib/checks/types";
+import type { CheckResult } from "@/lib/checks/types";
 
-import type {
-  RepositoryScanResult,
-} from "@/lib/scanner/types";
+import type { RepositoryScanResult } from "@/lib/scanner/types";
 
 import type {
   ReadinessScore,
 } from "@/lib/scoring/readiness-score";
+import type { ReadinessVerdictV1 } from "@/lib/scoring/readiness-verdict";
 
 export interface RemediationItem {
   category: CheckResult["category"];
-  priority:
-    | "low"
-    | "medium"
-    | "high";
+  priority: "low" | "medium" | "high";
   title: string;
   recommendation: string;
 }
@@ -51,16 +41,17 @@ export interface ProductionReadinessReport {
   repository: {
     path: string;
     scannedAt: string;
-    facts:
-      RepositoryScanResult["facts"];
+    facts: RepositoryScanResult["facts"];
   };
 
-  architecture?:
-    ArchitectureAnalysis;
+  architecture?: ArchitectureAnalysis;
 
   checks: CheckResult[];
 
   readiness: ReadinessScore;
+
+  /** Present on new completed reports; absent on legacy reports. */
+  readinessVerdict?: ReadinessVerdictV1;
 
   /*
    * Deterministic remediation generated directly
@@ -77,8 +68,7 @@ export interface ProductionReadinessReport {
    * AI remediation never participates in readiness
    * score calculation.
    */
-  aiRemediation?:
-    VerifiedAiRemediation;
+  aiRemediation?: VerifiedAiRemediation;
 }
 
 /*
@@ -88,11 +78,10 @@ export interface ProductionReadinessReport {
  * on this type and therefore cannot cross the
  * browser/API boundary through a typed response.
  */
-export type PublicCheckResult =
-  Omit<
-    CheckResult,
-    "stdout" | "stderr"
-  >;
+export type PublicCheckResult = Omit<
+  CheckResult,
+    "stdout" | "stderr" | "transientFailure" | "assetFailure" | "blockedByExternalNetwork" | "requiredForReadiness"
+>;
 
 /*
  * Public readiness report.
@@ -101,10 +90,9 @@ export type PublicCheckResult =
  * except checks, which are replaced with the
  * explicitly safe public representation.
  */
-export type PublicProductionReadinessReport =
-  Omit<
-    ProductionReadinessReport,
-    "checks"
-  > & {
-    checks: PublicCheckResult[];
-  };
+export type PublicProductionReadinessReport = Omit<
+  ProductionReadinessReport,
+  "checks"
+> & {
+  checks: PublicCheckResult[];
+};

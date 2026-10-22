@@ -53,7 +53,8 @@ describe("root Node capability and build applicability", () => {
       expect.objectContaining({ key: "tooling", value: "Vite", evidence: [expect.objectContaining({ path: "package.json" })] }),
       expect.objectContaining({ key: "runtime", value: "Node.js", evidence: [expect.objectContaining({ path: "package.json" })] }),
     ]));
-    expect((await runSandboxTypecheckAgent(root)).skipReason).toBe("not_applicable");
+    expect(await runSandboxTypecheckAgent(root)).toMatchObject({ status: "skipped",
+      summary: expect.stringContaining("applicability is unverified") });
     expect((await runSandboxBuildAgent(root, [], scan.facts)).status).toBe("passed");
   });
 
@@ -95,7 +96,15 @@ describe("root Node capability and build applicability", () => {
   it("does not exempt Express when the direct runtime entry is unproven", async () => {
     const root = repository({ dependencies: { express: "*" }, scripts: { start: "node src/missing.js" } });
     const build = await runSandboxBuildAgent(root);
-    expect(build).toMatchObject({ status: "skipped", skipReason: "not_configured" });
+    expect(build).toMatchObject({ status: "skipped", skipReason: "not_configured",
+      requiredForReadiness: false });
+  });
+
+  it("requires a configured build for a detected Vite application", async () => {
+    const root = repository({ devDependencies: { vite: "*" }, scripts: {} });
+    const build = await runSandboxBuildAgent(root);
+    expect(build).toMatchObject({ status: "skipped", skipReason: "not_configured",
+      requiredForReadiness: true });
   });
 
   it("keeps a TypeScript Express compilation build applicable", async () => {

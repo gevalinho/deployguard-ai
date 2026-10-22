@@ -4,6 +4,7 @@ import path from "node:path";
 import type { CheckResult } from "@/lib/checks/types";
 import { runCommand } from "@/lib/execution/command-runner";
 import type { RepositoryScanResult } from "@/lib/scanner/types";
+import { createDatabaseEvidenceCheck } from "./database-evidence-check";
 
 function getFact(
   scan: RepositoryScanResult,
@@ -20,15 +21,7 @@ export async function runDatabaseAgent(
   const orm = getFact(scan, "orm");
 
   if (!orm) {
-    return {
-      id: "database-readiness",
-      category: "database",
-      name: "Database Readiness",
-      status: "skipped",
-      skipReason: "not_applicable",
-      summary:
-        "No verified database or ORM configuration was detected.",
-    };
+    return createDatabaseEvidenceCheck(scan);
   }
 
   if (orm !== "Prisma") {

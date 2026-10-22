@@ -110,4 +110,26 @@ describe("Dependency preparation timeout", () => {
     expect(result.summary).toContain("300 seconds");
     expect(result.summary).toContain("npm");
   });
+
+  it.each(["ENOTFOUND registry.npmjs.org", "EAI_AGAIN registry.npmjs.org",
+    "ECONNRESET", "ERR_PNPM_FETCH_503"])("classifies transient installation output: %s", async (stderr) => {
+    setup();
+    mocks.runDocker.mockResolvedValue({
+      status: "failed", exitCode: 1, stdout: "", stderr, durationMs: 1,
+    });
+    const result = await prepareSandboxWorkspace("/tmp/deployguard-timeout-test",
+      { requirements: [] });
+    expect(result.failureKind).toBe("network");
+  });
+
+  it("keeps a lockfile mismatch attributable to the repository", async () => {
+    setup();
+    mocks.runDocker.mockResolvedValue({
+      status: "failed", exitCode: 1, stdout: "",
+      stderr: "npm ci requires package-lock.json to match package.json", durationMs: 1,
+    });
+    const result = await prepareSandboxWorkspace("/tmp/deployguard-timeout-test",
+      { requirements: [] });
+    expect(result.failureKind).toBe("repository");
+  });
 });

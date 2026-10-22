@@ -19,7 +19,7 @@ export async function runDeploymentAgent(
     return {
       id: "deployment-readiness",
       category: "deployment",
-      name: "Deployment Readiness",
+      name: "Deployment Configuration",
       status: "skipped",
       skipReason: "not_configured",
       summary:
@@ -35,10 +35,10 @@ export async function runDeploymentAgent(
   return {
     id: "deployment-readiness",
     category: "deployment",
-    name: "Deployment Readiness",
+      name: "Deployment Configuration",
     status: "passed",
-    summary: `Verified deployment configuration detected: ${detectedEvidence.join(
+    summary: `Repository deployment or CI configuration detected: ${detectedEvidence.join(
       ", "
-    )}.`,
+    )}. Deployment execution was not verified.`,
   };
 }

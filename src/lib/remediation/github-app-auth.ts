@@ -5,6 +5,7 @@ import {
 import {
   readFileSync,
 } from "node:fs";
+import { currentAssessmentExecution } from "@/lib/orchestration/assessment-execution";
 
 export interface GitHubAppCredentials {
   appId: string;
@@ -199,6 +200,7 @@ async function githubRequest(
     `${GITHUB_API_BASE_URL}${path}`,
     {
       ...init,
+      signal: currentAssessmentExecution()?.signal ?? init.signal,
 
       headers: {
         Accept:

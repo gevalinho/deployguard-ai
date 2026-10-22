@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
 const runCommand = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/execution/command-runner", () => ({ runCommand }));
 
 import { discardSandboxContainerIdentity, reconcileSandboxContainer, runDockerSandboxCommand,
   SandboxContainerStateUnknownError } from "./docker-sandbox";
+import { createAssessmentExecutionContext, runAssessmentStage } from "@/lib/orchestration/assessment-execution";
 
 const containerId = "a".repeat(64);
 function recordId(args: string[]): void {
@@ -18,6 +19,49 @@ afterEach(() => {
 });
 
 describe("Docker sandbox timeout", () => {
+  it("retains Docker identity when cancellation arrives before CID capture", async () => {
+    runCommand.mockImplementation((_command, args) => {
+      if (args[0] === "run") return new Promise(() => {});
+      throw new Error("No Docker operation may target an uncaptured ID.");
+    });
+    const context = createAssessmentExecutionContext();
+    const pending = context.run(() => runAssessmentStage("preparation", () =>
+      runDockerSandboxCommand({ repositoryPath: "/repo", command: ["npm", "ci"] })));
+    await vi.waitFor(() => expect(runCommand).toHaveBeenCalledOnce());
+    expect(context.cancel("user_requested")).toBe(true);
+    const error = await pending.catch((caught) => caught) as SandboxContainerStateUnknownError;
+    expect(error).toBeInstanceOf(SandboxContainerStateUnknownError);
+    expect(error.containerId).toBeUndefined();
+    expect(runCommand).toHaveBeenCalledTimes(1);
+    const directory = error.containerIdFile!.replace(/\/cid$/, "");
+    expect(readFileSync(`${directory}/resources.json`, "utf8")).toContain('"/repo"');
+    writeFileSync(error.containerIdFile!, `${containerId}\n`);
+    discardSandboxContainerIdentity(error);
+    context.dispose();
+  });
+  it("reconciles a cancelled active container by full ID before releasing ownership", async () => {
+    let finishRun!: (result: object) => void;
+    const running = new Promise<object>((resolve) => { finishRun = resolve; });
+    runCommand.mockImplementation((_command, args) => {
+      if (args[0] === "run") { recordId(args); return running; }
+      if (args[0] === "inspect") return Promise.resolve({ exitCode: 1, stderr: "No such object" });
+      return Promise.resolve({ status: "passed", exitCode: 0, stdout: "", stderr: "" });
+    });
+    const context = createAssessmentExecutionContext();
+    const pending = context.run(() => runAssessmentStage("test", () => runDockerSandboxCommand({
+      repositoryPath: "/repo", command: ["npm", "test"],
+    })));
+    const assertion = expect(pending).rejects.toMatchObject({ name: "AssessmentCancelledError" });
+    expect(context.cancel("user_requested")).toBe(true);
+    await vi.waitFor(() => expect(runCommand.mock.calls.some(([, args]) => args[0] === "kill")).toBe(true));
+    finishRun({ status: "failed", exitCode: 137, stdout: "", stderr: "" });
+    await assertion;
+    const calls = runCommand.mock.calls;
+    const kill = calls.find(([, args]) => args[0] === "kill")![1] as string[];
+    expect(kill[1]).toBe(containerId);
+    expect(calls.some(([, args]) => args[0] === "inspect")).toBe(true);
+    context.dispose();
+  });
   it("provides a writable private tmpfs for nonroot npm cache writes", async () => {
     runCommand.mockImplementation((_command, args) => {
       if (args[0] === "run") recordId(args);
@@ -98,6 +142,53 @@ describe("Docker sandbox timeout", () => {
       repositoryPath: "/repo",
       command: ["npm", "test"],
     })).rejects.toBeInstanceOf(SandboxContainerStateUnknownError);
+  });
+
+  it("records all bind sources for operator reconciliation without deleting them", async () => {
+    runCommand.mockResolvedValue({ status: "failed", exitCode: 125, stdout: "", stderr: "daemon unavailable" });
+    const error = await runDockerSandboxCommand({ repositoryPath: "/repo", command: ["node"],
+      mounts: [{ source: "/shared/corepack", target: "/corepack" },
+        { source: "/staged/fonts", target: "/fonts", readOnly: true }],
+    }).catch((caught) => caught) as SandboxContainerStateUnknownError;
+    expect(error.mountedPaths).toEqual(["/repo", "/shared/corepack", "/staged/fonts"]);
+    const record = JSON.parse(readFileSync(error.containerIdFile!.replace(/\/cid$/, "/resources.json"), "utf8"));
+    expect(record).toMatchObject({ version: 1, mountedPaths: error.mountedPaths });
+    vi.resetModules();
+    const restartedModule = await import("./docker-sandbox");
+    expect(restartedModule.readRetainedSandboxResourceRecord(error.containerIdFile!.replace(/\/cid$/, "")))
+      .toMatchObject({ mountedPaths: error.mountedPaths });
+    expect(runCommand.mock.calls.map(([, args]) => args[0])).toEqual(["run"]);
+    expect(() => discardSandboxContainerIdentity(error)).toThrow("matching full ID");
+    writeFileSync(error.containerIdFile!, `${containerId}\n`, { mode: 0o600 });
+    discardSandboxContainerIdentity(error);
+  });
+
+  it("cannot reconcile a missing, malformed, or conflicting CID record", async () => {
+    runCommand.mockImplementation((_command, args) => {
+      if (args[0] === "run") recordId(args);
+      if (args[0] === "inspect") return Promise.resolve({ exitCode: 0, stdout: "true", stderr: "" });
+      return Promise.resolve({ status: "failed", exitCode: 125, stderr: "daemon unavailable" });
+    });
+    const error = await runDockerSandboxCommand({ repositoryPath: "/repo", command: ["node"] })
+      .catch((caught) => caught) as SandboxContainerStateUnknownError;
+    const recordPath = error.containerIdFile!.replace(/\/cid$/, "/resources.json");
+    const validRecord = readFileSync(recordPath, "utf8");
+    writeFileSync(error.containerIdFile!, "not-a-container-id\n");
+    await expect(reconcileSandboxContainer(error, "/repo")).rejects.toThrow("inconsistent");
+    writeFileSync(error.containerIdFile!, `${"b".repeat(64)}\n`);
+    await expect(reconcileSandboxContainer(error, "/repo")).rejects.toThrow("inconsistent");
+    expect(existsSync(recordPath)).toBe(true);
+    writeFileSync(recordPath, "{}");
+    await expect(reconcileSandboxContainer(error, "/repo")).rejects.toThrow("missing or invalid");
+    expect(() => discardSandboxContainerIdentity(error)).toThrow("Invalid Docker resource record");
+    expect(existsSync(recordPath)).toBe(true);
+    writeFileSync(recordPath, JSON.stringify({ ...JSON.parse(validRecord), mountedPaths: ["/other"] }));
+    await expect(reconcileSandboxContainer(error, "/repo")).rejects.toThrow("conflicts");
+    unlinkSync(recordPath);
+    await expect(reconcileSandboxContainer(error, "/repo")).rejects.toThrow("missing or invalid");
+    writeFileSync(recordPath, validRecord, { mode: 0o600 });
+    writeFileSync(error.containerIdFile!, `${containerId}\n`);
+    discardSandboxContainerIdentity(error);
   });
 
   it("treats an abnormal Docker client exit with a running container as unknown", async () => {

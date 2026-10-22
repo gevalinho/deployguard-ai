@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -84,6 +84,30 @@ describe("controlled Next.js Google Font preparation", () => {
     }, cache);
     expect(second.status).toBe("ready");
     if (second.status === "ready") await second.cleanup();
+  });
+
+  it("recovers an approved asset after one transient DNS failure", async () => {
+    const root = await repository(`import { Geist } from "next/font/google";
+      const font = Geist({ subsets: ["latin"] });`);
+    let attempts = 0;
+    const prepared = await prepareNextGoogleFonts(root, async (url) => {
+      if (++attempts === 1) throw new Error("EAI_AGAIN");
+      return url.startsWith("https://fonts.googleapis.com/") ? Buffer.from(css) : fontBytes();
+    }, join(root, ".deployguard", "asset-cache"));
+    expect(attempts).toBeGreaterThan(1);
+    expect(prepared.status).toBe("ready");
+    if (prepared.status === "ready") await prepared.cleanup();
+  });
+
+  it("marks exhausted approved asset failures as transient", async () => {
+    const root = await repository(`import { Geist } from "next/font/google";
+      const font = Geist({ subsets: ["latin"] });`);
+    const fetchAsset = vi.fn().mockRejectedValue(new Error("ECONNRESET"));
+    const prepared = await prepareNextGoogleFonts(root, fetchAsset,
+      join(root, ".deployguard", "asset-cache"));
+    expect(fetchAsset).toHaveBeenCalledTimes(2);
+    expect(prepared).toMatchObject({ status: "blocked",
+      transientFailure: "approved_build_asset" });
   });
 
   it.each([
