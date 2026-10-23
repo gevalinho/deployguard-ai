@@ -34,6 +34,7 @@ export interface PreparationRequirement {
   reason: string;
 
   evidence: RepositoryFact[];
+  evidencePaths?: string[];
 
   phase?: EnvironmentUsagePhase;
 
@@ -62,7 +63,8 @@ function findFacts(
 }
 
 export function createPreparationPlan(
-  facts: RepositoryFact[]
+  facts: RepositoryFact[],
+  repositoryPath?: string
 ): PreparationPlan {
   const requirements: PreparationRequirement[] = [];
 
@@ -114,9 +116,7 @@ export function createPreparationPlan(
    * build, test, or runtime can be classified separately.
    */
   const environmentClassifications =
-    classifyEnvironmentUsage(
-      facts
-    );
+    classifyEnvironmentUsage(facts, repositoryPath);
 
   const environmentFacts =
     findFacts(
@@ -183,6 +183,7 @@ export function createPreparationPlan(
           ? `${classification.variable} is classified as a build-phase environment requirement. DeployGuard requires an explicit value before build verification can rely on it.`
           : `${classification.variable} is classified as ${classification.phase}-phase configuration and will not block sandbox preparation.`,
       evidence: [fact],
+      evidencePaths: [...new Set(classification.evidence.map((item) => item.path))],
     });
   }
 

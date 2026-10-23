@@ -56,6 +56,8 @@ export function getCorepackSandboxConfig(
     environment: {
       COREPACK_HOME:
         COREPACK_CACHE_CONTAINER_PATH,
+      COREPACK_ENABLE_AUTO_PIN: "0",
+      COREPACK_DEFAULT_TO_LATEST: "0",
     },
 
     mounts: [

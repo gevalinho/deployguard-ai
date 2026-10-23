@@ -372,4 +372,32 @@ describe("sandbox security audit result", () => {
       stderr: "", durationMs: 1 });
     expect((await runSandboxSecurityAgent(root)).status).toBe("failed");
   });
+
+  it("does not mistake network terms inside pnpm advisories for audit transport errors", async () => {
+    const root = await repository();
+    await rm(join(root, "package-lock.json"));
+    await writeFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    runSandbox.mockResolvedValue({ status: "failed", exitCode: 1,
+      stdout: JSON.stringify({ advisories: { "123": { module_name: "target", severity: "high",
+        overview: "An ENOTFOUND example and HTTP 500 appear in advisory prose." } },
+        metadata: { vulnerabilities: { high: 1, critical: 0 } } }),
+      stderr: "", durationMs: 1 });
+    expect((await runSandboxSecurityAgent(root)).status).toBe("failed");
+    expect(runSandbox.mock.calls[0][0].environment).toMatchObject({
+      COREPACK_HOME: "/deployguard-cache/corepack",
+      COREPACK_ENABLE_AUTO_PIN: "0",
+      COREPACK_DEFAULT_TO_LATEST: "0",
+    });
+  });
+
+  it("accepts pnpm affected-path counts above distinct advisory counts", async () => {
+    const root = await repository();
+    await rm(join(root, "package-lock.json"));
+    await writeFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    runSandbox.mockResolvedValue({ status: "failed", exitCode: 1,
+      stdout: JSON.stringify({ advisories: { "123": { module_name: "target", severity: "high" } },
+        metadata: { vulnerabilities: { high: 2, critical: 0 } } }),
+      stderr: "", durationMs: 1 });
+    expect((await runSandboxSecurityAgent(root)).status).toBe("failed");
+  });
 });

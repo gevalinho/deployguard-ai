@@ -389,7 +389,7 @@ export async function runRemoteReadinessAssessment(
        * The workspace executor performs those requirements.
        */
       const preparationPlan = await runAssessmentStage("scan", async () =>
-        createPreparationPlan(scan.facts));
+        createPreparationPlan(scan.facts, ingested.repositoryPath));
 
       console.log(
         "[DeployGuard Preparation Plan]",

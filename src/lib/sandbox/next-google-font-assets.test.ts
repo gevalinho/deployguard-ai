@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -32,6 +32,53 @@ const fontUrl = "https://fonts.gstatic.com/s/testfont/unique-build-fixture.woff2
 const css = `/* latin */\n@font-face {\n  font-family: 'Geist';\n  src: url(${fontUrl}) format('woff2');\n}`;
 
 describe("controlled Next.js Google Font preparation", () => {
+  it("excludes only the root sandbox pnpm store while scanning ordinary source", async () => {
+    const root = await repository(`import { Geist } from "next/font/google";
+      const font = Geist({ subsets: ["latin"] });`);
+    const store = join(root, ".deployguard-pnpm-store");
+    await mkdir(store);
+    await writeFile(join(store, "unsafe.ts"), `import { Geist } from "next/font/google";
+      const options = { subsets: ["latin"] }; Geist(options);`);
+    const fetched: string[] = [];
+    const prepared = await prepareNextGoogleFonts(root, async (url) => {
+      fetched.push(url);
+      return url.startsWith("https://fonts.googleapis.com/") ? Buffer.from(css) : fontBytes();
+    }, join(root, ".deployguard", "asset-cache"));
+    expect(prepared.status).toBe("ready");
+    expect(fetched.length).toBeGreaterThan(0);
+    if (prepared.status === "ready") await prepared.cleanup();
+  });
+
+  it("still blocks an unsupported declaration inside a user directory", async () => {
+    const root = await repository("export const unrelated = true;");
+    const userDirectory = join(root, "custom-fonts");
+    await mkdir(userDirectory);
+    await writeFile(join(userDirectory, "font.ts"), `import { Geist } from "next/font/google";
+      const options = { subsets: ["latin"] }; Geist(options);`);
+    const prepared = await prepareNextGoogleFonts(root, async () => { throw new Error("unexpected_fetch"); });
+    expect(prepared).toEqual({ status: "blocked",
+      reason: "Google Font usage could not be safely resolved from static build source." });
+  });
+
+  it("does not exclude a nested user directory named like the sandbox store", async () => {
+    const root = await repository("export const unrelated = true;");
+    const nested = join(root, "app", ".deployguard-pnpm-store");
+    await mkdir(nested, { recursive: true });
+    await writeFile(join(nested, "font.ts"), `import { Geist } from "next/font/google";
+      const options = { subsets: ["latin"] }; Geist(options);`);
+    const prepared = await prepareNextGoogleFonts(root, async () => { throw new Error("unexpected_fetch"); });
+    expect(prepared.status).toBe("blocked");
+  });
+
+  it("retains source scan limits outside the sandbox store", async () => {
+    const root = await repository("export const unrelated = true;");
+    const source = join(root, "ordinary.ts");
+    await writeFile(source, `/* ${"x".repeat(512 * 1024)} */`);
+    const prepared = await prepareNextGoogleFonts(root, async () => { throw new Error("unexpected_fetch"); });
+    expect(prepared).toEqual({ status: "blocked",
+      reason: "Google Font usage could not be safely resolved from static build source." });
+  });
+
   it("stages validated CSS and font bytes for the Next loader in a read-only mount", async () => {
     const root = await repository(`import { Geist as Brand } from "next/font/google";
       const font = Brand({ subsets: ["latin"], display: "swap" });`);

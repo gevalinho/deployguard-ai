@@ -81,6 +81,7 @@ export function createBuildEnvironmentRequirements(
           decision.action,
         provisioningReason:
           decision.reason,
+        ...(requirement.evidencePaths ? { evidencePaths: requirement.evidencePaths } : {}),
       };
     });
 }

@@ -26,6 +26,7 @@ export function classifyPreparationFailureStatus(
 > {
   return failureKind === "network" ||
     failureKind === "timeout" ||
+    failureKind === "capacity" ||
     failureKind === "infrastructure"
     ? "blocked"
     : "error";

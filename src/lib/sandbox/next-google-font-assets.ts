@@ -149,6 +149,7 @@ async function fontRequests(repositoryPath: string): Promise<string[]> {
       if (entry.isSymbolicLink()) continue;
       const path = join(directory, entry.name);
       if (entry.isDirectory()) {
+        if (directory === repositoryPath && entry.name === ".deployguard-pnpm-store") continue;
         if (!["node_modules", ".git", ".next", ".deployguard", "dist", "build", "coverage"].includes(entry.name))
           await walk(path, depth + 1);
         continue;

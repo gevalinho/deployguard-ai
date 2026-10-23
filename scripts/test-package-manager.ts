@@ -268,7 +268,7 @@ for (
 
       writeFileSync(
         filePath,
-        ""
+        file === "pnpm-lock.yaml" ? "lockfileVersion: '9.0'\n" : ""
       );
     }
 

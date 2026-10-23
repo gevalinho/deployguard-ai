@@ -33,6 +33,10 @@ describe(
       }
     );
 
+    it("blocks downstream checks when sandbox storage is exhausted", () => {
+      expect(classifyPreparationFailureStatus("capacity")).toBe("blocked");
+    });
+
     it(
       "blocks downstream checks when Docker infrastructure fails",
       () => {

@@ -51,6 +51,7 @@ export interface BuildEnvironmentRequirement {
     | "unresolved";
 
   provisioningReason?: string;
+  evidencePaths?: string[];
 }
 
 const MAX_BUILD_EVIDENCE = 10;
@@ -404,11 +405,12 @@ export async function runSandboxBuildAgent(
         .map((requirement) => ({
           kind: "diagnostic",
           message:
-            requirement.provisioningReason ??
+            (requirement.provisioningReason ??
             (
               `${requirement.variable} is required during the build phase, ` +
               "but no explicit repository environment value was supplied."
-            ),
+            )) + (requirement.evidencePaths?.length
+              ? ` Evidence: ${requirement.evidencePaths.join(", ")}.` : ""),
         })),
 
       configurationRequirements:

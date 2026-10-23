@@ -340,8 +340,13 @@ function parseLegacyAuditReport(stdout: string): AuditFinding[] | null {
     findings.push({ packageName: raw.module_name, severity: raw.severity,
       ...(/^[0-9]{1,20}$/.test(id) ? { advisoryIds: [id] } : {}) });
   }
-  if (findings.filter((finding) => finding.severity === "high").length !== counts.high ||
-      findings.filter((finding) => finding.severity === "critical").length !== counts.critical) return null;
+  // pnpm's metadata counts affected dependency paths; advisories are unique IDs.
+  // Never accept a positive count without at least one corresponding advisory.
+  for (const severity of ["high", "critical"] as const) {
+    const advisoryCount = findings.filter((finding) => finding.severity === severity).length;
+    if (advisoryCount > Number(counts[severity]) ||
+        (Number(counts[severity]) > 0 && advisoryCount === 0)) return null;
+  }
   return findings;
 }
 
@@ -782,6 +787,8 @@ export async function runSandboxSecurityAgent(
         HOME:
           "/tmp/deployguard-home",
 
+        ...corepackConfig.environment,
+
         ...(packageManager.name ===
         "npm"
           ? {
@@ -882,9 +889,17 @@ export async function runSandboxSecurityAgent(
     };
   }
 
+  const parsedAuditOutput = parseJson(result.stdout);
+  const auditErrorOutput = isRecord(parsedAuditOutput) &&
+    !isRecord(parsedAuditOutput.advisories) &&
+    !isRecord(parsedAuditOutput.vulnerabilities)
+      ? [parsedAuditOutput.code, parsedAuditOutput.message, parsedAuditOutput.error]
+          .filter((value): value is string => typeof value === "string")
+          .join("\n")
+      : "";
   if (
     looksLikeInfrastructureFailure(
-      result.stdout,
+      parsedAuditOutput === null ? result.stdout : auditErrorOutput,
       result.stderr
     )
   ) {

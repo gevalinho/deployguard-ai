@@ -27,7 +27,7 @@ export function createRunScriptCommand(
       return {
         command: [
           "corepack",
-          "pnpm",
+          packageManager.version ? `pnpm@${packageManager.version}` : "pnpm",
           "run",
           script,
         ],
@@ -75,7 +75,7 @@ export function createExecCommand(
       return {
         command: [
           "corepack",
-          "pnpm",
+          packageManager.version ? `pnpm@${packageManager.version}` : "pnpm",
           "exec",
           executable,
           ...args,
@@ -152,7 +152,7 @@ export function createAuditCommand(
       return {
         command: [
           "corepack",
-          "pnpm",
+          packageManager.version ? `pnpm@${packageManager.version}` : "pnpm",
           "audit",
           "--audit-level",
           "high",

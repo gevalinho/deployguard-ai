@@ -17,6 +17,8 @@ export interface PackageManagerInfo {
 
   version?: string;
   majorVersion?: number;
+  compatibilityError?: string;
+  compatibilityKind?: "repository" | "capability";
 
   lockfile:
     | "package-lock.json"
@@ -37,6 +39,34 @@ export interface PackageManagerInfo {
 
 interface PackageJsonShape {
   packageManager?: unknown;
+}
+
+const PNPM_FALLBACK: Record<string, string> = {
+  "6.0": "8.15.9",
+  "9.0": "9.15.9",
+};
+
+function resolvePnpm(repositoryPath: string, declared: ReturnType<typeof parseDeclaredPackageManager>):
+  Pick<PackageManagerInfo, "version" | "majorVersion" | "compatibilityError" | "compatibilityKind"> {
+  const lock = readFileSync(join(repositoryPath, "pnpm-lock.yaml"), "utf8");
+  const match = /^lockfileVersion:\s*['"]?(\d+(?:\.\d+)?)['"]?\s*$/m.exec(lock);
+  if (!match) return { compatibilityKind: "repository", compatibilityError:
+    "pnpm-lock.yaml has no valid lockfileVersion. Declare a supported lockfile and an exact pnpm packageManager version." };
+  const format = match[1].includes(".") ? match[1] : `${match[1]}.0`;
+  const fallback = format.startsWith("9.") ? PNPM_FALLBACK["9.0"] : PNPM_FALLBACK[format];
+  if (!fallback) return { compatibilityKind: "capability", compatibilityError:
+    `DeployGuard does not support pnpm lockfileVersion ${format}. Supported formats are 6.0 and 9.x; use a supported lockfile format or request DeployGuard support.` };
+  if (declared.raw !== undefined) {
+    if (declared.name !== "pnpm" || !declared.version || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\+sha(?:224|256|512)\.[a-fA-F0-9]+)?$/.test(declared.version))
+      return { compatibilityKind: "repository", compatibilityError:
+        `pnpm-lock.yaml uses lockfileVersion ${format}, but package.json.packageManager must be an exact pnpm@major.minor.patch version (found ${JSON.stringify(declared.raw)}).` };
+    const major = Number(declared.version.split(".")[0]);
+    if (format === "6.0" ? major !== 8 : major < 9 || major > 12)
+      return { compatibilityKind: "repository", compatibilityError:
+        `pnpm-lock.yaml uses lockfileVersion ${format}, incompatible with package.json.packageManager ${declared.raw}. Use a compatible exact pnpm version or regenerate the lockfile in the repository.` };
+    return { version: declared.version, majorVersion: major };
+  }
+  return { version: fallback, majorVersion: Number(fallback.split(".")[0]) };
 }
 
 function parseDeclaredPackageManager(
@@ -70,7 +100,9 @@ function parseDeclaredPackageManager(
       typeof packageJson.packageManager !==
       "string"
     ) {
-      return {};
+      return Object.prototype.hasOwnProperty.call(packageJson, "packageManager")
+        ? { raw: JSON.stringify(packageJson.packageManager) ?? String(packageJson.packageManager) }
+        : {};
     }
 
     const raw =
@@ -214,6 +246,14 @@ export function detectPackageManager(
     parseDeclaredPackageManager(
       repositoryPath
     );
+
+  if (detected.name === "pnpm") {
+    return {
+      name: "pnpm", lockfile: "pnpm-lock.yaml", declaredPackageManager: declared.raw,
+      source: declared.raw === undefined ? "lockfile" : "lockfile_and_package_json",
+      ...resolvePnpm(repositoryPath, declared),
+    };
+  }
 
   if (
     detected.name === "yarn"

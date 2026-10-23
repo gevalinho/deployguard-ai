@@ -1,6 +1,9 @@
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
+  readFileSync,
+  realpathSync,
 } from "node:fs";
 
 import {
@@ -35,6 +38,28 @@ import type {
 import { CommandTerminationUnconfirmedError } from "@/lib/execution/command-runner";
 
 export const DEPENDENCY_PREPARATION_TIMEOUT_MS = 5 * 60 * 1000;
+const PNPM_STORE_NAME = ".deployguard-pnpm-store";
+const PNPM_STORE_CONTAINER_PATH = `/workspace/${PNPM_STORE_NAME}`;
+
+function ensureWorkspacePnpmStore(repositoryPath: string): void {
+  const workspace = lstatSync(repositoryPath);
+  if (!workspace.isDirectory() || workspace.isSymbolicLink())
+    throw new Error("The pnpm workspace must be a real directory.");
+  const storePath = join(realpathSync(repositoryPath), PNPM_STORE_NAME);
+  if (!existsSync(storePath)) mkdirSync(storePath, { mode: 0o700 });
+  const store = lstatSync(storePath);
+  if (!store.isDirectory() || store.isSymbolicLink() || store.uid !== process.getuid?.() ||
+      store.dev !== workspace.dev || (store.mode & 0o022) !== 0 ||
+      realpathSync(storePath) !== join(realpathSync(repositoryPath), PNPM_STORE_NAME))
+    throw new Error("The pnpm store path is unsafe; it must be a private directory inside the disposable workspace.");
+  const mountPaths = readFileSync("/proc/self/mountinfo", "utf8").split("\n").map((line) => {
+    const encoded = line.split(" ")[4];
+    return encoded?.replace(/\\([0-7]{3})/g, (_, octal: string) =>
+      String.fromCharCode(Number.parseInt(octal, 8)));
+  });
+  if (mountPaths.some((path) => path === storePath || path?.startsWith(`${storePath}/`)))
+    throw new Error("The pnpm store path contains a host mount and cannot be used safely.");
+}
 
 export interface SandboxPreparationResult {
   status:
@@ -45,9 +70,11 @@ export interface SandboxPreparationResult {
 
   failureKind?:
     | "network"
+    | "capacity"
     | "timeout"
     | "infrastructure"
-    | "repository";
+    | "repository"
+    | "capability";
 
   packageManager?: SandboxPackageManager;
 
@@ -80,10 +107,12 @@ function createPreparationCommand(
     case "pnpm":
       return [
         "corepack",
-        "pnpm",
+        packageManager.version ? `pnpm@${packageManager.version}` : "pnpm",
         "install",
         "--frozen-lockfile",
         "--ignore-scripts",
+        "--store-dir",
+        PNPM_STORE_CONTAINER_PATH,
       ];
 
     case "yarn":
@@ -104,6 +133,7 @@ function createPreparationCommand(
     "yarn",
     "install",
     "--immutable",
+    packageManager.majorVersion === 2 ? "--skip-builds" : "--mode=skip-build",
   ];
   }
 }
@@ -195,6 +225,35 @@ export async function prepareSandboxWorkspace(
       durationMs: 0,
       summary:
         "No supported package manager lockfile was detected.",
+    };
+  }
+
+  if (packageManager.compatibilityError) {
+    return {
+      status: "failed", failureKind: packageManager.compatibilityKind ?? "repository",
+      packageManager: packageManager.name, stdout: "", stderr: "", durationMs: Date.now() - preparationStartedAt,
+      summary: packageManager.compatibilityError,
+    };
+  }
+
+  if (packageManager.name === "pnpm") {
+    try {
+      ensureWorkspacePnpmStore(repositoryPath);
+    } catch (error) {
+      return {
+        status: "failed", failureKind: "infrastructure", packageManager: "pnpm",
+        stdout: "", stderr: "", durationMs: Date.now() - preparationStartedAt,
+        summary: `Sandbox pnpm store could not be prepared safely: ${error instanceof Error ? error.message : "unknown error"}`,
+      };
+    }
+  }
+
+  if (packageManager.name === "yarn" && existsSync(join(repositoryPath, ".yarnrc.yml")) &&
+      /^\s*["']?yarnPath["']?\s*:/m.test(readFileSync(join(repositoryPath, ".yarnrc.yml"), "utf8"))) {
+    return {
+      status: "failed", failureKind: "repository", packageManager: "yarn",
+      stdout: "", stderr: "", durationMs: Date.now() - preparationStartedAt,
+      summary: "Repository .yarnrc.yml sets yarnPath to a repository-supplied executable. DeployGuard does not support this override; remove yarnPath and declare an exact Yarn version in package.json.packageManager.",
     };
   }
 
@@ -421,7 +480,7 @@ if (
             packageManager.name === "npm"
               ? "npm exec -- prisma generate"
               : packageManager.name === "pnpm"
-                ? "corepack pnpm exec prisma generate"
+                ? `corepack pnpm@${packageManager.version} exec prisma generate`
                 : "corepack yarn run prisma generate",
           ].join(" "),
         ]
@@ -591,6 +650,7 @@ const result =
       result.stdout,
       result.stderr
     );
+  const capacityFailure = /\b(?:ERR_PNPM_ENOSPC|ENOSPC|no space left on device)\b/i.test(`${result.stdout}\n${result.stderr}`);
 
     const preparationFailureSummary =
   result.status === "passed"
@@ -624,6 +684,8 @@ const result =
           ? "timeout"
           : result.status === "infrastructure_error"
             ? "infrastructure"
+            : capacityFailure
+            ? "capacity"
             : networkFailure
             ? "network"
             : "repository",
@@ -635,6 +697,8 @@ const result =
           ? `Sandbox workspace preparation timed out after ${DEPENDENCY_PREPARATION_TIMEOUT_MS / 1000} seconds while installing dependencies with ${packageManager.name}.`
           : result.status === "infrastructure_error"
             ? "Sandbox workspace preparation could not complete because Docker infrastructure was unavailable."
+            : capacityFailure
+            ? "Sandbox workspace preparation was blocked because the sandbox ran out of storage while installing dependencies."
             : networkFailure
             ? "Sandbox workspace preparation could not complete because of a package registry or network error."
             : preparationFailureSummary ??
